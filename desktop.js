@@ -73,6 +73,44 @@ const viewMeta = {
     newType: "expenserequest",
     empty: "No expense requests found.",
   },
+  cashexpenses: {
+    title: "Cash Expenses",
+    kicker: "Petty cash log",
+    key: "cashExpenses",
+    action: "getCashExpenses",
+    newType: "cashexpense",
+    empty: "No cash expenses found.",
+  },
+  serviceunits: {
+    title: "Service Units",
+    kicker: "Common Area registry",
+    key: "apts",
+    action: "getApartments",
+    newType: "apartment",
+    empty: "No service units found.",
+  },
+  staff: {
+    title: "Staff",
+    kicker: "Team directory",
+    key: "staff",
+    action: "getStaff",
+    newType: "staff",
+    empty: "No staff records found.",
+  },
+  utilities: {
+    title: "Utilities & Plant",
+    kicker: "Meter and generator logs",
+    key: "utilities",
+    action: "getUtilities",
+    newType: "utility", // the extra "New Plant Log" button (see wireDesktopEvents) covers the 'generator' half
+    empty: "No utility records found.",
+  },
+  archived: {
+    title: "Archived",
+    kicker: "Retired assets, staff, vendors & inventory",
+    key: "archived", // not a real cache key — renderDesktop() special-cases this view, see renderArchivedShortcuts()
+    empty: "Nothing archived yet.",
+  },
   reports: {
     title: "Reports",
     kicker: "Desktop shortcuts",
@@ -83,7 +121,7 @@ const viewMeta = {
     title: "Settings",
     kicker: "Configuration",
     key: "settings",
-    empty: "Settings are available in mobile view.",
+    empty: "",
   },
   help: {
     title: "Help & Support",
@@ -360,11 +398,26 @@ function renderDesktop() {
       : `<i class="fas fa-check-double"></i> Select`;
   }
 
+  const plantLogBtn = document.getElementById("new-plant-log-btn");
+  if (plantLogBtn) plantLogBtn.style.display = desktopState.view === "utilities" ? "inline-flex" : "none";
+
   if (desktopState.view === "reports") return renderReportShortcuts();
   if (desktopState.view === "settings") return renderSettingsShortcuts();
   if (desktopState.view === "help") return renderHelpView();
+  if (desktopState.view === "archived") return renderArchivedShortcuts();
 
-  const records = sortRecords(desktopState.view, filterRecords(cache[meta.key] || []));
+  // [FIX] Apartments and Service Units both read from cache.apts, split
+  // by type — mirrors the same distinction Records.js draws for the
+  // mobile shell (type 'services' = Common Area, shown separately from
+  // real tenancy units rather than mixed into the main Apartments list).
+  let sourceRecords = cache[meta.key] || [];
+  if (desktopState.view === "apartments") {
+    sourceRecords = sourceRecords.filter((a) => a && String(a.type || a.Type || "").toLowerCase() !== "services");
+  } else if (desktopState.view === "serviceunits") {
+    sourceRecords = sourceRecords.filter((a) => a && String(a.type || a.Type || "").toLowerCase() === "services");
+  }
+
+  const records = sortRecords(desktopState.view, filterRecords(sourceRecords));
   desktopState.lastRecords = records;
   document.getElementById("record-count").textContent = `${records.length} ${records.length === 1 ? "record" : "records"}`;
   const sectionedConfig = sectionedViewConfig[desktopState.view];
@@ -850,6 +903,34 @@ function getCardModel(view, item) {
     };
   }
 
+  if (view === "staff") {
+    return {
+      title: item.name || item.Name || "Staff",
+      subtitle: item.role || item.Role || "",
+      meta: `ID: ${item.rowId || item.RowId || "N/A"}`,
+      tone: "",
+    };
+  }
+
+  if (view === "cashexpenses") {
+    return {
+      title: item.description || item.Description || item.cashId || item.CashId || "Cash Expense",
+      subtitle: getUnitNumber(item) ? `Unit ${getUnitNumber(item)}` : "",
+      meta: `ID: ${item.cashId || item.CashId || "N/A"} | ₦${formatMoney(item.amount || item.Amount || 0)}`,
+      tone: "warning",
+    };
+  }
+
+  if (view === "utilities") {
+    const isPlantLog = isUtilityPlantRecord(item);
+    return {
+      title: getUnitNumber(item) || item.equipment || item.Equipment || (isPlantLog ? "Plant Log" : "Meter Log"),
+      subtitle: item.type || item.Type || (isPlantLog ? "Plant Check" : "Meter Reading"),
+      meta: `Reading: ${item.reading || item.Reading || 0}`,
+      tone: isPlantLog ? "warning" : "",
+    };
+  }
+
   return {
     title: item.party || item.Party || item.paymentId || item.PaymentId || "Payment",
     subtitle: item.reason || item.Reason || item.type || item.Type || "",
@@ -858,8 +939,19 @@ function getCardModel(view, item) {
   };
 }
 
+// Mirrors the isPlant check in Records.js's mobile utilities card —
+// Utilities and Plant/generator logs share one sheet, distinguished
+// per-record rather than by a separate view.
+function isUtilityPlantRecord(item) {
+  const unitId = getUnitNumber(item);
+  return item.type === "Plant Check" || String(unitId).includes("GENERATOR") || unitId === "DIESEL-TANK";
+}
+
 function openDesktopRecord(view, item) {
-  const type = viewMeta[view]?.newType;
+  let type = viewMeta[view]?.newType;
+  if (view === "utilities") {
+    type = isUtilityPlantRecord(item) ? "generator" : "utility";
+  }
   if (type && typeof openModal === "function") {
     openModal(type, item);
     return;
@@ -993,6 +1085,38 @@ function openNewRecord() {
     return;
   }
   showToast("New records are not available for this section yet.", "warning");
+}
+
+// Reuses renderArchiveBinDashboardView() from Records.js as-is (shared
+// with the mobile shell) rather than re-implementing the cross-sheet
+// archived-records aggregation. Note: those cards render with mobile's
+// .card styling, not desktop's .record-card — a known, acceptable
+// cosmetic mismatch in just this one view rather than a functional gap.
+function renderArchivedShortcuts() {
+  document.getElementById("record-count").textContent = "";
+  document.getElementById("card-grid").innerHTML = `
+    <div class="desktop-form-card" style="grid-column:1/-1; margin-bottom:16px;">
+      <label>Filter by system segment</label>
+      <select id="archive-segment-filter">
+        <option value="ALL">-- ALL ARCHIVED RECORDS --</option>
+        <option value="assets">Assets</option>
+        <option value="inventory">Inventory</option>
+        <option value="staff">Staff</option>
+        <option value="vendors">Vendors</option>
+      </select>
+    </div>
+    <div id="archived-list" style="grid-column:1/-1; display:grid; gap:12px; grid-template-columns:repeat(auto-fill, minmax(240px,1fr));"></div>
+  `;
+  document.getElementById("archive-segment-filter").addEventListener("change", renderArchivedListBody);
+  renderArchivedListBody();
+}
+
+function renderArchivedListBody() {
+  const listEl = document.getElementById("archived-list");
+  // renderArchiveBinDashboardView already writes its own "No archived
+  // items match this selection." fallback into the container when
+  // empty — nothing extra needed here.
+  if (listEl) renderArchiveBinDashboardView(listEl);
 }
 
 function renderHelpView() {

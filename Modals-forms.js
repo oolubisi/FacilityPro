@@ -393,12 +393,33 @@ async function openModal(type, editData = null) {
       currentModalFiles = String(editData.photos || editData.Photos)
         .split(",")
         .filter(Boolean);
+    // The apartment record has its own meterNo field, but it's a
+    // separate, one-time-set value from the per-reading meterNo that
+    // shows up on Utilities log entries for this unit (those are a
+    // different sheet, tied together only by matching apt numbers).
+    // If the apartment doesn't have one yet, suggest whatever the most
+    // recent electricity log for this unit used, rather than making
+    // the admin hunt it down and retype it — still editable either way.
+    const suggestedMeterNo =
+      editData.meterNo ||
+      editData.MeterNo ||
+      [...(cache.utilities || [])]
+        .filter(
+          (u) =>
+            u &&
+            String(getUnitNumber(u)) === String(currentUnit) &&
+            (u.type === "Electricity" || u.Type === "Electricity") &&
+            (u.meterNo || u.MeterNo),
+        )
+        .sort((a, b) => new Date(b.updatedAt || b.date || 0) - new Date(a.updatedAt || a.date || 0))[0]?.meterNo ||
+      "";
     body.innerHTML = `
       <div class="form-grid-3">
         <div class="form-field"><label ${lbl}>Tenant Name</label><input id="f_tenant" value="${escapeHtml(editData.tenant || editData.Tenant || "")}" ${ls}></div>
         <div class="form-field"><label ${lbl}>Apartment Type</label><input id="f_type" value="${escapeHtml(editData.type || editData.Type || "Standard")}" disabled ${ls}></div>
         <div class="form-field"><label ${lbl}>Current Rent (₦)</label><input id="f_rent" type="text" inputmode="numeric" placeholder="Annual rent amount" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\B(?=(\d{3})+(?!\d))/g,',')" value="${(editData.rent || editData.Rent) ? Number(editData.rent || editData.Rent).toLocaleString("en-US") : ""}" ${ls}></div>
         <div class="form-field"><label ${lbl}>Service Charge Deposit (₦)</label><input id="f_deposit" type="text" inputmode="numeric" placeholder="Service charge deposit amount" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\B(?=(\d{3})+(?!\d))/g,',')" value="${(editData.serviceChargeDeposit || editData.ServiceChargeDeposit) ? Number(editData.serviceChargeDeposit || editData.ServiceChargeDeposit).toLocaleString("en-US") : ""}" ${ls}></div>
+        <div class="form-field"><label ${lbl}>Meter No</label><input id="f_meter" value="${escapeHtml(suggestedMeterNo)}" disabled ${ls}></div>
         <div class="form-field">
           <label ${lbl}>Status State</label>
           <select id="f_status" ${ls}>
@@ -411,7 +432,8 @@ async function openModal(type, editData = null) {
         <div class="form-field"><label ${lbl}>Phone 2</label><input id="f_p2" type="tel" maxlength="11" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'')" value="${escapeHtml(editData.phone2 || editData.Phone2 || "")}" ${ls}></div>
         <div class="form-field"><label ${lbl}>Lease End</label><input id="f_lease" type="date" value="${fromSheetDate(editData.leaseEnd || editData.LeaseEnd)}" ${ls}></div>
         <div class="form-field"><label ${lbl}>Last Inspected</label><input id="f_inspected" type="date" value="${fromSheetDate(editData.inspected || editData.Inspected)}" ${ls}></div>
-        <div class="form-field span-3"><label ${lbl}>Notes</label><textarea id="f_notes" rows="2" ${ls}>${escapeHtml(editData.notes || editData.Notes || "")}</textarea></div>
+        <div class="form-field span-3"><label ${lbl}>Notes 1</label><textarea id="f_notes" rows="2" ${ls}>${escapeHtml(editData.notes || editData.Notes || "")}</textarea></div>
+        <div class="form-field span-3"><label ${lbl}>Notes 2</label><textarea id="f_notes2" rows="2" ${ls}>${escapeHtml(editData.notes2 || editData.Notes2 || "")}</textarea></div>
         <div class="form-field span-3">
           <label ${lbl}>Form Attachments</label>
           <div id="aptPreviews" class="modal-preview-grid" style="display:none;"></div>
@@ -431,11 +453,13 @@ async function openModal(type, editData = null) {
         status: document.getElementById("f_status").value,
         rent: document.getElementById("f_rent").value.replace(/,/g, ""),
         serviceChargeDeposit: document.getElementById("f_deposit").value.replace(/,/g, ""),
+        meterNo: sanitizeInput(document.getElementById("f_meter").value),
         phone1: String(document.getElementById("f_p1").value),
         phone2: String(document.getElementById("f_p2").value),
         leaseEnd: toSheetDate(document.getElementById("f_lease").value),
         inspected: toSheetDate(document.getElementById("f_inspected").value),
         notes: sanitizeInput(document.getElementById("f_notes").value),
+        notes2: sanitizeInput(document.getElementById("f_notes2").value),
         photos: currentModalFiles.join(","),
         type: editData.type || editData.Type || "",
         oldApt: currentUnit,

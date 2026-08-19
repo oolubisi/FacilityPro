@@ -66,6 +66,21 @@
           <button class="nav-item" data-view="expenserequests">
             <i class="fas fa-receipt"></i><span>Expense Requests</span>
           </button>
+          <button class="nav-item" data-view="cashexpenses">
+            <i class="fas fa-hand-holding-dollar"></i><span>Cash Expenses</span>
+          </button>
+          <button class="nav-item" data-view="serviceunits">
+            <i class="fas fa-door-open"></i><span>Service Units</span>
+          </button>
+          <button class="nav-item" data-view="staff">
+            <i class="fas fa-users"></i><span>Staff</span>
+          </button>
+          <button class="nav-item" data-view="utilities">
+            <i class="fas fa-bolt"></i><span>Utilities & Plant</span>
+          </button>
+          <button class="nav-item" data-view="archived">
+            <i class="fas fa-box-archive"></i><span>Archived</span>
+          </button>
           <button class="nav-item" data-view="reports">
             <i class="fas fa-file-lines"></i><span>Reports</span>
           </button>
@@ -142,6 +157,7 @@
           </div>
           <div style="display:flex; align-items:center; gap:14px;">
             <button id="print-pending-prs" onclick="printAllPendingPaymentRequests()" style="display:none; background:#101820; color:#fff; border:0; border-radius:10px; padding:10px 16px; font-weight:900; font-size:13px; cursor:pointer;"><i class="fas fa-print"></i> Print Pending PRs</button>
+            <button id="new-plant-log-btn" onclick="openModal('generator')" style="display:none; background:#fd7e14; color:#fff; border:0; border-radius:10px; padding:10px 16px; font-weight:900; font-size:13px; cursor:pointer;"><i class="fas fa-charging-station"></i> New Plant Log</button>
             <button id="export-csv-btn" data-action="export-csv" style="display:none; background:var(--green); color:#fff; border:0; border-radius:10px; padding:10px 16px; font-weight:900; font-size:13px; cursor:pointer;"><i class="fas fa-file-csv"></i> Export CSV</button>
             <button id="toggle-select-mode" onclick="toggleSelectMode()" class="select-mode-toggle" style="display:none;"><i class="fas fa-check-double"></i> Select</button>
             <div id="record-count" class="record-count">0 records</div>

@@ -277,7 +277,18 @@ function handleReportLayoutSwitch() {
   const paramsFrame = document.getElementById("rep-dynamic-parameters-frame");
   paramsFrame.innerHTML = "";
   if (layout === "detailed_profile") {
-    paramsFrame.innerHTML = `<label>SELECT APARTMENT UNIT</label><select id="rep-param-unit" class="form-control"></select>`;
+    paramsFrame.innerHTML = `
+      <label>SELECT APARTMENT UNIT</label><select id="rep-param-unit" class="form-control"></select>
+      <div style="display:flex; flex-wrap:wrap; gap:16px; margin-top:10px;">
+        <label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer;"><input type="checkbox" id="rep-dossier-include-rent" checked style="width:auto;"> Include Current Rent</label>
+        <label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer;"><input type="checkbox" id="rep-dossier-include-deposit" checked style="width:auto;"> Include Service Charge Deposit</label>
+        <label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer;"><input type="checkbox" id="rep-dossier-include-phone" checked style="width:auto;"> Include Phone 1</label>
+        <label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer;"><input type="checkbox" id="rep-dossier-include-lease" checked style="width:auto;"> Include Lease End Date</label>
+        <label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer;"><input type="checkbox" id="rep-dossier-include-notes1" checked style="width:auto;"> Include Notes 1</label>
+        <label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer;"><input type="checkbox" id="rep-dossier-include-notes2" checked style="width:auto;"> Include Notes 2</label>
+        <label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer;"><input type="checkbox" id="rep-dossier-include-assets" checked style="width:auto;"> Include Assets</label>
+        <label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer;"><input type="checkbox" id="rep-dossier-include-attachments" checked style="width:auto;"> Include Attachments</label>
+      </div>`;
     populateUnitDropdown("rep-param-unit");
   } else if (
     [
@@ -324,7 +335,16 @@ function compileReportPreview() {
       showToast("Please select a unit.", "warning");
       return;
     }
-    generateApartmentDossierReport(unit);
+    generateApartmentDossierReport(unit, {
+      includeRent: document.getElementById("rep-dossier-include-rent")?.checked !== false,
+      includeDeposit: document.getElementById("rep-dossier-include-deposit")?.checked !== false,
+      includePhone: document.getElementById("rep-dossier-include-phone")?.checked !== false,
+      includeLease: document.getElementById("rep-dossier-include-lease")?.checked !== false,
+      includeNotes1: document.getElementById("rep-dossier-include-notes1")?.checked !== false,
+      includeNotes2: document.getElementById("rep-dossier-include-notes2")?.checked !== false,
+      includeAssets: document.getElementById("rep-dossier-include-assets")?.checked !== false,
+      includeAttachments: document.getElementById("rep-dossier-include-attachments")?.checked !== false,
+    });
     return;
   }
   if (layout === "ledger_summary") {
@@ -1616,7 +1636,16 @@ function generateApartmentManifestReport() {
     "block";
 }
 
-function generateApartmentDossierReport(targetUnitId) {
+function generateApartmentDossierReport(targetUnitId, options = {}) {
+  const includeRent = options.includeRent !== false;
+  const includeDeposit = options.includeDeposit !== false;
+  const includePhone = options.includePhone !== false;
+  const includeLease = options.includeLease !== false;
+  const includeNotes1 = options.includeNotes1 !== false;
+  const includeNotes2 = options.includeNotes2 !== false;
+  const includeAssets = options.includeAssets !== false;
+  const includeAttachments = options.includeAttachments !== false;
+
   const viewport = document.getElementById("report-preview-viewport");
   if (!viewport) return;
   window.currentReportFilename =
@@ -1636,38 +1665,92 @@ function generateApartmentDossierReport(targetUnitId) {
   const meter = escapeHtml(apt.meterNo || apt.MeterNo || apt.meter || "N/A");
   const rent = apt.rent || apt.Rent;
   const deposit = apt.serviceChargeDeposit || apt.ServiceChargeDeposit;
+  const phone = escapeHtml(apt.phone1 || apt.Phone1 || "");
+  const leaseEndDisplay = escapeHtml(formatDateForDisplay(apt.leaseEnd || apt.LeaseEnd));
+  // [BUG FIX] Notes were rendered on a single straight line no matter
+  // how the admin formatted them in the edit form — HTML collapses
+  // plain whitespace/newlines by default. white-space:pre-wrap keeps
+  // line breaks (and any deliberate spacing) exactly as typed, while
+  // the text itself still goes through escapeHtml first, so this
+  // doesn't reopen any injection risk — it's a display rule, not a
+  // change to how the content itself is sanitized.
+  const notes1 = escapeHtml(apt.notes || apt.Notes || "");
+  const notes2 = escapeHtml(apt.notes2 || apt.Notes2 || "");
+
+  const meterRow = includeRent
+    ? `<tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Meter No</td><td style="border:1px solid #000; padding:6px;">${meter}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Current Rent</td><td style="border:1px solid #000; padding:6px;">${rent ? "₦" + formatMoney(rent) + " / yr" : "N/A"}</td></tr>`
+    : `<tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Meter No</td><td colspan="3" style="border:1px solid #000; padding:6px;">${meter}</td></tr>`;
+  const depositRow = includeDeposit
+    ? `<tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Service Charge Deposit</td><td colspan="3" style="border:1px solid #000; padding:6px;">${deposit ? "₦" + formatMoney(deposit) : "N/A"}</td></tr>`
+    : "";
+
+  let phoneLeaseRow = "";
+  if (includePhone && includeLease) {
+    phoneLeaseRow = `<tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Phone 1</td><td style="border:1px solid #000; padding:6px;">${phone || "N/A"}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Lease End</td><td style="border:1px solid #000; padding:6px;">${leaseEndDisplay}</td></tr>`;
+  } else if (includePhone) {
+    phoneLeaseRow = `<tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Phone 1</td><td colspan="3" style="border:1px solid #000; padding:6px;">${phone || "N/A"}</td></tr>`;
+  } else if (includeLease) {
+    phoneLeaseRow = `<tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Lease End</td><td colspan="3" style="border:1px solid #000; padding:6px;">${leaseEndDisplay}</td></tr>`;
+  }
 
   let html = `<div style="font-family:'Arial',sans-serif; color:#000; background:#fff; padding:0; width:100%; margin:0 auto; line-height:1.4;">
     <h3 style="font-size:16px; font-weight:900; text-transform:uppercase; margin:0 0 15px 0; text-decoration:underline;">Apartment Dossier &bull; Unit ${escapeHtml(targetUnitId)}</h3>
     <table style="width:100%; border-collapse:collapse; border:2px solid #000; font-size:14px; font-weight:bold; margin-bottom:20px;">
       <tr><td style="border:1px solid #000; padding:6px; width:15%; background:#f9f9f9;">Type</td><td style="border:1px solid #000; padding:6px; width:35%;">${type}</td><td style="border:1px solid #000; padding:6px; width:15%; background:#f9f9f9;">Status</td><td style="border:1px solid #000; padding:6px; width:35%; color:${status.toUpperCase() === "VACANT" ? "#DC3545" : "#198754"};">${status}</td></tr>
-      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Meter No</td><td style="border:1px solid #000; padding:6px;">${meter}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Current Rent</td><td style="border:1px solid #000; padding:6px;">${rent ? "₦" + formatMoney(rent) + " / yr" : "N/A"}</td></tr>
-      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Service Charge Deposit</td><td colspan="3" style="border:1px solid #000; padding:6px;">${deposit ? "₦" + formatMoney(deposit) : "N/A"}</td></tr>
-    </table>
-    <h3 style="font-size:14px; font-weight:bold; margin:20px 0 10px 0; text-decoration:underline;">ASSETS:</h3>
+      ${meterRow}
+      ${depositRow}
+      ${phoneLeaseRow}
+      ${includeNotes1 && notes1 ? `<tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Notes 1</td><td colspan="3" style="border:1px solid #000; padding:6px; font-weight:600; white-space:pre-wrap;">${notes1}</td></tr>` : ""}
+      ${includeNotes2 && notes2 ? `<tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Notes 2</td><td colspan="3" style="border:1px solid #000; padding:6px; font-weight:600; white-space:pre-wrap;">${notes2}</td></tr>` : ""}
+    </table>`;
+
+  if (includeAssets) {
+    html += `<h3 style="font-size:14px; font-weight:bold; margin:20px 0 10px 0; text-decoration:underline;">ASSETS:</h3>
     <div style="display:flex; flex-wrap:wrap; gap:2%; row-gap:15px;">`;
 
-  const unitAssets = (cache.assets || []).filter(
-    (a) =>
-      a &&
-      String(getUnitNumber(a)) === String(targetUnitId) &&
-      String(a.status || "") !== "Archived",
-  );
-  if (unitAssets.length > 0) {
-    unitAssets.forEach((asset) => {
-      let imgHtml = `<div style="height:120px; background:#eee; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:bold; color:#aaa; border-bottom:1px solid #ccc;">No Image</div>`;
-      if (asset.photos || asset.Photos) {
-        const firstPhoto = String(asset.photos || asset.Photos).split(",")[0];
-        if (firstPhoto)
-          imgHtml = `<div style="height:120px; border-bottom:1px solid #ccc; display:flex; align-items:center; justify-content:center; overflow:hidden; background:#fff;"><img src="${getDirectImageUrl(firstPhoto)}" style="max-width:100%; max-height:100%; object-fit:contain;" alt="${escapeHtml(asset.type || "Asset")}"></div>`;
-      }
-      html += `<div style="width:32%; border:1px solid #000; border-radius:4px; overflow:hidden; page-break-inside:avoid;">${imgHtml}<div style="padding:10px; font-size:12px; line-height:1.5;"><div style="font-weight:900; font-size:13px; margin-bottom:5px;">${escapeHtml(asset.type || asset.Type || "Asset")}</div><div><strong>Specs:</strong> ${escapeHtml(asset.specs || asset.Specs || "N/A")}</div><div><strong>Tag:</strong> ${escapeHtml(asset.tag || asset.Tag)}</div><div><strong>Status:</strong> ${escapeHtml(asset.status || asset.Status || "N/A")}</div></div></div>`;
-    });
-  } else {
-    html += `<div style="font-style:italic; color:#666; font-size:13px;">No physical assets recorded for this unit.</div>`;
+    const unitAssets = (cache.assets || []).filter(
+      (a) =>
+        a &&
+        String(getUnitNumber(a)) === String(targetUnitId) &&
+        String(a.status || "") !== "Archived",
+    );
+    if (unitAssets.length > 0) {
+      unitAssets.forEach((asset) => {
+        let imgHtml = `<div style="height:120px; background:#eee; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:bold; color:#aaa; border-bottom:1px solid #ccc;">No Image</div>`;
+        if (asset.photos || asset.Photos) {
+          const firstPhoto = String(asset.photos || asset.Photos).split(",")[0];
+          if (firstPhoto)
+            imgHtml = `<div style="height:120px; border-bottom:1px solid #ccc; display:flex; align-items:center; justify-content:center; overflow:hidden; background:#fff;"><img src="${getDirectImageUrl(firstPhoto)}" style="max-width:100%; max-height:100%; object-fit:contain;" alt="${escapeHtml(asset.type || "Asset")}"></div>`;
+        }
+        html += `<div style="width:32%; border:1px solid #000; border-radius:4px; overflow:hidden; page-break-inside:avoid;">${imgHtml}<div style="padding:10px; font-size:12px; line-height:1.5;"><div style="font-weight:900; font-size:13px; margin-bottom:5px;">${escapeHtml(asset.type || asset.Type || "Asset")}</div><div><strong>Specs:</strong> ${escapeHtml(asset.specs || asset.Specs || "N/A")}</div><div><strong>Tag:</strong> ${escapeHtml(asset.tag || asset.Tag)}</div><div><strong>Status:</strong> ${escapeHtml(asset.status || asset.Status || "N/A")}</div></div></div>`;
+      });
+    } else {
+      html += `<div style="font-style:italic; color:#666; font-size:13px;">No physical assets recorded for this unit.</div>`;
+    }
+    html += `</div>`;
   }
 
-  html += `</div></div>`;
+  // Attachments are the apartment's own uploaded files (inspection
+  // photos, lease docs, etc — the "Form Attachments" field on the
+  // apartment edit form), distinct from each Asset's own photo shown
+  // above. These get appended as extra pages when the PDF is
+  // downloaded (see currentReportAttachmentManifest / pdf.js), not
+  // rendered inline here — a PDF/Drive attachment can't be embedded as
+  // an inline image reliably, so this note plus the page count is
+  // what shows in the on-screen preview.
+  const aptAttachments = String(apt.photos || apt.Photos || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (includeAttachments && aptAttachments.length > 0) {
+    window.currentReportAttachmentManifest = aptAttachments;
+    html += `<h3 style="font-size:14px; font-weight:bold; margin:20px 0 10px 0; text-decoration:underline;">ATTACHMENTS:</h3>
+    <div style="font-size:13px; color:#333;">${aptAttachments.length} file${aptAttachments.length === 1 ? "" : "s"} attached to this unit — appended as additional pages when downloaded as PDF.</div>`;
+  } else {
+    window.currentReportAttachmentManifest = [];
+  }
+
+  html += `</div>`;
   const ref = generateReportRef("RPT");
   const wrapped = wrapReportContent(
     html,
