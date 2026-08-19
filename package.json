@@ -1,0 +1,14 @@
+{
+  "name": "facility-pro-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Desktop wrapper for Facility Pro",
+  "main": "electron/main.js",
+  "scripts": {
+    "desktop": "electron .",
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^43.0.0"
+  }
+}
