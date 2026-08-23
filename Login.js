@@ -42,6 +42,7 @@ function isDesktopShell() {
 function bootAuthenticatedApp() {
   applyCurrentUserToLogoutLabel();
   applyRoleBasedUIVisibility();
+  startIdleLockWatch();
   if (isDesktopShell()) {
     initDesktop();
   } else {
@@ -78,6 +79,141 @@ function applyRoleBasedUIVisibility() {
 function handleSessionExpired() {
   showToast("Your session expired. Please log in again.", "warning");
   showLoginScreen();
+}
+
+// ─────────────────────────────────────────────
+// § IDLE AUTO-LOCK (shared-device protection)
+//
+// A device left logged in stays logged in for whoever picks it up
+// next — a real risk on a shared facility-office tablet/desktop, and
+// more so now that the app works fully offline: there's no server
+// round-trip during normal use that could otherwise catch an idle
+// session and bounce it back to login. After a period of inactivity,
+// this re-shows a lock screen for the CURRENT user specifically (not
+// the full "who's this" picker) — the session itself isn't destroyed,
+// just re-covered; re-entering the same PIN unlocks it again without
+// reloading the app or losing in-memory state (unsaved form drafts,
+// current view, etc). A "Not you?" link falls back to full logout for
+// someone else who wants to use the device.
+// ─────────────────────────────────────────────
+const IDLE_LOCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+let idleLockTimer = null;
+let isLockedForInactivity = false;
+
+function startIdleLockWatch() {
+  ["mousemove", "keydown", "mousedown", "touchstart", "scroll"].forEach((evt) => {
+    document.addEventListener(evt, resetIdleLockTimer, { passive: true });
+  });
+  resetIdleLockTimer();
+}
+
+function resetIdleLockTimer() {
+  if (isLockedForInactivity) return;
+  clearTimeout(idleLockTimer);
+  idleLockTimer = setTimeout(lockForInactivity, IDLE_LOCK_TIMEOUT_MS);
+}
+
+function lockForInactivity() {
+  if (isLockedForInactivity || !currentUser) return;
+  isLockedForInactivity = true;
+  showLockScreen();
+}
+
+function showLockScreen() {
+  const screen = document.getElementById("login-screen");
+  if (!screen) return;
+  screen.hidden = false;
+  screen.innerHTML = `
+    <div class="login-card">
+      <div class="login-brand">
+        <img src="logo.png" alt="" class="login-logo">
+        <span>Facility Pro</span>
+      </div>
+      <p class="login-subtitle">Locked after inactivity.<br>Hi, ${escapeHtml(currentUser.name)} — re-enter your PIN.</p>
+      <input
+        id="lock-pin-input"
+        class="login-pin-input"
+        type="password"
+        inputmode="numeric"
+        autocomplete="off"
+        maxlength="8"
+        placeholder="••••"
+        autofocus
+      >
+      <div id="lock-error" class="login-error" hidden></div>
+      <button type="button" id="lock-submit-btn" class="action-btn">Unlock</button>
+      <button type="button" id="lock-switch-user-btn" class="login-back-btn" style="position:static; margin-top:14px; display:block; width:100%; text-align:center;">Not you? Switch user</button>
+    </div>
+  `;
+
+  const pinInput = document.getElementById("lock-pin-input");
+  const submitBtn = document.getElementById("lock-submit-btn");
+  const attemptUnlock = () => submitUnlock(pinInput.value, submitBtn);
+  submitBtn.addEventListener("click", attemptUnlock);
+  pinInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") attemptUnlock();
+  });
+  document.getElementById("lock-switch-user-btn").addEventListener("click", logoutCurrentUser);
+  pinInput.focus();
+}
+
+async function submitUnlock(pin, submitBtn) {
+  const errorEl = document.getElementById("lock-error");
+  if (errorEl) errorEl.hidden = true;
+  if (!pin) return;
+
+  submitBtn.disabled = true;
+  submitBtn.classList.add("loading");
+
+  const result = await callApi("login", { userId: currentUser.userId, pin });
+
+  submitBtn.disabled = false;
+  submitBtn.classList.remove("loading");
+
+  // Offline-safe: if the network genuinely isn't reachable right now,
+  // don't lock the person out of their own already-authenticated
+  // session over a PIN check that can't complete — that would defeat
+  // the entire point of the offline-first work. This only applies to a
+  // real connectivity failure (callApi's isAuthAction branch returns
+  // exactly this message when offline) — an actual wrong-PIN response
+  // from a reachable server still shows the error below as normal.
+  if (result && result.message === "Offline") {
+    unlockScreen();
+    return;
+  }
+
+  if (!result || result.status !== "success") {
+    if (errorEl) {
+      errorEl.textContent = (result && result.message) || "Incorrect PIN.";
+      errorEl.hidden = false;
+    }
+    const pinInput = document.getElementById("lock-pin-input");
+    if (pinInput) {
+      pinInput.value = "";
+      pinInput.focus();
+    }
+    return;
+  }
+
+  // Refreshing the session token here is a useful side effect of
+  // reusing the normal login action — it extends the 12h server-side
+  // expiry from the moment of unlock, rather than leaving the original
+  // login's clock running in the background the whole time the device
+  // was idle.
+  persistSession({
+    userId: result.userId,
+    name: result.name,
+    role: result.role,
+    sessionToken: result.sessionToken,
+  });
+
+  unlockScreen();
+}
+
+function unlockScreen() {
+  isLockedForInactivity = false;
+  hideLoginScreen();
+  resetIdleLockTimer();
 }
 
 // ─────────────────────────────────────────────

@@ -273,14 +273,29 @@ function getUnitNumber(u) {
 
 function getDirectImageUrl(url) {
   if (!url) return "";
-  if (!/^https?:\/\//i.test(url)) return "";
-  if (url.includes("drive.google.com")) {
+  let normalized = String(url).trim();
+  // [BUG FIX] Was previously an all-or-nothing check requiring an
+  // explicit http(s):// scheme — someone pasting a link copied straight
+  // from a browser address bar without the scheme (e.g.
+  // "drive.google.com/file/d/.../view") would silently fail to resolve
+  // at all, which (combined with the display-toggle bug in
+  // applySettingsToUIHeaders) showed up as a broken-image placeholder
+  // instead of the intended logo. Assume https:// if no scheme is
+  // present, rather than giving up.
+  if (!/^https?:\/\//i.test(normalized)) {
+    if (/^[\w.-]+\.[a-z]{2,}\//i.test(normalized) || normalized.includes("drive.google.com")) {
+      normalized = "https://" + normalized.replace(/^\/+/, "");
+    } else {
+      return "";
+    }
+  }
+  if (normalized.includes("drive.google.com")) {
     const fileId =
-      url.split("/d/")[1]?.split("/")[0] || url.split("id=")[1]?.split("&")[0];
+      normalized.split("/d/")[1]?.split("/")[0] || normalized.split("id=")[1]?.split("&")[0];
     if (fileId)
       return `https://drive.google.com/thumbnail?id=${fileId}&sz=w800`;
   }
-  return url;
+  return normalized;
 }
 
 function extractDriveFileId(url) {
@@ -529,8 +544,7 @@ async function processSyncQueue() {
     showToast(
       conflictCount === 1
         ? "1 change couldn't sync — someone else edited that record. See Diagnostics to review."
-        : conflictCount +
-            " changes couldn't sync — someone else edited those records. See Diagnostics to review.",
+        : conflictCount + " changes couldn't sync — someone else edited those records. See Diagnostics to review.",
       "warning",
     );
   }
@@ -554,9 +568,7 @@ async function processSyncQueue() {
 // ─────────────────────────────────────────────
 function getSyncConflicts() {
   try {
-    return JSON.parse(
-      localStorage.getItem("facility_pro_sync_conflicts") || "[]",
-    );
+    return JSON.parse(localStorage.getItem("facility_pro_sync_conflicts") || "[]");
   } catch (e) {
     return [];
   }
@@ -570,27 +582,17 @@ function addSyncConflict(item, message) {
     message: message || "This record was changed elsewhere.",
     conflictedAt: Date.now(),
   });
-  localStorage.setItem(
-    "facility_pro_sync_conflicts",
-    JSON.stringify(conflicts),
-  );
+  localStorage.setItem("facility_pro_sync_conflicts", JSON.stringify(conflicts));
   updateStatusBarSync();
 }
 
 function discardSyncConflict(index) {
   const conflicts = getSyncConflicts();
   conflicts.splice(index, 1);
-  localStorage.setItem(
-    "facility_pro_sync_conflicts",
-    JSON.stringify(conflicts),
-  );
+  localStorage.setItem("facility_pro_sync_conflicts", JSON.stringify(conflicts));
   updateStatusBarSync();
   if (typeof renderDiagnosticsPanel === "function") renderDiagnosticsPanel();
-  if (
-    typeof renderSettingsShortcuts === "function" &&
-    typeof desktopState !== "undefined" &&
-    desktopState.view === "settings"
-  ) {
+  if (typeof renderSettingsShortcuts === "function" && typeof desktopState !== "undefined" && desktopState.view === "settings") {
     renderSettingsShortcuts();
   }
   showToast("Discarded.", "success");
@@ -615,17 +617,10 @@ async function retrySyncConflict(index) {
   }
 
   conflicts.splice(index, 1);
-  localStorage.setItem(
-    "facility_pro_sync_conflicts",
-    JSON.stringify(conflicts),
-  );
+  localStorage.setItem("facility_pro_sync_conflicts", JSON.stringify(conflicts));
   updateStatusBarSync();
   if (typeof renderDiagnosticsPanel === "function") renderDiagnosticsPanel();
-  if (
-    typeof renderSettingsShortcuts === "function" &&
-    typeof desktopState !== "undefined" &&
-    desktopState.view === "settings"
-  ) {
+  if (typeof renderSettingsShortcuts === "function" && typeof desktopState !== "undefined" && desktopState.view === "settings") {
     renderSettingsShortcuts();
   }
   showToast("Change applied.", "success");
@@ -643,19 +638,8 @@ function getSyncConflictsHtml() {
   }
   return conflicts
     .map((c, i) => {
-      const label =
-        c.data &&
-        (c.data.reqId ||
-          c.data.cashId ||
-          c.data.ticketId ||
-          c.data.workOrderId ||
-          c.data.paymentId ||
-          c.data.itemId ||
-          c.data.tag ||
-          c.data.rowId ||
-          c.data.logId ||
-          c.data.apt ||
-          c.action);
+      const label = c.data && (c.data.reqId || c.data.cashId || c.data.ticketId || c.data.workOrderId ||
+        c.data.paymentId || c.data.itemId || c.data.tag || c.data.rowId || c.data.logId || c.data.apt || c.action);
       return `
         <div style="border:2px solid #e0b34d; background:#fff8ea; border-radius:10px; padding:10px 12px; margin-top:8px;">
           <div style="font-weight:800; font-size:13px;">${escapeHtml(c.action)} — ${escapeHtml(String(label || ""))}</div>
@@ -673,10 +657,8 @@ function handleSyncConflictClick(event) {
   const actionEl = event.target.closest("[data-action]");
   if (!actionEl) return;
   const index = Number(actionEl.dataset.index);
-  if (actionEl.dataset.action === "discard-conflict")
-    discardSyncConflict(index);
-  else if (actionEl.dataset.action === "retry-conflict")
-    retrySyncConflict(index);
+  if (actionEl.dataset.action === "discard-conflict") discardSyncConflict(index);
+  else if (actionEl.dataset.action === "retry-conflict") retrySyncConflict(index);
 }
 
 if (typeof document !== "undefined") {
@@ -757,6 +739,22 @@ function applyAllDataPayload(payload) {
   return applied;
 }
 
+// [BUG FIX] Only the mobile shell (Init.js) ever called
+// navigator.serviceWorker.register(...) — the desktop/Electron shell
+// never registered a Service Worker at all, so it got none of the
+// app-shell precaching sw.js provides. This was largely masked by
+// main.js's random-port bug (a Service Worker registered under one
+// origin was orphaned on the next launch anyway, so it didn't matter
+// much whether desktop tried), but now that main.js uses a fixed port,
+// this is worth doing properly on both shells. Shared here so both
+// call sites (bootMobileApp in Init.js, initDesktop in desktop.js)
+// can't drift out of sync again.
+function registerServiceWorkerIfSupported() {
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("./sw.js").catch(console.error);
+  }
+}
+
 // Synchronous, no network: paints instantly from whatever was saved
 // locally on the last successful load. Falls back to legacy per-action
 // backups (from before the single-request getAllData migration) so
@@ -828,18 +826,14 @@ function exportRecordsAsCsv(records, columns, filename) {
   const header = columns.map((c) => escapeCsvValue(c.label)).join(",");
   const rows = records.map((r) =>
     columns
-      .map((c) =>
-        escapeCsvValue(typeof c.value === "function" ? c.value(r) : r[c.value]),
-      )
+      .map((c) => escapeCsvValue(typeof c.value === "function" ? c.value(r) : r[c.value]))
       .join(","),
   );
   const csvContent = [header, ...rows].join("\r\n");
 
   // Leading BOM so Excel opens the file as UTF-8 (otherwise ₦ and other
   // non-ASCII characters render as garbled text on Windows).
-  const blob = new Blob(["\uFEFF" + csvContent], {
-    type: "text/csv;charset=utf-8;",
-  });
+  const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -849,10 +843,7 @@ function exportRecordsAsCsv(records, columns, filename) {
   document.body.removeChild(link);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 
-  showToast(
-    `Exported ${records.length} record${records.length === 1 ? "" : "s"}.`,
-    "success",
-  );
+  showToast(`Exported ${records.length} record${records.length === 1 ? "" : "s"}.`, "success");
 }
 
 const CSV_EXPORT_COLUMNS = {
@@ -868,10 +859,7 @@ const CSV_EXPORT_COLUMNS = {
     {
       label: "Paid",
       value: (r) =>
-        r.isPaid === true ||
-        String(r.isPaid || r.IsPaid || "").toUpperCase() === "TRUE"
-          ? "Yes"
-          : "No",
+        r.isPaid === true || String(r.isPaid || r.IsPaid || "").toUpperCase() === "TRUE" ? "Yes" : "No",
     },
     { label: "Reference", value: (r) => r.reference || r.Reference || "" },
     { label: "Created By", value: (r) => r.createdBy || r.CreatedBy || "" },
@@ -933,16 +921,14 @@ async function generateNextRecordId(prefix, sheetName, idKey, fallbackList) {
         action: "generateId",
         data: { prefix, sheetName, idKey },
         token: API_TOKEN,
+        sessionToken: currentUser?.sessionToken || null,
       }),
     });
     if (!response.ok) throw new Error("ID_HTTP_" + response.status);
     const result = await response.json();
     if (result?.status === "success" && result.id) return result.id;
   } catch (err) {
-    console.warn(
-      "Backend ID generation unavailable; using local fallback.",
-      err,
-    );
+    console.warn("Backend ID generation unavailable; using local fallback.", err);
   }
   return generateNextId(prefix, fallbackList || [], idKey);
 }
@@ -978,8 +964,7 @@ function populateUnitDropdown(selectElementId, currentlySelectedValue) {
     callApi("getApartments", {}).then((res) => {
       if (res && Array.isArray(res)) {
         cache.apts = res;
-        if (typeof sortApartmentsCacheList === "function")
-          sortApartmentsCacheList();
+        if (typeof sortApartmentsCacheList === "function") sortApartmentsCacheList();
         renderOptions();
       }
     });

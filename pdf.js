@@ -176,6 +176,17 @@ async function compileAndDownloadUnifiedPDF(
     return;
   }
 
+  // [BUG FIX] If a previous PDF generation is still in its 2.5s cleanup
+  // grace window (or somehow got orphaned entirely — e.g. a tab
+  // switch/crash mid-request), remove it before starting a new one.
+  // Without this, two overlapping #pdf-loading-screen elements could
+  // exist at once, and — combined with this element previously being
+  // missing from the @media print hide-list — a completely unrelated
+  // native print (window.print(), used by printSinglePaymentSystem on
+  // desktop) could end up capturing this overlay instead of its own
+  // intended content if it fired while one was still on screen.
+  document.getElementById("pdf-loading-screen")?.remove();
+
   const loadingScreen = document.createElement("div");
   loadingScreen.id = "pdf-loading-screen";
   loadingScreen.style.cssText =
@@ -267,7 +278,7 @@ async function compileAndDownloadUnifiedPDF(
 
     const response = await fetch(GAS_URL, {
       method: "POST",
-      body: JSON.stringify({ action: "generatePDF", html: cleanHTML, token: API_TOKEN }),
+      body: JSON.stringify({ action: "generatePDF", html: cleanHTML, token: API_TOKEN, sessionToken: currentUser?.sessionToken || null }),
     });
     const text = await response.text();
     let result;
@@ -275,6 +286,11 @@ async function compileAndDownloadUnifiedPDF(
       result = JSON.parse(text);
     } catch (e) {
       throw new Error("Invalid PDF response");
+    }
+    if (result.code === "AUTH_REQUIRED") {
+      clearStoredSession();
+      if (typeof window.handleSessionExpired === "function") window.handleSessionExpired();
+      throw new Error("Your session expired. Please log in again.");
     }
     if (result.status !== "success")
       throw new Error(result.message || "PDF generation failed");
@@ -373,7 +389,7 @@ async function compileAndDownloadUnifiedPDF(
     }
   } catch (err) {
     console.error("PDF Generation Failed:", err);
-    showToast("PDF generation failed. Check connection.", "error");
+    showToast(err?.message || "PDF generation failed. Check connection.", "error");
   } finally {
     setTimeout(() => {
       const screen = document.getElementById("pdf-loading-screen");
@@ -704,6 +720,11 @@ function printSinglePaymentSystem(paymentId) {
   const originalTitle = document.title;
   document.title = `${built.documentTitle} - ${paymentId}`;
   showToast(`Sending ${paymentId} to printer...`, "info", 2500);
+  // [BUG FIX] Belt-and-suspenders on top of the @media print fix — if a
+  // completely unrelated PDF-download request left its loading overlay
+  // in the DOM, this print would otherwise capture that instead of
+  // `built.html` above.
+  document.getElementById("pdf-loading-screen")?.remove();
   window.print();
   setTimeout(() => {
     document.title = originalTitle;
@@ -785,6 +806,7 @@ function printAllPendingPaymentRequests() {
   const originalTitle = document.title;
   document.title = "Pending_Payment_Requests";
   showToast(`Sending ${pending.length} pending payment request${pending.length === 1 ? "" : "s"} to printer...`, "info", 2500);
+  document.getElementById("pdf-loading-screen")?.remove();
   window.print();
   setTimeout(() => {
     document.title = originalTitle;

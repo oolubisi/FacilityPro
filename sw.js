@@ -26,6 +26,19 @@ const STATIC_ASSETS = [
 ];
 
 // Cross-origin endpoints that need network-first strategy
+// [AUDIT NOTE] This branch (and API_ENDPOINTS below) never actually
+// runs: the fetch handler bails out for any non-GET request before
+// reaching this check, and every API call this app makes uses POST
+// (see Core.js's callApi / pdf.js's generatePDF fetch) — including
+// reads like getApartments, which are POST actions with a JSON body,
+// not GET requests. Left in place rather than removed because the
+// real offline-fallback-for-reads logic already lives in Core.js's
+// callApi() (localStorage, keyed per action name) — extending this
+// Service Worker to cache POST bodies correctly would need a custom
+// cache key derived from the request body's `action` field, since the
+// Cache API keys by URL by default and every action hits the same
+// GAS_URL — not worth the added complexity/risk when an equivalent,
+// simpler fallback already exists and works.
 const API_ENDPOINTS = ["script.google.com"];
 
 self.addEventListener("install", (event) => {

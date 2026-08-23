@@ -30,38 +30,71 @@ function resolveAsset(requestUrl) {
   return normalizedPath;
 }
 
-function startStaticServer() {
-  staticServer = http.createServer((request, response) => {
-    const assetPath = resolveAsset(request.url);
+// [BUG FIX] This used to be startStaticServer() calling
+// staticServer.listen(0, ...) — port 0 means "OS picks any free port,"
+// so the app's local origin (http://127.0.0.1:<port>/) was different
+// on every single launch. Browsers scope localStorage, IndexedDB, and
+// Service Worker registration per-origin — with a different port each
+// time, none of that ever persisted between app restarts. That's the
+// actual reason the desktop app couldn't log in offline: the stored
+// session lived at the previous launch's now-nonexistent origin, so
+// every restart looked like a first-ever visit as far as the browser's
+// storage was concerned. Same root cause silently broke the offline
+// Service Worker cache on desktop the whole time, too.
+//
+// Fix: use a fixed port so the origin is identical across launches.
+// Falls back to a random port (with a warning) only if the fixed one
+// is somehow already taken by something else on the machine — the app
+// still works in that case, it just won't get offline persistence for
+// that one session.
+const PREFERRED_PORT = 47821;
 
-    if (!assetPath) {
-      response.writeHead(403);
-      response.end("Forbidden");
-      return;
-    }
+function tryListen(port) {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((request, response) => {
+      const assetPath = resolveAsset(request.url);
 
-    fs.readFile(assetPath, (error, data) => {
-      if (error) {
-        response.writeHead(404);
-        response.end("Not found");
+      if (!assetPath) {
+        response.writeHead(403);
+        response.end("Forbidden");
         return;
       }
 
-      response.writeHead(200, {
-        "Cache-Control": "no-cache",
-        "Content-Type": mimeTypes[path.extname(assetPath)] || "application/octet-stream",
-      });
-      response.end(data);
-    });
-  });
+      fs.readFile(assetPath, (error, data) => {
+        if (error) {
+          response.writeHead(404);
+          response.end("Not found");
+          return;
+        }
 
-  return new Promise((resolve, reject) => {
-    staticServer.once("error", reject);
-    staticServer.listen(0, "127.0.0.1", () => {
-      const { port } = staticServer.address();
-      resolve(`http://127.0.0.1:${port}/`);
+        response.writeHead(200, {
+          "Cache-Control": "no-cache",
+          "Content-Type": mimeTypes[path.extname(assetPath)] || "application/octet-stream",
+        });
+        response.end(data);
+      });
     });
+
+    server.once("error", (err) => {
+      server.close();
+      reject(err);
+    });
+    server.listen(port, "127.0.0.1", () => resolve(server));
   });
+}
+
+async function startStaticServer() {
+  try {
+    staticServer = await tryListen(PREFERRED_PORT);
+  } catch (err) {
+    console.warn(
+      `Facility Pro: preferred port ${PREFERRED_PORT} unavailable (${err.code}), falling back to a random port. ` +
+        "Offline login/caching won't persist across restarts for this session.",
+    );
+    staticServer = await tryListen(0);
+  }
+  const { port } = staticServer.address();
+  return `http://127.0.0.1:${port}/`;
 }
 
 async function createWindow() {

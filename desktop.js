@@ -136,6 +136,7 @@ const viewMeta = {
 // login), instead of this file self-triggering on DOMContentLoaded.
 
 async function initDesktop() {
+  registerServiceWorkerIfSupported();
   installDesktopCompatibilityShims();
   wireDesktopEvents();
 

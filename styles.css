@@ -699,7 +699,9 @@ textarea:disabled {
   #global-loader,
   #status-bar,
   #bulk-action-bar,
-  #pull-indicator {
+  #pull-indicator,
+  #pdf-loading-screen,
+  #login-screen {
     display: none !important;
   }
   body {
@@ -774,34 +776,19 @@ textarea:disabled {
   }
 }
 
-/* Dark mode support (basic) */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1a1d21;
-    --card: #2c3035;
-    --card-light: #3a3f45;
-    --border: #495057;
-    --text: #f8f9fa;
-    --muted: #adb5bd;
-  }
-  body {
-    background: var(--bg);
-    color: var(--text);
-  }
-  input,
-  select,
-  textarea {
-    background: #343a40;
-    color: #f8f9fa;
-    border-color: #495057;
-  }
-  input:disabled,
-  select:disabled,
-  textarea:disabled {
-    background: #2c3035;
-    color: #adb5bd;
-  }
-}
+/* [BUG FIX] Removed the automatic prefers-color-scheme: dark override.
+   It only reskinned a handful of root CSS variables (--bg, --text,
+   etc), but the vast majority of this app's components hardcode
+   light-theme colors directly as literal hex values in inline styles
+   throughout Records.js/Modals-forms.js/Reports.js — completely
+   unaffected by these variables. The partial override didn't produce
+   a working dark mode; it selectively broke a few components that DID
+   use the variables (.home-btn, .action-btn, .toast all rendered
+   white-on-white — invisible primary buttons and every single toast
+   notification) while leaving everything else light. A half-dark app
+   is worse than a consistently light one; a real dark mode would need
+   auditing every hardcoded color in the app, which is out of scope
+   here. Forcing light theme regardless of OS/browser preference. */
 
 /* ─────────────────────────────────────────────
    § LOGIN SCREEN

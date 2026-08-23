@@ -12,8 +12,7 @@
 // a stored session on page load or right after a successful login).
 // ─────────────────────────────────────────────
 async function bootMobileApp() {
-  if ("serviceWorker" in navigator)
-    navigator.serviceWorker.register("./sw.js").catch(console.error);
+  registerServiceWorkerIfSupported();
   window.addEventListener("online", processSyncQueue);
   if (navigator.onLine) processSyncQueue();
 
@@ -73,8 +72,22 @@ async function loadApplicationSettingsData() {
 function applySettingsToUIHeaders() {
   const logoEl = document.getElementById("app-header-logo");
   if (logoEl) {
-    logoEl.src = getDirectImageUrl(appSettings.logoUrl) || "";
-    logoEl.style.display = appSettings.logoUrl ? "block" : "none";
+    // [BUG FIX] display was toggled based on the RAW appSettings.logoUrl
+    // being truthy, independent of whether getDirectImageUrl() actually
+    // managed to resolve it into something usable. If someone saved a
+    // Logo URL that getDirectImageUrl() can't parse (missing http(s)://
+    // scheme, an unrecognized link format, etc), that function returns
+    // "" — but the raw setting was still truthy, so the <img> was shown
+    // anyway with an empty src, rendering as a broken-image placeholder
+    // instead of just falling back to the bundled default logo like
+    // desktop's equivalent code already correctly does.
+    const resolvedLogoUrl = getDirectImageUrl(appSettings.logoUrl);
+    if (resolvedLogoUrl) {
+      logoEl.src = resolvedLogoUrl;
+      logoEl.style.display = "block";
+    } else {
+      logoEl.style.display = "none";
+    }
   }
   const titleEl = document.getElementById("app-header-title");
   if (titleEl) titleEl.innerText = appSettings.estateName || "Facility Pro";
