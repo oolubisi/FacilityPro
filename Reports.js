@@ -320,6 +320,76 @@ function handleReportLayoutSwitch() {
   }
 }
 
+// [FEATURE] Reusable SVG pie chart + legend for reports. Built as pure
+// SVG (no canvas, no charting library) because reports are rendered
+// server-side to PDF (Code.gs's handleGeneratePDF via
+// Utilities.newBlob(...).getAs(PDF)) — there's no JS runtime available
+// at PDF-render time, only whatever static HTML/SVG we hand it.
+//
+// items: [{ label, value, color }, ...] — every item becomes both a
+// pie slice AND a legend row (that pairing is the whole point: nothing
+// should show up in the chart without also being labeled). Items with
+// a zero or negative value are skipped (an empty/negative wedge has no
+// meaningful angle to draw), but still worth knowing about if a
+// category you expected is silently missing from the chart.
+function buildPieChartWithLegend(items, options = {}) {
+  const size = options.size || 220;
+  const radius = size / 2;
+  const cx = radius;
+  const cy = radius;
+
+  const usable = items.filter((i) => i && Number(i.value) > 0);
+  const total = usable.reduce((sum, i) => sum + Number(i.value), 0);
+
+  if (total <= 0) {
+    return `<div style="text-align:center; color:#666; font-size:13px; padding:20px;">No data to chart.</div>`;
+  }
+
+  let cumulativeAngle = -90; // start at 12 o'clock, matches conventional pie-chart orientation
+  const slices = usable
+    .map((item) => {
+      const fraction = Number(item.value) / total;
+      const angle = fraction * 360;
+      const startAngle = cumulativeAngle;
+      const endAngle = cumulativeAngle + angle;
+      cumulativeAngle = endAngle;
+
+      // A full-circle single-item pie can't be drawn as one SVG arc
+      // (start === end point), so draw it as a full <circle> instead.
+      if (fraction >= 0.9999) {
+        return `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="${escapeHtml(item.color)}"></circle>`;
+      }
+
+      const toXY = (angleDeg) => {
+        const rad = (angleDeg * Math.PI) / 180;
+        return [cx + radius * Math.cos(rad), cy + radius * Math.sin(rad)];
+      };
+      const [x1, y1] = toXY(startAngle);
+      const [x2, y2] = toXY(endAngle);
+      const largeArcFlag = angle > 180 ? 1 : 0;
+
+      return `<path d="M ${cx} ${cy} L ${x1.toFixed(2)} ${y1.toFixed(2)} A ${radius} ${radius} 0 ${largeArcFlag} 1 ${x2.toFixed(2)} ${y2.toFixed(2)} Z" fill="${escapeHtml(item.color)}"></path>`;
+    })
+    .join("");
+
+  const legendRows = usable
+    .map((item) => {
+      const pct = ((Number(item.value) / total) * 100).toFixed(1);
+      return `<div style="display:flex; align-items:center; gap:8px; padding:4px 0;">
+        <span style="display:inline-block; width:14px; height:14px; border-radius:3px; background:${escapeHtml(item.color)}; flex-shrink:0;"></span>
+        <span style="font-weight:700; flex:1;">${escapeHtml(item.label)}</span>
+        <span style="font-weight:900;">${pct}%</span>
+        ${options.showValues !== false ? `<span style="color:#666; min-width:110px; text-align:right;">${escapeHtml(options.valuePrefix || "")}${formatMoney(item.value)}</span>` : ""}
+      </div>`;
+    })
+    .join("");
+
+  return `<div style="display:flex; align-items:center; gap:24px; flex-wrap:wrap; page-break-inside:avoid;">
+    <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="flex-shrink:0;">${slices}</svg>
+    <div style="flex:1; min-width:200px; font-size:13px;">${legendRows}</div>
+  </div>`;
+}
+
 function compileReportPreview() {
   const layout = document.getElementById("rep-layout-selector").value;
   const viewport = document.getElementById("report-preview-viewport");
@@ -710,6 +780,22 @@ function compileReportPreview() {
       <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #e9ecef;"><span style="font-weight:700;">Total Outflow</span><span style="font-weight:900; color:#dc3545;">N${formatMoney(totalOutflow)}</span></div>
       <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #e9ecef;"><span style="font-weight:700;">Cash Expenses</span><span style="font-weight:900;">N${formatMoney(cashExp)}</span></div>
       <div style="display:flex; justify-content:space-between; padding:8px 0 0 0; margin-top:8px; border-top:2px solid #000;"><span style="font-weight:900; font-size:14px;">NET POSITION</span><span style="font-weight:900; font-size:18px; color:${totalInflow - totalOutflow - cashExp >= 0 ? "#198754" : "#dc3545"};">${totalInflow - totalOutflow - cashExp >= 0 ? "" : "-"}N${formatMoney(Math.abs(totalInflow - totalOutflow - cashExp))}</span></div>
+    </div>`;
+
+    // [FEATURE] Every category in the financial breakdown above forms
+    // one pie slice and one legend row below — see
+    // buildPieChartWithLegend() for why nothing can appear in one
+    // without the other.
+    out += `<div style="background:#fff; border:2px solid #000; border-radius:12px; padding:16px; margin-top:12px;">
+      <h3 style="font-size:13px; font-weight:900; text-transform:uppercase; margin:0 0 12px 0; border-bottom:1px solid #ccc; padding-bottom:4px;">Financial Breakdown</h3>
+      ${buildPieChartWithLegend(
+        [
+          { label: "Inflow", value: totalInflow, color: "#198754" },
+          { label: "Outflow", value: totalOutflow, color: "#dc3545" },
+          { label: "Cash Expenses", value: cashExp, color: "#ffc107" },
+        ],
+        { valuePrefix: "N" },
+      )}
     </div>`;
   } else if (layout === "data_quality") {
     out += generateTitleBar("DATA QUALITY AUDIT");
