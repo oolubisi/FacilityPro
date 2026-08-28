@@ -973,6 +973,50 @@ function populateUnitDropdown(selectElementId, currentlySelectedValue) {
   }
 }
 
+// [FEATURE] Service Charge contributions/apartment-specific expenses
+// only make sense for a tenanted unit — a vacant apartment has no
+// tenant to receive a contribution or be charged a specific expense.
+// Deliberately a SEPARATE function rather than adding this filter to
+// populateUnitDropdown() above, since that shared function is used
+// throughout the app (Work Orders, Tickets, Assets, Cash Expenses,
+// etc.) where picking a vacant unit is often legitimate — restricting
+// it there would silently break those.
+function populateOccupiedUnitDropdown(selectElementId, currentlySelectedValue) {
+  const sel = document.getElementById(selectElementId);
+  if (!sel) return;
+  sel.innerHTML = '<option value="">-- Choose Occupied Unit --</option>';
+
+  const renderOptions = () => {
+    (cache.apts || []).forEach((u) => {
+      const uNum = getUnitNumber(u);
+      if (!uNum && uNum !== 0) return;
+      if (String(u.type || u.Type || "").toLowerCase() === "services") return;
+      if (String(u.status || u.Status || "").toLowerCase() !== "occupied") return;
+      const opt = document.createElement("option");
+      opt.value = uNum;
+      opt.textContent = "Unit " + uNum;
+      if (
+        currentlySelectedValue &&
+        String(uNum) === String(currentlySelectedValue)
+      )
+        opt.selected = true;
+      sel.appendChild(opt);
+    });
+  };
+
+  if (!cache.apts || cache.apts.length === 0) {
+    callApi("getApartments", {}).then((res) => {
+      if (res && Array.isArray(res)) {
+        cache.apts = res;
+        if (typeof sortApartmentsCacheList === "function") sortApartmentsCacheList();
+        renderOptions();
+      }
+    });
+  } else {
+    renderOptions();
+  }
+}
+
 // Pushes appSettings values into the shared settings form fields
 // (#cfg-estate-name etc). Same field IDs are used in both the mobile
 // Settings page and the desktop Settings modal.

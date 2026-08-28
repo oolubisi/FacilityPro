@@ -493,7 +493,7 @@ async function openModal(type, editData = null) {
       <div class="form-field"><label ${lbl}>Date</label><input id="sc_date" type="date" value="${new Date().toISOString().slice(0, 10)}" ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="sc_description" ${ls}></div>
     `;
-    populateUnitDropdown("sc_apt");
+    populateOccupiedUnitDropdown("sc_apt");
 
     submit.onclick = () => {
       const apt = document.getElementById("sc_apt").value;
@@ -538,7 +538,7 @@ async function openModal(type, editData = null) {
       <div class="form-field"><label ${lbl}>Date</label><input id="sc_ae_date" type="date" value="${new Date().toISOString().slice(0, 10)}" ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="sc_ae_description" ${ls}></div>
     `;
-    populateUnitDropdown("sc_ae_apt");
+    populateOccupiedUnitDropdown("sc_ae_apt");
 
     submit.onclick = () => {
       const apt = document.getElementById("sc_ae_apt").value;
