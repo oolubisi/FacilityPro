@@ -413,6 +413,23 @@ async function openModal(type, editData = null) {
         )
         .sort((a, b) => new Date(b.updatedAt || b.date || 0) - new Date(a.updatedAt || a.date || 0))[0]?.meterNo ||
       "";
+
+    // [FEATURE] Suggested weight defaults to a ratio by apartment type
+    // (Studio : 1-Bedroom : 2-Bedroom = 1 : 1.25 : 1.5) when nobody's
+    // set a custom weight for this unit yet — mirrors
+    // getDefaultWeightForType() in Code.gs exactly, so what you see
+    // here is what actually gets used if you save it as-is. Still
+    // fully editable for a genuine per-unit override.
+    const getDefaultWeightForType = (type) => {
+      const t = String(type || "").toLowerCase();
+      if (t.includes("studio")) return 1;
+      if (t.includes("2") && t.includes("bed")) return 1.5;
+      if (t.includes("1") && t.includes("bed")) return 1.25;
+      return 1;
+    };
+    const suggestedWeight =
+      editData.weight || editData.Weight || getDefaultWeightForType(editData.type || editData.Type);
+
     body.innerHTML = `
       <div class="form-grid-3">
         <div class="form-field"><label ${lbl}>Tenant Name</label><input id="f_tenant" value="${escapeHtml(editData.tenant || editData.Tenant || "")}" ${ls}></div>
@@ -420,7 +437,7 @@ async function openModal(type, editData = null) {
         <div class="form-field"><label ${lbl}>Current Rent (₦)</label><input id="f_rent" type="text" inputmode="numeric" placeholder="Annual rent amount" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\B(?=(\d{3})+(?!\d))/g,',')" value="${(editData.rent || editData.Rent) ? Number(editData.rent || editData.Rent).toLocaleString("en-US") : ""}" ${ls}></div>
         <div class="form-field"><label ${lbl}>Service Charge Deposit (₦)</label><input id="f_deposit" type="text" inputmode="numeric" placeholder="Service charge deposit amount" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\B(?=(\d{3})+(?!\d))/g,',')" value="${(editData.serviceChargeDeposit || editData.ServiceChargeDeposit) ? Number(editData.serviceChargeDeposit || editData.ServiceChargeDeposit).toLocaleString("en-US") : ""}" ${ls}></div>
         <div class="form-field"><label ${lbl}>Meter No</label><input id="f_meter" value="${escapeHtml(suggestedMeterNo)}" disabled ${ls}></div>
-        <div class="form-field"><label ${lbl}>Service Charge Weight <span style="font-weight:600; color:var(--muted);">(for shared-cost splitting)</span></label><input id="f_weight" type="number" min="0" step="0.1" placeholder="Defaults to 1 if left blank" value="${escapeHtml(editData.weight || editData.Weight || "")}" ${ls}></div>
+        <div class="form-field"><label ${lbl}>Service Charge Weight <span style="font-weight:600; color:var(--muted);">(Studio 1 : 1-Bed 1.25 : 2-Bed 1.5, unless overridden)</span></label><input id="f_weight" type="number" min="0" step="0.1" value="${escapeHtml(String(suggestedWeight))}" ${ls}></div>
         <div class="form-field">
           <label ${lbl}>Status State</label>
           <select id="f_status" ${ls}>
