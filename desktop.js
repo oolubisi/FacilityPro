@@ -81,14 +81,6 @@ const viewMeta = {
     newType: "cashexpense",
     empty: "No cash expenses found.",
   },
-  serviceunits: {
-    title: "Service Units",
-    kicker: "Common Area registry",
-    key: "apts",
-    action: "getApartments",
-    newType: "apartment",
-    empty: "No service units found.",
-  },
   staff: {
     title: "Staff",
     kicker: "Team directory",
@@ -407,18 +399,7 @@ function renderDesktop() {
   if (desktopState.view === "help") return renderHelpView();
   if (desktopState.view === "archived") return renderArchivedShortcuts();
 
-  // [FIX] Apartments and Service Units both read from cache.apts, split
-  // by type — mirrors the same distinction Records.js draws for the
-  // mobile shell (type 'services' = Common Area, shown separately from
-  // real tenancy units rather than mixed into the main Apartments list).
-  let sourceRecords = cache[meta.key] || [];
-  if (desktopState.view === "apartments") {
-    sourceRecords = sourceRecords.filter((a) => a && String(a.type || a.Type || "").toLowerCase() !== "services");
-  } else if (desktopState.view === "serviceunits") {
-    sourceRecords = sourceRecords.filter((a) => a && String(a.type || a.Type || "").toLowerCase() === "services");
-  }
-
-  const records = sortRecords(desktopState.view, filterRecords(sourceRecords));
+  const records = sortRecords(desktopState.view, filterRecords(cache[meta.key] || []));
   desktopState.lastRecords = records;
   document.getElementById("record-count").textContent = `${records.length} ${records.length === 1 ? "record" : "records"}`;
   const sectionedConfig = sectionedViewConfig[desktopState.view];
@@ -555,7 +536,7 @@ const sectionedViewConfig = {
     sections: [
       { key: "vacant", label: "Vacant" },
       { key: "occupied", label: "Occupied" },
-      { key: "common", label: "Common Area" },
+      { key: "common", label: "Services" },
     ],
   },
   assets: {
