@@ -601,6 +601,8 @@ function showPage(p) {
   else if (p === "settings") {
     syncSettingsInputsToUIFields();
     renderUsersList("mobile-user-list");
+  } else if (p === "servicecharge") {
+    refreshServiceChargeSection();
   }
   else if (p === "help") renderMobileHelpContent();
   else if (p === "utilities") {

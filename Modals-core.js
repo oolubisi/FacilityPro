@@ -134,6 +134,146 @@ function resetUserPin(userId) {
 }
 
 // ─────────────────────────────────────────────
+// § SERVICE CHARGE LEDGER (manager+ only — see checkBusinessPermission
+// in Code.gs; this section is unreachable for staff/viewer both
+// because the nav entry is hidden (Login.js) AND because the server
+// refuses the underlying getServiceChargeLedger request outright, not
+// just a UI restriction).
+//
+// Deliberately NOT part of the cache/getAllData system — see Code.gs's
+// comments on why staff/viewer must never even receive this data —
+// so this section fetches and refreshes independently.
+// ─────────────────────────────────────────────
+let lastFetchedServiceChargeLedger = [];
+
+async function refreshServiceChargeSection() {
+  const containerId = isDesktopShell() ? "desktop-sc-ledger" : "mobile-sc-ledger";
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  container.innerHTML = `<p style="color:var(--muted); font-size:13px;">Loading ledger...</p>`;
+  const result = await callApi("getServiceChargeLedger", {});
+
+  if (!result || !Array.isArray(result)) {
+    container.innerHTML = `<p style="color:var(--danger); font-size:13px; font-weight:700;">${escapeHtml((result && result.message) || "Couldn't load the ledger.")}</p>`;
+    return;
+  }
+
+  lastFetchedServiceChargeLedger = result;
+  renderServiceChargeSummary();
+  renderServiceChargeLedgerTable(container, result);
+}
+
+function renderServiceChargeSummary() {
+  const summaryId = isDesktopShell() ? "desktop-sc-summary" : "mobile-sc-summary";
+  const el = document.getElementById(summaryId);
+  if (!el) return;
+
+  const balances = computeServiceChargeBalancesAsOf(lastFetchedServiceChargeLedger, null);
+  const total = Object.values(balances).reduce((sum, v) => sum + v, 0);
+
+  el.innerHTML = `
+    <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px;">
+      <div style="flex:1; min-width:160px; background:#fff; border:2px solid #000; border-radius:12px; padding:14px;">
+        <div style="font-size:11px; font-weight:900; text-transform:uppercase; color:var(--muted);">Pooled Estate Balance (now)</div>
+        <div style="font-size:22px; font-weight:900; margin-top:4px;">₦${formatMoney(total)}</div>
+      </div>
+      <div style="flex:1; min-width:160px; background:#fff; border:2px solid #000; border-radius:12px; padding:14px;">
+        <div style="font-size:11px; font-weight:900; text-transform:uppercase; color:var(--muted);">Apartments With Activity</div>
+        <div style="font-size:22px; font-weight:900; margin-top:4px;">${Object.keys(balances).length}</div>
+      </div>
+    </div>
+  `;
+}
+
+// A given apartment's balance as of a date = sum of its ledger rows
+// dated on or before that date (credits add, debits subtract).
+// asOfDate === null means "as of right now" (every row counts). This
+// is also what the two Service Charge reports use for opening/closing
+// balances — see Reports.js.
+function computeServiceChargeBalancesAsOf(ledger, asOfDate) {
+  const cutoff = asOfDate ? new Date(asOfDate).getTime() : null;
+  const balances = {};
+  (ledger || []).forEach((row) => {
+    if (!row || !row.apt) return;
+    const rowTime = new Date(row.date).getTime();
+    if (cutoff !== null && (isNaN(rowTime) || rowTime > cutoff)) return;
+    const amt = Number(row.amount) || 0;
+    const signed = String(row.direction).toLowerCase() === "credit" ? amt : -amt;
+    balances[row.apt] = (balances[row.apt] || 0) + signed;
+  });
+  return balances;
+}
+
+function renderServiceChargeLedgerTable(container, ledger) {
+  const sorted = [...ledger].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  if (sorted.length === 0) {
+    container.innerHTML = `<p style="color:var(--muted); font-size:13px;">No entries yet.</p>`;
+    return;
+  }
+
+  const typeLabels = { contribution: "Contribution", apartment_expense: "Apartment Expense", shared_expense: "Shared Expense" };
+  const typeColors = { contribution: "#198754", apartment_expense: "#dc3545", shared_expense: "#fd7e14" };
+
+  container.innerHTML = `<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:13px;">
+    <thead><tr style="border-bottom:2px solid #000; text-align:left;">
+      <th style="padding:8px 6px;">Date</th>
+      <th style="padding:8px 6px;">Apt</th>
+      <th style="padding:8px 6px;">Type</th>
+      <th style="padding:8px 6px;">Category</th>
+      <th style="padding:8px 6px; text-align:right;">Amount</th>
+      <th style="padding:8px 6px;"></th>
+    </tr></thead>
+    <tbody>
+      ${sorted
+        .map((row) => {
+          const canDelete = isEntrySameCalendarDay(row.createdAt);
+          const amountDisplay = `${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}`;
+          return `<tr style="border-bottom:1px solid #eee;">
+            <td style="padding:6px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
+            <td style="padding:6px; font-weight:800;">${escapeHtml(row.apt || "")}</td>
+            <td style="padding:6px;"><span style="background:${typeColors[row.type] || "#666"}22; color:${typeColors[row.type] || "#666"}; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:800;">${typeLabels[row.type] || row.type}</span></td>
+            <td style="padding:6px;">${escapeHtml(row.category || "")}</td>
+            <td style="padding:6px; text-align:right; font-weight:800; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${amountDisplay}</td>
+            <td style="padding:6px; text-align:right; white-space:nowrap;">
+              ${canDelete ? `<button type="button" data-modal-action="delete-service-charge-entry" data-id="${escapeHtml(row.entryId)}" style="background:#fdecea; color:#dc3545; border:0; border-radius:6px; padding:4px 8px; font-size:11px; font-weight:700; cursor:pointer;">Delete</button>` : `<span style="color:var(--muted); font-size:11px;">Locked</span>`}
+            </td>
+          </tr>`;
+        })
+        .join("")}
+    </tbody>
+  </table></div>`;
+}
+
+// Entries can only be deleted the same calendar day they were created
+// — mirrors Code.gs's isSameCalendarDay(), which is the actual
+// enforcement. This client-side copy only controls whether the Delete
+// button shows at all; the server rejects the request regardless.
+function isEntrySameCalendarDay(isoString) {
+  if (!isoString) return false;
+  const d = new Date(isoString);
+  const now = new Date();
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+}
+
+function deleteServiceChargeLedgerEntry(entryId) {
+  if (!window.confirm("Delete this entry? This can't be undone. (If it's part of a shared expense, every apartment's share of that same expense will be removed together.)")) return;
+  callApi("deleteServiceChargeEntry", { entryId }).then((result) => {
+    if (result && result.status === "success") {
+      showToast("Entry deleted.", "success");
+      refreshServiceChargeSection();
+    } else {
+      showToast((result && result.message) || "Failed to delete entry.", "error");
+    }
+  });
+}
+
+// ─────────────────────────────────────────────
 // § DELEGATED CLICK HANDLING (modal body)
 // #modalBody markup (here and in Modals-forms.js) uses data-modal-action
 // attributes instead of inline onclick="..." strings, matching the
@@ -182,6 +322,9 @@ function handleModalContentClick(event) {
     }
     case "reset-user-pin":
       resetUserPin(actionEl.dataset.id);
+      break;
+    case "delete-service-charge-entry":
+      deleteServiceChargeLedgerEntry(actionEl.dataset.id);
       break;
   }
 }

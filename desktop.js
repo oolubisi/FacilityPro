@@ -103,6 +103,12 @@ const viewMeta = {
     key: "archived", // not a real cache key — renderDesktop() special-cases this view, see renderArchivedShortcuts()
     empty: "Nothing archived yet.",
   },
+  servicecharge: {
+    title: "Service Charge",
+    kicker: "Contributions, expenses & balances — managers only",
+    key: "servicecharge", // not a real cache key — renderDesktop() special-cases this view
+    empty: "",
+  },
   reports: {
     title: "Reports",
     kicker: "Desktop shortcuts",
@@ -398,6 +404,7 @@ function renderDesktop() {
   if (desktopState.view === "settings") return renderSettingsShortcuts();
   if (desktopState.view === "help") return renderHelpView();
   if (desktopState.view === "archived") return renderArchivedShortcuts();
+  if (desktopState.view === "servicecharge") return renderServiceChargeShortcuts();
 
   const records = sortRecords(desktopState.view, filterRecords(cache[meta.key] || []));
   desktopState.lastRecords = records;
@@ -1099,6 +1106,29 @@ function renderArchivedListBody() {
   // items match this selection." fallback into the container when
   // empty — nothing extra needed here.
   if (listEl) renderArchiveBinDashboardView(listEl);
+}
+
+// Manager+ only — the nav entry above is hidden for staff/viewer
+// (Login.js), and the server refuses getServiceChargeLedger outright
+// for them regardless, so this is defense in depth, not the real gate.
+function renderServiceChargeShortcuts() {
+  document.getElementById("record-count").textContent = "";
+  document.getElementById("card-grid").innerHTML = `
+    <div id="desktop-sc-summary" style="grid-column:1/-1;"></div>
+    <div class="desktop-form-card" style="grid-column:1/-1;">
+      <h3 style="margin:0 0 12px; font-size:15px;">Log an Entry</h3>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="action-btn" style="width:auto; background:var(--green);" onclick="openModal('contribution')"><i class="fas fa-hand-holding-dollar"></i> New Contribution</button>
+        <button class="action-btn" style="width:auto; background:var(--red);" onclick="openModal('apartmentexpense')"><i class="fas fa-receipt"></i> New Apartment Expense</button>
+        <button class="action-btn" style="width:auto; background:#fd7e14;" onclick="openModal('sharedexpense')"><i class="fas fa-diagram-project"></i> New Shared Expense</button>
+      </div>
+    </div>
+    <div class="desktop-form-card" style="grid-column:1/-1;">
+      <h3 style="margin:0 0 12px; font-size:15px;">Ledger</h3>
+      <div id="desktop-sc-ledger"></div>
+    </div>
+  `;
+  refreshServiceChargeSection();
 }
 
 function renderHelpView() {

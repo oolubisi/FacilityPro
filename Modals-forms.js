@@ -420,6 +420,7 @@ async function openModal(type, editData = null) {
         <div class="form-field"><label ${lbl}>Current Rent (₦)</label><input id="f_rent" type="text" inputmode="numeric" placeholder="Annual rent amount" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\B(?=(\d{3})+(?!\d))/g,',')" value="${(editData.rent || editData.Rent) ? Number(editData.rent || editData.Rent).toLocaleString("en-US") : ""}" ${ls}></div>
         <div class="form-field"><label ${lbl}>Service Charge Deposit (₦)</label><input id="f_deposit" type="text" inputmode="numeric" placeholder="Service charge deposit amount" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\B(?=(\d{3})+(?!\d))/g,',')" value="${(editData.serviceChargeDeposit || editData.ServiceChargeDeposit) ? Number(editData.serviceChargeDeposit || editData.ServiceChargeDeposit).toLocaleString("en-US") : ""}" ${ls}></div>
         <div class="form-field"><label ${lbl}>Meter No</label><input id="f_meter" value="${escapeHtml(suggestedMeterNo)}" disabled ${ls}></div>
+        <div class="form-field"><label ${lbl}>Service Charge Weight <span style="font-weight:600; color:var(--muted);">(for shared-cost splitting)</span></label><input id="f_weight" type="number" min="0" step="0.1" placeholder="Defaults to 1 if left blank" value="${escapeHtml(editData.weight || editData.Weight || "")}" ${ls}></div>
         <div class="form-field">
           <label ${lbl}>Status State</label>
           <select id="f_status" ${ls}>
@@ -454,6 +455,7 @@ async function openModal(type, editData = null) {
         rent: document.getElementById("f_rent").value.replace(/,/g, ""),
         serviceChargeDeposit: document.getElementById("f_deposit").value.replace(/,/g, ""),
         meterNo: sanitizeInput(document.getElementById("f_meter").value),
+        weight: document.getElementById("f_weight").value,
         phone1: String(document.getElementById("f_p1").value),
         phone2: String(document.getElementById("f_p2").value),
         leaseEnd: toSheetDate(document.getElementById("f_lease").value),
@@ -468,6 +470,153 @@ async function openModal(type, editData = null) {
           closeModal();
           refreshData("apartments");
           showToast("Apartment updated", "success");
+        })
+        .catch(() => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+        });
+    };
+  }
+
+  // ── SERVICE CHARGE: CONTRIBUTION ──
+  // Not a "record" in the usual cache/refreshData sense (the Service
+  // Charge ledger is deliberately excluded from getAllData — see
+  // Code.gs — so staff/viewer accounts never receive it at all). These
+  // three branches call the API directly and refresh the dedicated
+  // Service Charge section view instead of going through
+  // submitModalRecord()'s cache-based flow.
+  else if (type === "contribution") {
+    title.innerText = "Log Contribution";
+    body.innerHTML = `
+      <div class="form-field span-3"><label ${lbl}>Apartment</label><select id="sc_apt" ${ls}></select></div>
+      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="sc_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Date</label><input id="sc_date" type="date" value="${new Date().toISOString().slice(0, 10)}" ${ls}></div>
+      <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="sc_description" ${ls}></div>
+    `;
+    populateUnitDropdown("sc_apt");
+
+    submit.onclick = () => {
+      const apt = document.getElementById("sc_apt").value;
+      const amount = document.getElementById("sc_amount").value.replace(/,/g, "");
+      if (!apt || !amount || Number(amount) <= 0) {
+        showToast("Select an apartment and enter a positive amount.", "error");
+        return;
+      }
+      submit.disabled = true;
+      submit.classList.add("loading");
+      callApi("logContribution", {
+        apt,
+        amount,
+        date: document.getElementById("sc_date").value,
+        description: sanitizeInput(document.getElementById("sc_description").value),
+      })
+        .then((result) => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+          if (!result || result.status !== "success") {
+            showToast((result && result.message) || "Failed to log contribution.", "error");
+            return;
+          }
+          closeModal();
+          showToast("Contribution logged.", "success");
+          if (typeof refreshServiceChargeSection === "function") refreshServiceChargeSection();
+        })
+        .catch(() => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+        });
+    };
+  }
+
+  // ── SERVICE CHARGE: APARTMENT-SPECIFIC EXPENSE ──
+  else if (type === "apartmentexpense") {
+    title.innerText = "Log Apartment Expense";
+    body.innerHTML = `
+      <div class="form-field span-3"><label ${lbl}>Apartment</label><select id="sc_ae_apt" ${ls}></select></div>
+      <div class="form-field"><label ${lbl}>Category</label><input id="sc_ae_category" placeholder="e.g. Plumbing Repair" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="sc_ae_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Date</label><input id="sc_ae_date" type="date" value="${new Date().toISOString().slice(0, 10)}" ${ls}></div>
+      <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="sc_ae_description" ${ls}></div>
+    `;
+    populateUnitDropdown("sc_ae_apt");
+
+    submit.onclick = () => {
+      const apt = document.getElementById("sc_ae_apt").value;
+      const amount = document.getElementById("sc_ae_amount").value.replace(/,/g, "");
+      if (!apt || !amount || Number(amount) <= 0) {
+        showToast("Select an apartment and enter a positive amount.", "error");
+        return;
+      }
+      submit.disabled = true;
+      submit.classList.add("loading");
+      callApi("logApartmentExpense", {
+        apt,
+        amount,
+        category: sanitizeInput(document.getElementById("sc_ae_category").value) || "Expense",
+        date: document.getElementById("sc_ae_date").value,
+        description: sanitizeInput(document.getElementById("sc_ae_description").value),
+      })
+        .then((result) => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+          if (!result || result.status !== "success") {
+            showToast((result && result.message) || "Failed to log expense.", "error");
+            return;
+          }
+          closeModal();
+          showToast("Apartment expense logged.", "success");
+          if (typeof refreshServiceChargeSection === "function") refreshServiceChargeSection();
+        })
+        .catch(() => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+        });
+    };
+  }
+
+  // ── SERVICE CHARGE: SHARED EXPENSE ──
+  // No apartment picker — the server splits this by each currently-
+  // occupied real apartment's weight (see logSharedExpense in Code.gs).
+  // Also the path for Common Area/Service unit costs, which never get
+  // their own balance — see the Weight field's help text on the
+  // apartment form.
+  else if (type === "sharedexpense") {
+    title.innerText = "Log Shared Expense";
+    body.innerHTML = `
+      <div class="form-field span-3" style="background:#f0f4ff; border:2px solid #c7d2fe; border-radius:10px; padding:10px 14px; margin-bottom:4px;">
+        <small style="font-weight:700; color:#4f46e5;"><i class="fas fa-diagram-project"></i> This amount is automatically split across every currently-occupied apartment, by that unit's Service Charge Weight.</small>
+      </div>
+      <div class="form-field span-3"><label ${lbl}>Category</label><input id="sc_se_category" placeholder="e.g. Staff Salary, Generator Maintenance" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Total Amount (₦)</label><input id="sc_se_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Date</label><input id="sc_se_date" type="date" value="${new Date().toISOString().slice(0, 10)}" ${ls}></div>
+      <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="sc_se_description" ${ls}></div>
+    `;
+
+    submit.onclick = () => {
+      const amount = document.getElementById("sc_se_amount").value.replace(/,/g, "");
+      const category = sanitizeInput(document.getElementById("sc_se_category").value);
+      if (!category || !amount || Number(amount) <= 0) {
+        showToast("Enter a category and a positive amount.", "error");
+        return;
+      }
+      submit.disabled = true;
+      submit.classList.add("loading");
+      callApi("logSharedExpense", {
+        amount,
+        category,
+        date: document.getElementById("sc_se_date").value,
+        description: sanitizeInput(document.getElementById("sc_se_description").value),
+      })
+        .then((result) => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+          if (!result || result.status !== "success") {
+            showToast((result && result.message) || "Failed to log shared expense.", "error");
+            return;
+          }
+          closeModal();
+          showToast(`Shared expense split across ${result.splits.length} apartment(s).`, "success");
+          if (typeof refreshServiceChargeSection === "function") refreshServiceChargeSection();
         })
         .catch(() => {
           submit.disabled = false;

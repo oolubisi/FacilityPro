@@ -71,6 +71,12 @@ function applyRoleBasedUIVisibility() {
     const mobileSettingsTile = document.getElementById("mobile-settings-tile");
     if (mobileSettingsTile) mobileSettingsTile.style.display = "none";
   }
+  if (!currentUserMeetsRole("manager")) {
+    const desktopScNav = document.getElementById("desktop-servicecharge-nav");
+    if (desktopScNav) desktopScNav.style.display = "none";
+    const mobileScTile = document.getElementById("mobile-servicecharge-tile");
+    if (mobileScTile) mobileScTile.style.display = "none";
+  }
 }
 
 // ─────────────────────────────────────────────

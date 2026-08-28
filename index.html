@@ -327,6 +327,17 @@
             </div>
             <div
               class="nav-card-small"
+              id="mobile-servicecharge-tile"
+              onclick="showPage('servicecharge')"
+              style="grid-column: span 2; background: #e9ecef"
+              role="button"
+              tabindex="0"
+            >
+              <i class="fas fa-coins" style="color: #6c757d"></i>
+              <small style="color: #6c757d">Service Charge</small>
+            </div>
+            <div
+              class="nav-card-small"
               onclick="showPage('help')"
               style="grid-column: span 2; background: #e9ecef"
               role="button"
@@ -1155,6 +1166,71 @@
             >
               <i class="fas fa-user-plus"></i> New User
             </button>
+          </div>
+        </div>
+
+        <div id="view-servicecharge" class="page-view">
+          <div class="page-header">
+            <div class="header-group">
+              <button
+                class="home-btn"
+                onclick="showPage('dashboard')"
+                aria-label="Back to dashboard"
+              >
+                <i class="fas fa-home"></i>
+              </button>
+              <h2>Service Charge</h2>
+            </div>
+          </div>
+
+          <div id="mobile-sc-summary"></div>
+
+          <div class="card">
+            <h4
+              style="
+                font-weight: 800;
+                text-transform: uppercase;
+                margin-bottom: 10px;
+                color: var(--primary);
+              "
+            >
+              Log an Entry
+            </h4>
+            <button
+              class="action-btn"
+              style="background: var(--success); margin-bottom: 8px"
+              onclick="openModal('contribution')"
+            >
+              <i class="fas fa-hand-holding-dollar"></i> New Contribution
+            </button>
+            <button
+              class="action-btn"
+              style="background: var(--danger); margin-bottom: 8px"
+              onclick="openModal('apartmentexpense')"
+            >
+              <i class="fas fa-receipt"></i> New Apartment Expense
+            </button>
+            <button
+              class="action-btn"
+              style="background: #fd7e14"
+              onclick="openModal('sharedexpense')"
+            >
+              <i class="fas fa-diagram-project"></i> New Shared Expense
+            </button>
+          </div>
+
+          <div class="card" style="margin-top: 15px">
+            <h4
+              style="
+                font-weight: 800;
+                text-transform: uppercase;
+                margin-bottom: 10px;
+                color: var(--primary);
+              "
+            >
+              Ledger
+            </h4>
+            <div id="mobile-sc-ledger"></div>
           </div>
         </div>
       </main>

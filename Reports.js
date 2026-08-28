@@ -255,6 +255,8 @@ function handleReportProfileSwitch() {
       ["pending_outflow", "Pending Outflow"],
       ["ledger", "Ledger"],
       ["fin_wo", "Approved Work Orders Ledger"],
+      ["sc_overall", "Service Charge — Overall"],
+      ["sc_per_apartment", "Service Charge — Per Apartment"],
     ],
     executive: [
       ["", "-- Select Report --"],
@@ -264,12 +266,20 @@ function handleReportProfileSwitch() {
       ["data_quality", "Data Quality Audit"],
     ],
   };
-  (options[profile] || []).forEach(([val, label]) => {
-    const o = document.createElement("option");
-    o.value = val;
-    o.textContent = label;
-    layoutSel.appendChild(o);
-  });
+  (options[profile] || [])
+    // [FEATURE] Service Charge reports are manager+ only, same as the
+    // whole Service Charge section — filtered out of the picker
+    // entirely for other roles rather than just disabled, matching
+    // "no access at all" (the server would also refuse the underlying
+    // getServiceChargeLedger fetch regardless, but there's no reason
+    // to let staff even see these exist).
+    .filter(([val]) => val.indexOf("sc_") !== 0 || currentUserMeetsRole("manager"))
+    .forEach(([val, label]) => {
+      const o = document.createElement("option");
+      o.value = val;
+      o.textContent = label;
+      layoutSel.appendChild(o);
+    });
 }
 
 function handleReportLayoutSwitch() {
@@ -297,9 +307,18 @@ function handleReportLayoutSwitch() {
       "ticket_report",
       "fin_wo",
       "pending_outflow",
+      "sc_overall",
     ].includes(layout)
   ) {
     paramsFrame.innerHTML = `<div style="display:flex; gap:10px;"><div style="flex:1;"><label>START DATE</label><input type="date" id="rep_start_date"></div><div style="flex:1;"><label>END DATE</label><input type="date" id="rep_end_date"></div></div>`;
+  } else if (layout === "sc_per_apartment") {
+    paramsFrame.innerHTML = `
+      <label>SELECT APARTMENT UNIT</label><select id="rep-param-unit" class="form-control"></select>
+      <div style="display:flex; gap:10px; margin-top:10px;">
+        <div style="flex:1;"><label>START DATE</label><input type="date" id="rep_start_date"></div>
+        <div style="flex:1;"><label>END DATE</label><input type="date" id="rep_end_date"></div>
+      </div>`;
+    populateUnitDropdown("rep-param-unit");
   } else if (layout === "ledger") {
     paramsFrame.innerHTML = `
       <label>SELECT LEDGER TYPE</label>
@@ -419,6 +438,27 @@ function compileReportPreview() {
   }
   if (layout === "ledger_summary") {
     generateComprehensiveFinancialLedger();
+    return;
+  }
+  if (layout === "sc_overall") {
+    const startDate = document.getElementById("rep_start_date")?.value;
+    const endDate = document.getElementById("rep_end_date")?.value;
+    if (!startDate || !endDate) {
+      showToast("Please select a start and end date.", "warning");
+      return;
+    }
+    generateServiceChargeOverallReport(startDate, endDate);
+    return;
+  }
+  if (layout === "sc_per_apartment") {
+    const unit = document.getElementById("rep-param-unit")?.value;
+    const startDate = document.getElementById("rep_start_date")?.value;
+    const endDate = document.getElementById("rep_end_date")?.value;
+    if (!unit || !startDate || !endDate) {
+      showToast("Please select a unit and a start/end date.", "warning");
+      return;
+    }
+    generateServiceChargePerApartmentReport(unit, startDate, endDate);
     return;
   }
   if (layout === "pending_outflow") {
@@ -1209,6 +1249,190 @@ function generateComprehensiveFinancialLedger() {
   window.currentReportRawContent = out;
   document.getElementById("report-onscreen-preview-card").style.display =
     "block";
+}
+
+// =========================================================
+// § SERVICE CHARGE — OVERALL REPORT
+// Manager+ only (see checkBusinessPermission in Code.gs and the
+// dropdown filter in handleReportProfileSwitch above). Fetches the
+// ledger directly rather than from cache, since it's deliberately
+// excluded from getAllData — see Code.gs's comments on why.
+// =========================================================
+async function generateServiceChargeOverallReport(startDateStr, endDateStr) {
+  const viewport = document.getElementById("report-preview-viewport");
+  if (!viewport) return;
+
+  viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading Service Charge ledger...</p>`;
+
+  const ledger = await callApi("getServiceChargeLedger", {});
+  if (!ledger || !Array.isArray(ledger)) {
+    viewport.innerHTML = `<p style="padding:20px; color:#dc3545; font-weight:700;">${escapeHtml((ledger && ledger.message) || "Couldn't load the Service Charge ledger.")}</p>`;
+    return;
+  }
+
+  const startDate = new Date(startDateStr);
+  const endDate = new Date(endDateStr);
+  endDate.setHours(23, 59, 59, 999);
+  const dayBeforeStart = new Date(startDate.getTime() - 1);
+
+  // Opening/closing pooled balance = sum across every apartment's own
+  // balance at that instant — same function the live ledger summary
+  // widget uses (Modals-core.js), so these numbers always agree with
+  // what a manager sees day-to-day in the Service Charge section.
+  const openingBalances = computeServiceChargeBalancesAsOf(ledger, dayBeforeStart);
+  const closingBalances = computeServiceChargeBalancesAsOf(ledger, endDate);
+  const openingTotal = Object.values(openingBalances).reduce((s, v) => s + v, 0);
+  const closingTotal = Object.values(closingBalances).reduce((s, v) => s + v, 0);
+
+  const periodRows = ledger.filter((row) => {
+    if (!row) return false;
+    const d = new Date(row.date);
+    return !isNaN(d.getTime()) && d >= startDate && d <= endDate;
+  });
+
+  let totalContributions = 0,
+    totalSharedExpense = 0,
+    totalApartmentExpense = 0;
+  periodRows.forEach((row) => {
+    const amt = Number(row.amount) || 0;
+    if (row.type === "contribution") totalContributions += amt;
+    else if (row.type === "shared_expense") totalSharedExpense += amt;
+    else if (row.type === "apartment_expense") totalApartmentExpense += amt;
+  });
+
+  const typeLabels = { contribution: "Contribution", apartment_expense: "Apartment Expense", shared_expense: "Shared Expense" };
+  const sortedRows = [...periodRows].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const activityTable = sortedRows.length
+    ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px;">
+        <thead><tr style="border-bottom:2px solid #000; text-align:left;">
+          <th style="padding:6px 4px;">Date</th>
+          <th style="padding:6px 4px;">Apt</th>
+          <th style="padding:6px 4px;">Type</th>
+          <th style="padding:6px 4px;">Category</th>
+          <th style="padding:6px 4px; text-align:right;">Amount</th>
+        </tr></thead>
+        <tbody>
+          ${sortedRows
+            .map(
+              (row) => `<tr style="border-bottom:1px solid #eee;">
+            <td style="padding:5px 4px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
+            <td style="padding:5px 4px; font-weight:700;">${escapeHtml(row.apt || "")}</td>
+            <td style="padding:5px 4px;">${typeLabels[row.type] || row.type}</td>
+            <td style="padding:5px 4px;">${escapeHtml(row.category || "")}</td>
+            <td style="padding:5px 4px; text-align:right; font-weight:700; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}</td>
+          </tr>`,
+            )
+            .join("")}
+        </tbody>
+      </table>`
+    : `<p style="color:#666; font-size:13px; margin-top:8px;">No activity in this period.</p>`;
+
+  const out = `<div style="font-size:13px;">
+    <table style="width:100%; border-collapse:collapse; border:2px solid #000; font-size:14px; font-weight:bold; margin-bottom:20px;">
+      <tr><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Opening Pooled Balance</td><td style="border:1px solid #000; padding:6px; width:25%;">₦${formatMoney(openingTotal)}</td><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Closing Pooled Balance</td><td style="border:1px solid #000; padding:6px; width:25%;">₦${formatMoney(closingTotal)}</td></tr>
+      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Total Contributions</td><td style="border:1px solid #000; padding:6px; color:#198754;">₦${formatMoney(totalContributions)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Total Expenses</td><td style="border:1px solid #000; padding:6px; color:#dc3545;">₦${formatMoney(totalSharedExpense + totalApartmentExpense)}</td></tr>
+      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Shared Expenses</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(totalSharedExpense)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Apartment-Specific Expenses</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(totalApartmentExpense)}</td></tr>
+    </table>
+    <h3 style="font-size:14px; font-weight:900; text-transform:uppercase; margin:0 0 6px 0; text-decoration:underline;">Activity (${escapeHtml(formatDateForDisplay(startDateStr))} &mdash; ${escapeHtml(formatDateForDisplay(endDateStr))})</h3>
+    ${activityTable}
+  </div>`;
+
+  const ref = generateReportRef("RPT");
+  const wrapped = wrapReportContent(out, "Service Charge — Overall", ref);
+  viewport.innerHTML = wrapped;
+  const printContainer = document.getElementById("report-print-container");
+  if (printContainer) printContainer.innerHTML = wrapped;
+  window.currentReportFilename = "Service_Charge_Overall_" + Date.now();
+  window.currentReportAttachmentManifest = [];
+  window.currentReportTitle = "Service Charge — Overall";
+  window.currentReportRef = ref;
+  window.currentReportRawContent = out;
+  document.getElementById("report-onscreen-preview-card").style.display = "block";
+}
+
+// =========================================================
+// § SERVICE CHARGE — PER-APARTMENT REPORT
+// =========================================================
+async function generateServiceChargePerApartmentReport(unitId, startDateStr, endDateStr) {
+  const viewport = document.getElementById("report-preview-viewport");
+  if (!viewport) return;
+
+  viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading Service Charge ledger...</p>`;
+
+  const ledger = await callApi("getServiceChargeLedger", {});
+  if (!ledger || !Array.isArray(ledger)) {
+    viewport.innerHTML = `<p style="padding:20px; color:#dc3545; font-weight:700;">${escapeHtml((ledger && ledger.message) || "Couldn't load the Service Charge ledger.")}</p>`;
+    return;
+  }
+
+  const unitLedger = ledger.filter((row) => row && String(row.apt) === String(unitId));
+
+  const startDate = new Date(startDateStr);
+  const endDate = new Date(endDateStr);
+  endDate.setHours(23, 59, 59, 999);
+  const dayBeforeStart = new Date(startDate.getTime() - 1);
+
+  const openingBalance = (computeServiceChargeBalancesAsOf(unitLedger, dayBeforeStart) || {})[unitId] || 0;
+  const closingBalance = (computeServiceChargeBalancesAsOf(unitLedger, endDate) || {})[unitId] || 0;
+
+  const periodRows = unitLedger.filter((row) => {
+    const d = new Date(row.date);
+    return !isNaN(d.getTime()) && d >= startDate && d <= endDate;
+  });
+
+  let totalContributions = 0,
+    totalDebits = 0;
+  periodRows.forEach((row) => {
+    const amt = Number(row.amount) || 0;
+    if (row.direction === "credit") totalContributions += amt;
+    else totalDebits += amt;
+  });
+
+  const typeLabels = { contribution: "Contribution", apartment_expense: "Apartment Expense", shared_expense: "Shared Expense (share)" };
+  const sortedRows = [...periodRows].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const activityTable = sortedRows.length
+    ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px;">
+        <thead><tr style="border-bottom:2px solid #000; text-align:left;">
+          <th style="padding:6px 4px;">Date</th>
+          <th style="padding:6px 4px;">Type</th>
+          <th style="padding:6px 4px;">Category</th>
+          <th style="padding:6px 4px; text-align:right;">Amount</th>
+        </tr></thead>
+        <tbody>
+          ${sortedRows
+            .map(
+              (row) => `<tr style="border-bottom:1px solid #eee;">
+            <td style="padding:5px 4px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
+            <td style="padding:5px 4px;">${typeLabels[row.type] || row.type}</td>
+            <td style="padding:5px 4px;">${escapeHtml(row.category || "")}</td>
+            <td style="padding:5px 4px; text-align:right; font-weight:700; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}</td>
+          </tr>`,
+            )
+            .join("")}
+        </tbody>
+      </table>`
+    : `<p style="color:#666; font-size:13px; margin-top:8px;">No activity in this period.</p>`;
+
+  const out = `<div style="font-size:13px;">
+    <table style="width:100%; border-collapse:collapse; border:2px solid #000; font-size:14px; font-weight:bold; margin-bottom:20px;">
+      <tr><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Opening Balance</td><td style="border:1px solid #000; padding:6px; width:25%;">₦${formatMoney(openingBalance)}</td><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Closing Balance</td><td style="border:1px solid #000; padding:6px; width:25%;">₦${formatMoney(closingBalance)}</td></tr>
+      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Contributions This Period</td><td style="border:1px solid #000; padding:6px; color:#198754;">₦${formatMoney(totalContributions)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Expenses This Period</td><td style="border:1px solid #000; padding:6px; color:#dc3545;">₦${formatMoney(totalDebits)}</td></tr>
+    </table>
+    <h3 style="font-size:14px; font-weight:900; text-transform:uppercase; margin:0 0 6px 0; text-decoration:underline;">Activity (${escapeHtml(formatDateForDisplay(startDateStr))} &mdash; ${escapeHtml(formatDateForDisplay(endDateStr))})</h3>
+    ${activityTable}
+  </div>`;
+
+  const ref = generateReportRef("RPT");
+  const wrapped = wrapReportContent(out, `Service Charge — Unit ${escapeHtml(unitId)}`, ref);
+  viewport.innerHTML = wrapped;
+  const printContainer = document.getElementById("report-print-container");
+  if (printContainer) printContainer.innerHTML = wrapped;
+  window.currentReportFilename = `Service_Charge_${unitId}_` + Date.now();
+  window.currentReportAttachmentManifest = [];
+  window.currentReportTitle = `Service Charge — Unit ${unitId}`;
+  window.currentReportRef = ref;
+  window.currentReportRawContent = out;
+  document.getElementById("report-onscreen-preview-card").style.display = "block";
 }
 
 // =========================================================
