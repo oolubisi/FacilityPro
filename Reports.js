@@ -308,18 +308,33 @@ function handleReportLayoutSwitch() {
       "ticket_report",
       "fin_wo",
       "pending_outflow",
-      "sc_overall",
     ].includes(layout)
   ) {
     paramsFrame.innerHTML = `<div style="display:flex; gap:10px;"><div style="flex:1;"><label>START DATE</label><input type="date" id="rep_start_date"></div><div style="flex:1;"><label>END DATE</label><input type="date" id="rep_end_date"></div></div>`;
-  } else if (layout === "sc_per_apartment") {
+  } else if (layout === "sc_overall" || layout === "sc_per_apartment") {
+    const unitPickerHtml =
+      layout === "sc_per_apartment"
+        ? `<label>SELECT APARTMENT UNIT</label><select id="rep-param-unit" class="form-control"></select>`
+        : "";
     paramsFrame.innerHTML = `
-      <label>SELECT APARTMENT UNIT</label><select id="rep-param-unit" class="form-control"></select>
-      <div style="display:flex; gap:10px; margin-top:10px;">
-        <div style="flex:1;"><label>START DATE</label><input type="date" id="rep_start_date"></div>
-        <div style="flex:1;"><label>END DATE</label><input type="date" id="rep_end_date"></div>
+      ${unitPickerHtml}
+      <label ${unitPickerHtml ? 'style="margin-top:10px; display:block;"' : ""}>REPORT PERIOD</label>
+      <select id="rep_sc_period" class="form-control">
+        <option value="previous_month">Previous Month</option>
+        <option value="current_month">Current Month</option>
+        <option value="custom">Custom Range</option>
+      </select>
+      <div id="rep_sc_custom_dates" style="display:none; margin-top:10px;">
+        <div style="display:flex; gap:10px;">
+          <div style="flex:1;"><label>START DATE</label><input type="date" id="rep_start_date"></div>
+          <div style="flex:1;"><label>END DATE</label><input type="date" id="rep_end_date"></div>
+        </div>
       </div>`;
-    populateUnitDropdown("rep-param-unit");
+    if (layout === "sc_per_apartment") populateUnitDropdown("rep-param-unit");
+    document.getElementById("rep_sc_period").addEventListener("change", (e) => {
+      document.getElementById("rep_sc_custom_dates").style.display =
+        e.target.value === "custom" ? "block" : "none";
+    });
   } else if (layout === "ledger") {
     paramsFrame.innerHTML = `
       <label>SELECT LEDGER TYPE</label>
@@ -410,6 +425,37 @@ function buildPieChartWithLegend(items, options = {}) {
   </div>`;
 }
 
+// [FEATURE] Resolves the Service Charge report period selector into
+// actual start/end date strings. "Previous Month"/"Current Month" are
+// computed from today's date each time — deliberately not cached
+// anywhere, so a report generated on any day of the month always
+// reflects the correct calendar month boundaries. "Custom Range" just
+// reads the two date inputs, same as every other date-range report.
+function resolveServiceChargeReportPeriod() {
+  const period = document.getElementById("rep_sc_period")?.value || "custom";
+  const toDateInputValue = (d) => d.toISOString().slice(0, 10);
+
+  if (period === "previous_month") {
+    const now = new Date();
+    const firstOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastOfPrevMonth = new Date(firstOfThisMonth.getTime() - 1);
+    const firstOfPrevMonth = new Date(lastOfPrevMonth.getFullYear(), lastOfPrevMonth.getMonth(), 1);
+    return { start: toDateInputValue(firstOfPrevMonth), end: toDateInputValue(lastOfPrevMonth) };
+  }
+
+  if (period === "current_month") {
+    const now = new Date();
+    const firstOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastOfThisMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return { start: toDateInputValue(firstOfThisMonth), end: toDateInputValue(lastOfThisMonth) };
+  }
+
+  return {
+    start: document.getElementById("rep_start_date")?.value,
+    end: document.getElementById("rep_end_date")?.value,
+  };
+}
+
 function compileReportPreview() {
   const layout = document.getElementById("rep-layout-selector").value;
   const viewport = document.getElementById("report-preview-viewport");
@@ -442,8 +488,7 @@ function compileReportPreview() {
     return;
   }
   if (layout === "sc_overall") {
-    const startDate = document.getElementById("rep_start_date")?.value;
-    const endDate = document.getElementById("rep_end_date")?.value;
+    const { start: startDate, end: endDate } = resolveServiceChargeReportPeriod();
     if (!startDate || !endDate) {
       showToast("Please select a start and end date.", "warning");
       return;
@@ -453,8 +498,7 @@ function compileReportPreview() {
   }
   if (layout === "sc_per_apartment") {
     const unit = document.getElementById("rep-param-unit")?.value;
-    const startDate = document.getElementById("rep_start_date")?.value;
-    const endDate = document.getElementById("rep_end_date")?.value;
+    const { start: startDate, end: endDate } = resolveServiceChargeReportPeriod();
     if (!unit || !startDate || !endDate) {
       showToast("Please select a unit and a start/end date.", "warning");
       return;
@@ -1266,9 +1310,12 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr) {
   const viewport = document.getElementById("report-preview-viewport");
   if (!viewport) return;
 
-  viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading Service Charge ledger...</p>`;
+  viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading Service Charge data...</p>`;
 
-  const ledger = await callApi("getServiceChargeLedger", {});
+  const [ledger, occupancyLog] = await Promise.all([
+    callApi("getServiceChargeLedger", {}),
+    callApi("getOccupancyLog", {}),
+  ]);
   if (!ledger || !Array.isArray(ledger)) {
     viewport.innerHTML = `<p style="padding:20px; color:#dc3545; font-weight:700;">${escapeHtml((ledger && ledger.message) || "Couldn't load the Service Charge ledger.")}</p>`;
     return;
@@ -1287,6 +1334,18 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr) {
   const closingBalances = computeServiceChargeBalancesAsOf(ledger, endDate);
   const openingTotal = Object.values(openingBalances).reduce((s, v) => s + v, 0);
   const closingTotal = Object.values(closingBalances).reduce((s, v) => s + v, 0);
+
+  // Historically-accurate occupancy count for THIS period — not
+  // "currently occupied right now," which could be wrong for a report
+  // covering a past month if a unit's status has since changed. Falls
+  // back to real apartment data for units with no logged history yet.
+  const occupancyLogSafe = Array.isArray(occupancyLog) ? occupancyLog : [];
+  const realApartments = (cache.apts || []).filter(
+    (a) => a && String(a.type || a.Type || "").toLowerCase() !== "services",
+  );
+  const occupiedDuringPeriod = realApartments.filter((a) =>
+    wasApartmentOccupiedDuringPeriod(getUnitNumber(a), occupancyLogSafe, startDateStr, endDateStr, a),
+  );
 
   const periodRows = ledger.filter((row) => {
     if (!row) return false;
@@ -1356,14 +1415,61 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr) {
       </table>`
     : `<p style="color:#666; font-size:13px; margin-top:8px;">No activity in this period.</p>`;
 
+  // [FEATURE] Detailed per-unit occupancy report, appended as the
+  // report's final page (page-break-before:always). Any status
+  // transitions that fell WITHIN the period itself are called out
+  // (e.g. a mid-period move-in/move-out) — the Yes/No column reflects
+  // wasApartmentOccupiedDuringPeriod()'s full-history overlap check,
+  // while the Notes column only shows events dated inside this
+  // specific window, for extra transparency on partial-period units.
+  const sortedApartmentsForOccupancy = [...realApartments].sort((a, b) =>
+    String(getUnitNumber(a)).localeCompare(String(getUnitNumber(b)), undefined, { numeric: true }),
+  );
+  const occupancyRows = sortedApartmentsForOccupancy
+    .map((a) => {
+      const unit = getUnitNumber(a);
+      const occupied = wasApartmentOccupiedDuringPeriod(unit, occupancyLogSafe, startDateStr, endDateStr, a);
+      const eventsWithinPeriod = occupancyLogSafe
+        .filter((e) => e && String(e.apt) === String(unit))
+        .map((e) => ({ event: String(e.event || "").toLowerCase(), date: new Date(e.date) }))
+        .filter((e) => !isNaN(e.date.getTime()) && e.date >= startDate && e.date <= endDate)
+        .sort((x, y) => x.date - y.date);
+      const notes = eventsWithinPeriod
+        .map((e) => `${e.event === "occupied" ? "Occupied" : "Vacated"} ${escapeHtml(formatDateForDisplay(e.date))}`)
+        .join(", ");
+      return `<tr style="border-bottom:1px solid #eee;">
+        <td style="padding:6px 4px; font-weight:700;">${escapeHtml(unit)}</td>
+        <td style="padding:6px 4px;">${escapeHtml(a.type || a.Type || "")}</td>
+        <td style="padding:6px 4px; font-weight:700; color:${occupied ? "#198754" : "#dc3545"};">${occupied ? "Yes" : "No"}</td>
+        <td style="padding:6px 4px; color:#666;">${notes || "—"}</td>
+      </tr>`;
+    })
+    .join("");
+
+  const occupancyReportPage = `<div style="page-break-before:always; break-before:page;">
+    <h3 style="font-size:14px; font-weight:900; text-transform:uppercase; margin:20px 0 10px 0; text-decoration:underline;">Occupancy Report (${escapeHtml(formatDateForDisplay(startDateStr))} &mdash; ${escapeHtml(formatDateForDisplay(endDateStr))})</h3>
+    <p style="font-size:12px; color:#666; margin:0 0 10px 0;">${occupiedDuringPeriod.length} of ${realApartments.length} apartments occupied at some point during this period.</p>
+    <table style="width:100%; border-collapse:collapse; font-size:12px;">
+      <thead><tr style="border-bottom:2px solid #000; text-align:left;">
+        <th style="padding:6px 4px;">Apartment</th>
+        <th style="padding:6px 4px;">Type</th>
+        <th style="padding:6px 4px;">Occupied This Period</th>
+        <th style="padding:6px 4px;">Notes</th>
+      </tr></thead>
+      <tbody>${occupancyRows}</tbody>
+    </table>
+  </div>`;
+
   const out = `<div style="font-size:13px;">
     <table style="width:100%; border-collapse:collapse; border:2px solid #000; font-size:14px; font-weight:bold; margin-bottom:20px;">
       <tr><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Opening Pooled Balance</td><td style="border:1px solid #000; padding:6px; width:25%;">₦${formatMoney(openingTotal)}</td><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Closing Pooled Balance</td><td style="border:1px solid #000; padding:6px; width:25%;">₦${formatMoney(closingTotal)}</td></tr>
       <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Total Contributions</td><td style="border:1px solid #000; padding:6px; color:#198754;">₦${formatMoney(totalContributions)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Total Expenses</td><td style="border:1px solid #000; padding:6px; color:#dc3545;">₦${formatMoney(totalSharedExpense + totalApartmentExpense)}</td></tr>
       <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Shared Expenses</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(totalSharedExpense)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Apartment-Specific Expenses</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(totalApartmentExpense)}</td></tr>
+      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Apartments Occupied This Period</td><td colspan="3" style="border:1px solid #000; padding:6px;">${occupiedDuringPeriod.length} of ${realApartments.length}</td></tr>
     </table>
     <h3 style="font-size:14px; font-weight:900; text-transform:uppercase; margin:0 0 6px 0; text-decoration:underline;">Activity (${escapeHtml(formatDateForDisplay(startDateStr))} &mdash; ${escapeHtml(formatDateForDisplay(endDateStr))})</h3>
     ${activityTable}
+    ${occupancyReportPage}
   </div>`;
 
   const ref = generateReportRef("RPT");
@@ -1387,15 +1493,26 @@ async function generateServiceChargePerApartmentReport(unitId, startDateStr, end
   const viewport = document.getElementById("report-preview-viewport");
   if (!viewport) return;
 
-  viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading Service Charge ledger...</p>`;
+  viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading Service Charge data...</p>`;
 
-  const ledger = await callApi("getServiceChargeLedger", {});
+  const [ledger, occupancyLog] = await Promise.all([
+    callApi("getServiceChargeLedger", {}),
+    callApi("getOccupancyLog", {}),
+  ]);
   if (!ledger || !Array.isArray(ledger)) {
     viewport.innerHTML = `<p style="padding:20px; color:#dc3545; font-weight:700;">${escapeHtml((ledger && ledger.message) || "Couldn't load the Service Charge ledger.")}</p>`;
     return;
   }
 
   const unitLedger = ledger.filter((row) => row && String(row.apt) === String(unitId));
+  const unitAptRecord = (cache.apts || []).find((a) => a && String(getUnitNumber(a)) === String(unitId));
+  const wasOccupied = wasApartmentOccupiedDuringPeriod(
+    unitId,
+    Array.isArray(occupancyLog) ? occupancyLog : [],
+    startDateStr,
+    endDateStr,
+    unitAptRecord,
+  );
 
   const startDate = new Date(startDateStr);
   const endDate = new Date(endDateStr);
@@ -1447,6 +1564,7 @@ async function generateServiceChargePerApartmentReport(unitId, startDateStr, end
     <table style="width:100%; border-collapse:collapse; border:2px solid #000; font-size:14px; font-weight:bold; margin-bottom:20px;">
       <tr><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Opening Balance</td><td style="border:1px solid #000; padding:6px; width:25%;">₦${formatMoney(openingBalance)}</td><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Closing Balance</td><td style="border:1px solid #000; padding:6px; width:25%;">₦${formatMoney(closingBalance)}</td></tr>
       <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Contributions This Period</td><td style="border:1px solid #000; padding:6px; color:#198754;">₦${formatMoney(totalContributions)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Expenses This Period</td><td style="border:1px solid #000; padding:6px; color:#dc3545;">₦${formatMoney(totalDebits)}</td></tr>
+      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Occupied This Period</td><td colspan="3" style="border:1px solid #000; padding:6px; color:${wasOccupied ? "#198754" : "#dc3545"};">${wasOccupied ? "Yes" : "No"}</td></tr>
     </table>
     <h3 style="font-size:14px; font-weight:900; text-transform:uppercase; margin:0 0 6px 0; text-decoration:underline;">Activity (${escapeHtml(formatDateForDisplay(startDateStr))} &mdash; ${escapeHtml(formatDateForDisplay(endDateStr))})</h3>
     ${activityTable}

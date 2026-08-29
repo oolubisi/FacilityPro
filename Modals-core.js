@@ -205,6 +205,51 @@ function computeServiceChargeBalancesAsOf(ledger, asOfDate) {
   return balances;
 }
 
+// [FEATURE] apt.status only ever reflects "right now" — a report run
+// today has no way to know whether a unit was occupied during some
+// past period once its status has since changed. This reconstructs
+// occupancy stints from OccupancyLog (auto-populated by Code.gs
+// whenever a status actually transitions to/from Occupied) and checks
+// whether ANY stint overlaps the given [startDate, endDate] window.
+//
+// Units with no logged history at all (e.g. they predate this
+// feature, or have simply never changed status since) fall back to
+// their CURRENT status as a best-effort guess for any period — this
+// keeps existing units working sensibly rather than reporting them as
+// "never occupied" just because their history starts from whenever
+// this feature shipped.
+function wasApartmentOccupiedDuringPeriod(apt, occupancyLog, startDate, endDate, currentAptRecord) {
+  const events = (occupancyLog || [])
+    .filter((e) => e && String(e.apt) === String(apt))
+    .map((e) => ({ event: String(e.event || "").toLowerCase(), date: new Date(e.date) }))
+    .filter((e) => !isNaN(e.date.getTime()))
+    .sort((a, b) => a.date - b.date);
+
+  if (events.length === 0) {
+    return String(currentAptRecord?.status || currentAptRecord?.Status || "").toLowerCase() === "occupied";
+  }
+
+  const rangeStart = new Date(startDate);
+  const rangeEnd = new Date(endDate);
+  rangeEnd.setHours(23, 59, 59, 999);
+
+  let stintStart = null;
+  for (const e of events) {
+    if (e.event === "occupied" && stintStart === null) {
+      stintStart = e.date;
+    } else if (e.event === "vacated" && stintStart !== null) {
+      if (stintStart <= rangeEnd && e.date >= rangeStart) return true;
+      stintStart = null;
+    }
+  }
+  // Still occupied at the end of the log (no matching "vacated" event
+  // yet) — the stint is ongoing, so it overlaps anything from its
+  // start onward.
+  if (stintStart !== null && stintStart <= rangeEnd) return true;
+
+  return false;
+}
+
 function renderServiceChargeLedgerTable(container, ledger) {
   const sorted = [...ledger].sort((a, b) => new Date(b.date) - new Date(a.date));
 
