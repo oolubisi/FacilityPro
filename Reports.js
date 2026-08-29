@@ -433,7 +433,17 @@ function buildPieChartWithLegend(items, options = {}) {
 // reads the two date inputs, same as every other date-range report.
 function resolveServiceChargeReportPeriod() {
   const period = document.getElementById("rep_sc_period")?.value || "custom";
-  const toDateInputValue = (d) => d.toISOString().slice(0, 10);
+  // [BUG FIX] toISOString() converts to UTC — for any timezone ahead of
+  // UTC (e.g. WAT, UTC+1, this app's actual context), local midnight on
+  // the 1st shifts backward to the previous day once converted, making
+  // "Previous/Current Month" silently start one day early. Format from
+  // local date components instead, with no UTC conversion involved.
+  const toDateInputValue = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
 
   if (period === "previous_month") {
     const now = new Date();

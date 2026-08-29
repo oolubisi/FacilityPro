@@ -218,6 +218,21 @@ function toSheetDate(dStr) {
   return `${d.padStart(2, "0")}/${m.padStart(2, "0")}/${y}`;
 }
 
+// [BUG FIX] For defaulting a date <input> to "today" — new
+// Date().toISOString().slice(0, 10) looks equivalent but isn't:
+// toISOString() converts to UTC first, so in any timezone ahead of UTC
+// (this app's actual context is WAT, UTC+1), the early hours of a new
+// local day still show as "yesterday" in UTC, silently defaulting the
+// field to the wrong date right when someone's most likely to be
+// logging something first thing in the morning. This formats from
+// local date components instead, with no UTC conversion at all.
+function getLocalDateString(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 function formatDateForDisplay(dStr) {
   if (!dStr) return "Not Tracked";
   dStr = String(dStr).trim();

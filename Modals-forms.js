@@ -437,7 +437,7 @@ async function openModal(type, editData = null) {
         <div class="form-field"><label ${lbl}>Current Rent (₦)</label><input id="f_rent" type="text" inputmode="numeric" placeholder="Annual rent amount" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\B(?=(\d{3})+(?!\d))/g,',')" value="${(editData.rent || editData.Rent) ? Number(editData.rent || editData.Rent).toLocaleString("en-US") : ""}" ${ls}></div>
         <div class="form-field"><label ${lbl}>Service Charge Deposit (₦)</label><input id="f_deposit" type="text" inputmode="numeric" placeholder="Service charge deposit amount" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\B(?=(\d{3})+(?!\d))/g,',')" value="${(editData.serviceChargeDeposit || editData.ServiceChargeDeposit) ? Number(editData.serviceChargeDeposit || editData.ServiceChargeDeposit).toLocaleString("en-US") : ""}" ${ls}></div>
         <div class="form-field"><label ${lbl}>Meter No</label><input id="f_meter" value="${escapeHtml(suggestedMeterNo)}" disabled ${ls}></div>
-        <div class="form-field"><label ${lbl}>Service Charge Weight <span style="font-weight:600; color:var(--muted);">(Studio 1 : 1-Bed 1.25 : 2-Bed 1.5, unless overridden)</span></label><input id="f_weight" type="number" min="0" step="0.1" value="${escapeHtml(String(suggestedWeight))}" ${ls}></div>
+        <div class="form-field"><label ${lbl}>Service Charge Weight <span style="font-weight:600; color:var(--muted);">(Studio 1 : 1-Bed 1.25 : 2-Bed 1.5, edited on the backend)</span></label><input id="f_weight" type="number" min="0" step="0.1" value="${escapeHtml(String(suggestedWeight))}" disabled ${ls}></div>
         <div class="form-field">
           <label ${lbl}>Status State</label>
           <select id="f_status" ${ls}>
@@ -507,7 +507,7 @@ async function openModal(type, editData = null) {
     body.innerHTML = `
       <div class="form-field span-3"><label ${lbl}>Apartment</label><select id="sc_apt" ${ls}></select></div>
       <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="sc_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" ${ls}></div>
-      <div class="form-field"><label ${lbl}>Date</label><input id="sc_date" type="date" value="${new Date().toISOString().slice(0, 10)}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Date</label><input id="sc_date" type="date" value="${getLocalDateString()}" ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="sc_description" ${ls}></div>
     `;
     populateOccupiedUnitDropdown("sc_apt");
@@ -552,7 +552,7 @@ async function openModal(type, editData = null) {
       <div class="form-field span-3"><label ${lbl}>Apartment</label><select id="sc_ae_apt" ${ls}></select></div>
       <div class="form-field"><label ${lbl}>Category</label><input id="sc_ae_category" placeholder="e.g. Plumbing Repair" ${ls}></div>
       <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="sc_ae_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" ${ls}></div>
-      <div class="form-field"><label ${lbl}>Date</label><input id="sc_ae_date" type="date" value="${new Date().toISOString().slice(0, 10)}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Date</label><input id="sc_ae_date" type="date" value="${getLocalDateString()}" ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="sc_ae_description" ${ls}></div>
     `;
     populateOccupiedUnitDropdown("sc_ae_apt");
@@ -605,7 +605,7 @@ async function openModal(type, editData = null) {
       </div>
       <div class="form-field span-3"><label ${lbl}>Category</label><input id="sc_se_category" placeholder="e.g. Staff Salary, Generator Maintenance" ${ls}></div>
       <div class="form-field"><label ${lbl}>Total Amount (₦)</label><input id="sc_se_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" ${ls}></div>
-      <div class="form-field"><label ${lbl}>Date</label><input id="sc_se_date" type="date" value="${new Date().toISOString().slice(0, 10)}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Date</label><input id="sc_se_date" type="date" value="${getLocalDateString()}" ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="sc_se_description" ${ls}></div>
     `;
 
