@@ -213,13 +213,14 @@ function generateMonthlyReportPack() {
     ${sections.join("")}
   </div>`;
   const ref = generateReportRef("PACK");
-  const wrapped = wrapReportContent(packHtml, "Monthly Report Pack", ref);
+  const wrapped = wrapReportContent(packHtml, "Monthly Report Pack", ref, false);
   viewport.innerHTML = wrapped;
   const printContainer = document.getElementById("report-print-container");
   if (printContainer) printContainer.innerHTML = wrapped;
   window.currentReportFilename = "Monthly_Report_Pack_" + range.month;
   window.currentReportAttachmentManifest = [];
   window.currentReportTitle = "Monthly Report Pack";
+  window.currentReportShowTitleLine = false;
   window.currentReportRef = ref;
   window.currentReportRawContent = packHtml;
   document.getElementById("report-onscreen-preview-card").style.display = "block";
@@ -865,6 +866,7 @@ function compileReportPreview() {
     out,
     layout.replace(/_/g, " ").toUpperCase(),
     ref,
+    false,
   );
   if (viewport) viewport.innerHTML = wrapped;
   const printContainer = document.getElementById("report-print-container");
@@ -872,6 +874,7 @@ function compileReportPreview() {
   window.currentReportFilename = "Facility_Report_" + Date.now();
   window.currentReportAttachmentManifest = [];
   window.currentReportTitle = layout;
+  window.currentReportShowTitleLine = false;
   window.currentReportRef = ref;
   window.currentReportRawContent = out;
   const previewCard = document.getElementById("report-onscreen-preview-card");
@@ -1238,13 +1241,14 @@ function generateComprehensiveFinancialLedger() {
   out += `</div>`;
 
   const ref = generateReportRef("RPT");
-  const wrapped = wrapReportContent(out, "Comprehensive Financial Ledger", ref);
+  const wrapped = wrapReportContent(out, "Comprehensive Financial Ledger", ref, false);
   viewport.innerHTML = wrapped;
   const printContainer = document.getElementById("report-print-container");
   if (printContainer) printContainer.innerHTML = wrapped;
   window.currentReportFilename = "Comprehensive_Financial_Ledger_" + Date.now();
   window.currentReportAttachmentManifest = [];
   window.currentReportTitle = "Comprehensive Financial Ledger";
+  window.currentReportShowTitleLine = false;
   window.currentReportRef = ref;
   window.currentReportRawContent = out;
   document.getElementById("report-onscreen-preview-card").style.display =
@@ -1301,7 +1305,32 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr) {
   });
 
   const typeLabels = { contribution: "Contribution", apartment_expense: "Apartment Expense", shared_expense: "Shared Expense" };
-  const sortedRows = [...periodRows].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  // [FEATURE] Shared expenses are stored as one ledger row per affected
+  // apartment (see logSharedExpense in Code.gs — that's what makes each
+  // apartment's own balance correct), but on the OVERALL report that
+  // reads as the same expense repeated N times. Collapse every row
+  // sharing an expenseId into a single line showing the original total
+  // and how many units it was split across — contributions and
+  // apartment-specific expenses are unaffected and still show one line
+  // each, since those are already genuinely single transactions.
+  const displayRows = [];
+  const sharedExpenseGroups = {};
+  periodRows.forEach((row) => {
+    if (row.type !== "shared_expense") {
+      displayRows.push(row);
+      return;
+    }
+    const key = row.expenseId || row.entryId;
+    if (!sharedExpenseGroups[key]) {
+      sharedExpenseGroups[key] = { ...row, amount: 0, unitCount: 0 };
+      displayRows.push(sharedExpenseGroups[key]);
+    }
+    sharedExpenseGroups[key].amount += Number(row.amount) || 0;
+    sharedExpenseGroups[key].unitCount += 1;
+  });
+
+  const sortedRows = [...displayRows].sort((a, b) => new Date(a.date) - new Date(b.date));
   const activityTable = sortedRows.length
     ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px;">
         <thead><tr style="border-bottom:2px solid #000; text-align:left;">
@@ -1315,12 +1344,12 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr) {
           ${sortedRows
             .map(
               (row) => `<tr style="border-bottom:1px solid #eee;">
-            <td style="padding:5px 4px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
-            <td style="padding:5px 4px; font-weight:700;">${escapeHtml(row.apt || "")}</td>
-            <td style="padding:5px 4px;">${typeLabels[row.type] || row.type}</td>
-            <td style="padding:5px 4px;">${escapeHtml(row.category || "")}</td>
-            <td style="padding:5px 4px; text-align:right; font-weight:700; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}</td>
-          </tr>`,
+                <td style="padding:5px 4px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
+                <td style="padding:5px 4px; font-weight:700;">${row.type === "shared_expense" ? `All Occupied (${row.unitCount} unit${row.unitCount === 1 ? "" : "s"})` : escapeHtml(row.apt || "")}</td>
+                <td style="padding:5px 4px;">${typeLabels[row.type] || row.type}</td>
+                <td style="padding:5px 4px;">${escapeHtml(row.category || "")}</td>
+                <td style="padding:5px 4px; text-align:right; font-weight:700; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}</td>
+              </tr>`,
             )
             .join("")}
         </tbody>
@@ -1345,6 +1374,7 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr) {
   window.currentReportFilename = "Service_Charge_Overall_" + Date.now();
   window.currentReportAttachmentManifest = [];
   window.currentReportTitle = "Service Charge — Overall";
+  window.currentReportShowTitleLine = true;
   window.currentReportRef = ref;
   window.currentReportRawContent = out;
   document.getElementById("report-onscreen-preview-card").style.display = "block";
@@ -1430,6 +1460,7 @@ async function generateServiceChargePerApartmentReport(unitId, startDateStr, end
   window.currentReportFilename = `Service_Charge_${unitId}_` + Date.now();
   window.currentReportAttachmentManifest = [];
   window.currentReportTitle = `Service Charge — Unit ${unitId}`;
+  window.currentReportShowTitleLine = true;
   window.currentReportRef = ref;
   window.currentReportRawContent = out;
   document.getElementById("report-onscreen-preview-card").style.display = "block";
@@ -1557,13 +1588,14 @@ function generatePendingOutflowReport() {
   out += `</div>`;
 
   const ref = generateReportRef("RPT");
-  const wrapped = wrapReportContent(out, "Pending Outflow", ref);
+  const wrapped = wrapReportContent(out, "Pending Outflow", ref, false);
   viewport.innerHTML = wrapped;
   const printContainer = document.getElementById("report-print-container");
   if (printContainer) printContainer.innerHTML = wrapped;
   window.currentReportFilename = "Pending_Outflow_" + Date.now();
   window.currentReportAttachmentManifest = [];
   window.currentReportTitle = "Pending Outflow";
+  window.currentReportShowTitleLine = false;
   window.currentReportRef = ref;
   window.currentReportRawContent = out;
   document.getElementById("report-onscreen-preview-card").style.display =
@@ -1848,7 +1880,7 @@ function generateLedgerReport(ledgerType) {
     outflow_paid_pending: "Outflow Ledger",
     cash_expenses: "Cash Expenses Ledger",
   };
-  const wrapped = wrapReportContent(out, titleMap[ledgerType], ref);
+  const wrapped = wrapReportContent(out, titleMap[ledgerType], ref, false);
   viewport.innerHTML = wrapped;
   const printContainer = document.getElementById("report-print-container");
   if (printContainer) printContainer.innerHTML = wrapped;
@@ -1856,6 +1888,7 @@ function generateLedgerReport(ledgerType) {
     titleMap[ledgerType].replace(/\s+/g, "_") + "_" + Date.now();
   window.currentReportAttachmentManifest = [];
   window.currentReportTitle = titleMap[ledgerType];
+  window.currentReportShowTitleLine = false;
   window.currentReportRef = ref;
   window.currentReportRawContent = out;
   document.getElementById("report-onscreen-preview-card").style.display =
@@ -1875,6 +1908,14 @@ function downloadCurrentReportPDF() {
     window.currentReportFilename || "Facility_Report",
     window.currentReportTitle || "Report",
     window.currentReportRef || "",
+    // [BUG FIX] This always defaulted to true regardless of what the
+    // report actually chose for its on-screen preview — a report that
+    // correctly suppressed the header title (because it embeds its own,
+    // e.g. Apartments Manifest, Apartment Dossier) would still get a
+    // duplicate title in the DOWNLOADED PDF specifically, since this
+    // re-wraps the content separately from the preview. Now reads the
+    // same flag each report function sets alongside currentReportTitle.
+    window.currentReportShowTitleLine !== false,
   );
 }
 
@@ -1935,11 +1976,12 @@ function generateApartmentManifestReport() {
 
   html += `</div>`;
   const ref = generateReportRef("RPT");
-  const wrapped = wrapReportContent(html, "Apartments Manifest", ref);
+  const wrapped = wrapReportContent(html, "Apartments Manifest", ref, false);
   viewport.innerHTML = wrapped;
   const printContainer = document.getElementById("report-print-container");
   if (printContainer) printContainer.innerHTML = wrapped;
   window.currentReportTitle = "Apartments Manifest";
+  window.currentReportShowTitleLine = false;
   window.currentReportRef = ref;
   window.currentReportRawContent = html;
   document.getElementById("report-onscreen-preview-card").style.display =
@@ -2066,11 +2108,13 @@ function generateApartmentDossierReport(targetUnitId, options = {}) {
     html,
     `Apartment Dossier - Unit ${targetUnitId}`,
     ref,
+    false,
   );
   viewport.innerHTML = wrapped;
   const printContainer = document.getElementById("report-print-container");
   if (printContainer) printContainer.innerHTML = wrapped;
   window.currentReportTitle = `Apartment Dossier - Unit ${targetUnitId}`;
+  window.currentReportShowTitleLine = false;
   window.currentReportRef = ref;
   window.currentReportRawContent = html;
   document.getElementById("report-onscreen-preview-card").style.display =

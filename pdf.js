@@ -72,6 +72,7 @@ function generateStandardReportHeader(
             <h1 style="margin:0; font-size:24px; font-weight:900; text-transform:uppercase; color:#000;">${escapeHtml(appSettings.estateName || "FACILITY PRO ESTATE")}</h1>
             <p style="margin:3px 0 0 0; font-size:10px; color:#333; line-height:1.4;">${escapeHtml(appSettings.estateAddress || "")}</p>
             <p style="margin:8px 0 0 0; font-size:11px; color:#555; font-weight:700;">Managed by: ${escapeHtml(appSettings.fmName || "Facility Management")}</p>
+            ${showTitleLine && reportTitle ? `<p style="margin:10px 0 0 0; font-size:16px; font-weight:900; text-transform:uppercase; color:#000;">${escapeHtml(reportTitle)}</p>` : ""}
           </td>
           <td style="border:none; vertical-align:top; text-align:right; width:45%; padding:0;">
             <div style="background:#f4f4f4; border:1px solid #ccc; padding:8px 10px; border-radius:6px; display:inline-block; text-align:left;">
@@ -456,6 +457,7 @@ function printSingleWorkOrderDirect(woId, includeAttachments = true) {
     `WorkOrder_${woId}`,
     `Work Order Authorization - ${woId}`,
     woId,
+    false,
   );
 }
 
@@ -490,6 +492,7 @@ function printSingleExpenseRequestDirect(reqId) {
     `ExpenseReq_${reqId}`,
     `Expense Request - ${reqId}`,
     reqId,
+    false,
   );
 }
 
@@ -524,6 +527,7 @@ function printSingleCashExpenseDirect(cashId) {
     `CashVoucher_${cashId}`,
     `Cash Expense Voucher - ${cashId}`,
     cashId,
+    false,
   );
 }
 
