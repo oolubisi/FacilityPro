@@ -7,6 +7,20 @@
 
 // § REPORTS ENGINE
 // ─────────────────────────────────────────────
+
+// [BUG FIX] #report-onscreen-preview-card only exists in index.html
+// (mobile) — desktop.html never had it. Every report generator in this
+// file called .style.display on it unguarded, so EVERY report has
+// always crashed with "Cannot read properties of null" when run from
+// the desktop shell, right after rendering (the report content itself
+// still displays; this just throws afterward and pollutes the
+// console — but it's still a real bug worth closing everywhere at
+// once rather than patching one call site at a time).
+function setOnscreenPreviewCardDisplay(value) {
+  const el = document.getElementById("report-onscreen-preview-card");
+  if (el) el.style.display = value;
+}
+
 function initReportsEngine() {
   setGlobalLoading(true, "Loading reports...");
   loadReportDataBundle()
@@ -17,8 +31,7 @@ function initReportsEngine() {
         "<option value=''>-- Choose Configurations --</option>";
       document.getElementById("rep-dynamic-parameters-frame").innerHTML = "";
       refreshReportPresetSelector();
-      document.getElementById("report-onscreen-preview-card").style.display =
-        "none";
+      setOnscreenPreviewCardDisplay("none");
       setGlobalLoading(false);
     })
     .catch(() => setGlobalLoading(false));
@@ -223,7 +236,7 @@ function generateMonthlyReportPack() {
   window.currentReportShowTitleLine = false;
   window.currentReportRef = ref;
   window.currentReportRawContent = packHtml;
-  document.getElementById("report-onscreen-preview-card").style.display = "block";
+  setOnscreenPreviewCardDisplay("block");
   showToast("Monthly report pack generated", "success");
 }
 
@@ -233,8 +246,7 @@ function handleReportProfileSwitch() {
   const paramsFrame = document.getElementById("rep-dynamic-parameters-frame");
   layoutSel.innerHTML = "";
   paramsFrame.innerHTML = "";
-  document.getElementById("report-onscreen-preview-card").style.display =
-    "none";
+  setOnscreenPreviewCardDisplay("none");
 
   const options = {
     apartments: [
@@ -329,7 +341,12 @@ function handleReportLayoutSwitch() {
           <div style="flex:1;"><label>START DATE</label><input type="date" id="rep_start_date"></div>
           <div style="flex:1;"><label>END DATE</label><input type="date" id="rep_end_date"></div>
         </div>
-      </div>`;
+      </div>
+      ${
+        layout === "sc_overall"
+          ? `<label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer; margin-top:14px;"><input type="checkbox" id="rep_sc_include_apartments" style="width:auto;"> Include a full breakdown report for each occupied apartment</label>`
+          : ""
+      }`;
     if (layout === "sc_per_apartment") populateUnitDropdown("rep-param-unit");
     document.getElementById("rep_sc_period").addEventListener("change", (e) => {
       document.getElementById("rep_sc_custom_dates").style.display =
@@ -503,7 +520,8 @@ function compileReportPreview() {
       showToast("Please select a start and end date.", "warning");
       return;
     }
-    generateServiceChargeOverallReport(startDate, endDate);
+    const includeApartmentBreakdowns = document.getElementById("rep_sc_include_apartments")?.checked === true;
+    generateServiceChargeOverallReport(startDate, endDate, includeApartmentBreakdowns);
     return;
   }
   if (layout === "sc_per_apartment") {
@@ -931,8 +949,7 @@ function compileReportPreview() {
   window.currentReportShowTitleLine = false;
   window.currentReportRef = ref;
   window.currentReportRawContent = out;
-  const previewCard = document.getElementById("report-onscreen-preview-card");
-  if (previewCard) previewCard.style.display = "block";
+  setOnscreenPreviewCardDisplay("block");
 }
 
 function getTotalRecordCount() {
@@ -1305,8 +1322,7 @@ function generateComprehensiveFinancialLedger() {
   window.currentReportShowTitleLine = false;
   window.currentReportRef = ref;
   window.currentReportRawContent = out;
-  document.getElementById("report-onscreen-preview-card").style.display =
-    "block";
+  setOnscreenPreviewCardDisplay("block");
 }
 
 // =========================================================
@@ -1316,7 +1332,7 @@ function generateComprehensiveFinancialLedger() {
 // ledger directly rather than from cache, since it's deliberately
 // excluded from getAllData — see Code.gs's comments on why.
 // =========================================================
-async function generateServiceChargeOverallReport(startDateStr, endDateStr) {
+async function generateServiceChargeOverallReport(startDateStr, endDateStr, includeApartmentBreakdowns = false) {
   const viewport = document.getElementById("report-preview-viewport");
   if (!viewport) return;
 
@@ -1470,6 +1486,24 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr) {
     </table>
   </div>`;
 
+  // [FEATURE] Optional, off by default — one full per-apartment
+  // breakdown page for every unit that was occupied at some point
+  // during the period, using the exact same builder the standalone
+  // Per-Apartment report uses. Inserted BEFORE the Occupancy Report
+  // page, which must stay last regardless.
+  let apartmentBreakdownPages = "";
+  if (includeApartmentBreakdowns) {
+    apartmentBreakdownPages = occupiedDuringPeriod
+      .map((a) => {
+        const unit = getUnitNumber(a);
+        return `<div style="page-break-before:always; break-before:page;">
+          <h3 style="font-size:14px; font-weight:900; text-transform:uppercase; margin:0 0 10px 0; text-decoration:underline;">Unit ${escapeHtml(unit)}</h3>
+          ${buildServiceChargeApartmentSectionHtml(unit, ledger, occupancyLogSafe, startDateStr, endDateStr)}
+        </div>`;
+      })
+      .join("");
+  }
+
   const out = `<div style="font-size:13px;">
     <table style="width:100%; border-collapse:collapse; border:2px solid #000; font-size:14px; font-weight:bold; margin-bottom:20px;">
       <tr><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Opening Pooled Balance</td><td style="border:1px solid #000; padding:6px; width:25%;">₦${formatMoney(openingTotal)}</td><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Closing Pooled Balance</td><td style="border:1px solid #000; padding:6px; width:25%;">₦${formatMoney(closingTotal)}</td></tr>
@@ -1479,6 +1513,7 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr) {
     </table>
     <h3 style="font-size:14px; font-weight:900; text-transform:uppercase; margin:0 0 6px 0; text-decoration:underline;">Activity (${escapeHtml(formatDateForDisplay(startDateStr))} &mdash; ${escapeHtml(formatDateForDisplay(endDateStr))})</h3>
     ${activityTable}
+    ${apartmentBreakdownPages}
     ${occupancyReportPage}
   </div>`;
 
@@ -1493,36 +1528,21 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr) {
   window.currentReportShowTitleLine = true;
   window.currentReportRef = ref;
   window.currentReportRawContent = out;
-  document.getElementById("report-onscreen-preview-card").style.display = "block";
+  setOnscreenPreviewCardDisplay("block");
 }
 
 // =========================================================
 // § SERVICE CHARGE — PER-APARTMENT REPORT
 // =========================================================
-async function generateServiceChargePerApartmentReport(unitId, startDateStr, endDateStr) {
-  const viewport = document.getElementById("report-preview-viewport");
-  if (!viewport) return;
-
-  viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading Service Charge data...</p>`;
-
-  const [ledger, occupancyLog] = await Promise.all([
-    callApi("getServiceChargeLedger", {}),
-    callApi("getOccupancyLog", {}),
-  ]);
-  if (!ledger || !Array.isArray(ledger)) {
-    viewport.innerHTML = `<p style="padding:20px; color:#dc3545; font-weight:700;">${escapeHtml((ledger && ledger.message) || "Couldn't load the Service Charge ledger.")}</p>`;
-    return;
-  }
-
+// [FEATURE] Shared by the standalone Per-Apartment report AND the
+// Overall report's optional "include per-apartment breakdowns"
+// checkbox — one apartment's balance summary + itemized activity for a
+// period, as a content fragment (not a full wrapped report). Avoids
+// having two copies of this logic that could drift apart.
+function buildServiceChargeApartmentSectionHtml(unitId, ledger, occupancyLog, startDateStr, endDateStr) {
   const unitLedger = ledger.filter((row) => row && String(row.apt) === String(unitId));
   const unitAptRecord = (cache.apts || []).find((a) => a && String(getUnitNumber(a)) === String(unitId));
-  const wasOccupied = wasApartmentOccupiedDuringPeriod(
-    unitId,
-    Array.isArray(occupancyLog) ? occupancyLog : [],
-    startDateStr,
-    endDateStr,
-    unitAptRecord,
-  );
+  const wasOccupied = wasApartmentOccupiedDuringPeriod(unitId, occupancyLog, startDateStr, endDateStr, unitAptRecord);
 
   const startDate = new Date(startDateStr);
   const endDate = new Date(endDateStr);
@@ -1570,7 +1590,7 @@ async function generateServiceChargePerApartmentReport(unitId, startDateStr, end
       </table>`
     : `<p style="color:#666; font-size:13px; margin-top:8px;">No activity in this period.</p>`;
 
-  const out = `<div style="font-size:13px;">
+  return `<div style="font-size:13px;">
     <table style="width:100%; border-collapse:collapse; border:2px solid #000; font-size:14px; font-weight:bold; margin-bottom:20px;">
       <tr><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Opening Balance</td><td style="border:1px solid #000; padding:6px; width:25%;">₦${formatMoney(openingBalance)}</td><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Closing Balance</td><td style="border:1px solid #000; padding:6px; width:25%;">₦${formatMoney(closingBalance)}</td></tr>
       <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Contributions This Period</td><td style="border:1px solid #000; padding:6px; color:#198754;">₦${formatMoney(totalContributions)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Expenses This Period</td><td style="border:1px solid #000; padding:6px; color:#dc3545;">₦${formatMoney(totalDebits)}</td></tr>
@@ -1579,6 +1599,30 @@ async function generateServiceChargePerApartmentReport(unitId, startDateStr, end
     <h3 style="font-size:14px; font-weight:900; text-transform:uppercase; margin:0 0 6px 0; text-decoration:underline;">Activity (${escapeHtml(formatDateForDisplay(startDateStr))} &mdash; ${escapeHtml(formatDateForDisplay(endDateStr))})</h3>
     ${activityTable}
   </div>`;
+}
+
+async function generateServiceChargePerApartmentReport(unitId, startDateStr, endDateStr) {
+  const viewport = document.getElementById("report-preview-viewport");
+  if (!viewport) return;
+
+  viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading Service Charge data...</p>`;
+
+  const [ledger, occupancyLog] = await Promise.all([
+    callApi("getServiceChargeLedger", {}),
+    callApi("getOccupancyLog", {}),
+  ]);
+  if (!ledger || !Array.isArray(ledger)) {
+    viewport.innerHTML = `<p style="padding:20px; color:#dc3545; font-weight:700;">${escapeHtml((ledger && ledger.message) || "Couldn't load the Service Charge ledger.")}</p>`;
+    return;
+  }
+
+  const out = buildServiceChargeApartmentSectionHtml(
+    unitId,
+    ledger,
+    Array.isArray(occupancyLog) ? occupancyLog : [],
+    startDateStr,
+    endDateStr,
+  );
 
   const ref = generateReportRef("RPT");
   const wrapped = wrapReportContent(out, `Service Charge — Unit ${escapeHtml(unitId)}`, ref);
@@ -1591,7 +1635,7 @@ async function generateServiceChargePerApartmentReport(unitId, startDateStr, end
   window.currentReportShowTitleLine = true;
   window.currentReportRef = ref;
   window.currentReportRawContent = out;
-  document.getElementById("report-onscreen-preview-card").style.display = "block";
+  setOnscreenPreviewCardDisplay("block");
 }
 
 // =========================================================
@@ -1726,8 +1770,7 @@ function generatePendingOutflowReport() {
   window.currentReportShowTitleLine = false;
   window.currentReportRef = ref;
   window.currentReportRawContent = out;
-  document.getElementById("report-onscreen-preview-card").style.display =
-    "block";
+  setOnscreenPreviewCardDisplay("block");
 }
 
 // =========================================================
@@ -2019,8 +2062,7 @@ function generateLedgerReport(ledgerType) {
   window.currentReportShowTitleLine = false;
   window.currentReportRef = ref;
   window.currentReportRawContent = out;
-  document.getElementById("report-onscreen-preview-card").style.display =
-    "block";
+  setOnscreenPreviewCardDisplay("block");
 }
 
 function downloadCurrentReportPDF() {
@@ -2112,8 +2154,7 @@ function generateApartmentManifestReport() {
   window.currentReportShowTitleLine = false;
   window.currentReportRef = ref;
   window.currentReportRawContent = html;
-  document.getElementById("report-onscreen-preview-card").style.display =
-    "block";
+  setOnscreenPreviewCardDisplay("block");
 }
 
 function generateApartmentDossierReport(targetUnitId, options = {}) {
@@ -2245,6 +2286,5 @@ function generateApartmentDossierReport(targetUnitId, options = {}) {
   window.currentReportShowTitleLine = false;
   window.currentReportRef = ref;
   window.currentReportRawContent = html;
-  document.getElementById("report-onscreen-preview-card").style.display =
-    "block";
+  setOnscreenPreviewCardDisplay("block");
 }

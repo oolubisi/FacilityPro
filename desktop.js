@@ -748,7 +748,14 @@ function renderSectionBlock(view, def, entries) {
 }
 
 function updateMetrics() {
-  setText("metric-apartments", activeCount(cache.apts));
+  // [BUG FIX] Common Area/Service units (type: 'services') aren't real
+  // tenancy apartments and shouldn't count toward this metric — same
+  // exclusion the Apartments view itself already applies when grouping
+  // into Vacant/Occupied/Services sections.
+  const realApartments = (cache.apts || []).filter(
+    (a) => a && String(a.type || a.Type || "").toLowerCase() !== "services",
+  );
+  setText("metric-apartments", activeCount(realApartments));
   setText("metric-assets", activeCount(cache.assets));
   setText(
     "metric-tickets",
