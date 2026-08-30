@@ -1438,16 +1438,32 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
   // is stored as one ledger row per affected apartment, but all of them
   // carry the SAME entry number, since they're one logical transaction
   // — grouped here into a single line item per entry number, matching
-  // that transaction-level view. The Apt column lists every apartment
-  // covered when a group has more than one. Entries logged before this
-  // feature shipped won't have an entryNumber yet — grouped by
-  // expenseId as a fallback so they still display sensibly.
+  // that transaction-level view. Entries logged before this feature
+  // shipped won't have an entryNumber yet — grouped by expenseId as a
+  // fallback so they still display sensibly.
+  //
+  // [BUG FIX] The displayed apartment count now comes from the FULL,
+  // unfiltered ledger — not periodRows (already date-filtered to the
+  // selected report period) — matching how the Per-Apartment report's
+  // own "(N apts)" count is computed. Using periodRows here caused the
+  // two reports to disagree on the same expense's unit count if, for
+  // any reason, not every one of that expense's linked rows shared the
+  // exact same date. The unit count for a shared expense is a fixed
+  // fact about that transaction — it shouldn't change depending on
+  // which report period you happen to be viewing it through.
+  const sharedExpenseFullUnitCounts = {};
+  ledger.forEach((row) => {
+    if (!row || row.type !== "shared_expense") return;
+    const key = row.entryNumber || row.expenseId || row.entryId;
+    sharedExpenseFullUnitCounts[key] = (sharedExpenseFullUnitCounts[key] || 0) + 1;
+  });
+
   const entryGroups = {};
   const entryOrder = [];
   periodRows.forEach((row) => {
     const key = row.entryNumber || row.expenseId || row.entryId;
     if (!entryGroups[key]) {
-      entryGroups[key] = { ...row, amount: 0, apts: [] };
+      entryGroups[key] = { ...row, amount: 0, apts: [], fullUnitCount: sharedExpenseFullUnitCounts[key] || 1 };
       entryOrder.push(key);
     }
     entryGroups[key].amount += Number(row.amount) || 0;
@@ -1472,7 +1488,7 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
               (row) => `<tr style="border-bottom:1px solid #eee;">
                 <td style="padding:5px 4px; font-weight:700;">${escapeHtml(row.entryNumber || "—")}</td>
                 <td style="padding:5px 4px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
-                <td style="padding:5px 4px; font-weight:700;">${row.apts.length > 1 ? `${row.apts.length} apts` : escapeHtml(row.apts[0] || "")}</td>
+                <td style="padding:5px 4px; font-weight:700;">${row.fullUnitCount > 1 ? `${row.fullUnitCount} apts` : escapeHtml(row.apts[0] || "")}</td>
                 <td style="padding:5px 4px;">${typeLabels[row.type] || row.type}</td>
                 <td style="padding:5px 4px;">${escapeHtml(row.category || "")}</td>
                 <td style="padding:5px 4px; text-align:right; font-weight:700; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}</td>
