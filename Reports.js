@@ -1472,7 +1472,7 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
               (row) => `<tr style="border-bottom:1px solid #eee;">
                 <td style="padding:5px 4px; font-weight:700;">${escapeHtml(row.entryNumber || "—")}</td>
                 <td style="padding:5px 4px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
-                <td style="padding:5px 4px; font-weight:700;">${row.apts.map((a) => escapeHtml(a || "")).join(", ")}</td>
+                <td style="padding:5px 4px; font-weight:700;">${row.apts.length > 1 ? `${row.apts.length} apts` : escapeHtml(row.apts[0] || "")}</td>
                 <td style="padding:5px 4px;">${typeLabels[row.type] || row.type}</td>
                 <td style="padding:5px 4px;">${escapeHtml(row.category || "")}</td>
                 <td style="padding:5px 4px; text-align:right; font-weight:700; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}</td>
@@ -1607,7 +1607,26 @@ function buildServiceChargeApartmentSectionHtml(unitId, ledger, occupancyLog, st
     else totalDebits += amt;
   });
 
-  const typeLabels = { contribution: "Contribution", apartment_expense: "Apartment Expense", shared_expense: "Shared Expense (share)" };
+  const typeLabels = { contribution: "Contribution", apartment_expense: "Apartment Expense" };
+  // [FEATURE] "Shared Expense" now shows how many apartments that
+  // specific expense was actually split across (e.g. "Shared Expense
+  // (4 apts)") instead of a static "(share)" label — counted from the
+  // FULL ledger (not just this apartment's own rows), grouped by
+  // expenseId, since all of a shared expense's rows carry the same one.
+  const sharedExpenseUnitCounts = {};
+  ledger.forEach((row) => {
+    if (!row || row.type !== "shared_expense") return;
+    const key = row.expenseId || row.entryId;
+    sharedExpenseUnitCounts[key] = (sharedExpenseUnitCounts[key] || 0) + 1;
+  });
+  const getTypeLabel = (row) => {
+    if (row.type === "shared_expense") {
+      const key = row.expenseId || row.entryId;
+      const count = sharedExpenseUnitCounts[key] || 1;
+      return `Shared Expense (${count} apt${count === 1 ? "" : "s"})`;
+    }
+    return typeLabels[row.type] || row.type;
+  };
   const sortedRows = [...periodRows].sort((a, b) => new Date(a.date) - new Date(b.date));
   const activityTable = sortedRows.length
     ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px;">
@@ -1624,7 +1643,7 @@ function buildServiceChargeApartmentSectionHtml(unitId, ledger, occupancyLog, st
               (row) => `<tr style="border-bottom:1px solid #eee;">
             <td style="padding:5px 4px; font-weight:700;">${escapeHtml(row.entryNumber || "—")}</td>
             <td style="padding:5px 4px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
-            <td style="padding:5px 4px;">${typeLabels[row.type] || row.type}</td>
+            <td style="padding:5px 4px;">${escapeHtml(getTypeLabel(row))}</td>
             <td style="padding:5px 4px;">${escapeHtml(row.category || "")}</td>
             <td style="padding:5px 4px; text-align:right; font-weight:700; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}</td>
           </tr>`,
