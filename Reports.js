@@ -1389,33 +1389,15 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
     else if (row.type === "apartment_expense") totalApartmentExpense += amt;
   });
 
-  const typeLabels = { contribution: "Contribution", apartment_expense: "Apartment Expense", shared_expense: "Shared Expense" };
+  const typeLabels = { contribution: "Contribution", apartment_expense: "Apartment Expense", shared_expense: "Shared Expense (share)" };
 
-  // [FEATURE] Shared expenses are stored as one ledger row per affected
-  // apartment (see logSharedExpense in Code.gs — that's what makes each
-  // apartment's own balance correct), but on the OVERALL report that
-  // reads as the same expense repeated N times. Collapse every row
-  // sharing an expenseId into a single line showing the original total
-  // and how many units it was split across — contributions and
-  // apartment-specific expenses are unaffected and still show one line
-  // each, since those are already genuinely single transactions.
-  const displayRows = [];
-  const sharedExpenseGroups = {};
-  periodRows.forEach((row) => {
-    if (row.type !== "shared_expense") {
-      displayRows.push(row);
-      return;
-    }
-    const key = row.expenseId || row.entryId;
-    if (!sharedExpenseGroups[key]) {
-      sharedExpenseGroups[key] = { ...row, amount: 0, unitCount: 0 };
-      displayRows.push(sharedExpenseGroups[key]);
-    }
-    sharedExpenseGroups[key].amount += Number(row.amount) || 0;
-    sharedExpenseGroups[key].unitCount += 1;
-  });
-
-  const sortedRows = [...displayRows].sort((a, b) => new Date(a.date) - new Date(b.date));
+  // [CHANGE] Previously collapsed every row sharing an expenseId
+  // (a shared expense is stored as one ledger row per affected
+  // apartment) into a single summarized line. Reverted per explicit
+  // request — every individual charge now shows as its own row, same
+  // as contributions and apartment-specific expenses, so it's clear
+  // exactly which apartment got charged how much for a shared expense.
+  const sortedRows = [...periodRows].sort((a, b) => new Date(a.date) - new Date(b.date));
   const activityTable = sortedRows.length
     ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px;">
         <thead><tr style="border-bottom:2px solid #000; text-align:left;">
@@ -1430,7 +1412,7 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
             .map(
               (row) => `<tr style="border-bottom:1px solid #eee;">
                 <td style="padding:5px 4px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
-                <td style="padding:5px 4px; font-weight:700;">${row.type === "shared_expense" ? `All Occupied (${row.unitCount} unit${row.unitCount === 1 ? "" : "s"})` : escapeHtml(row.apt || "")}</td>
+                <td style="padding:5px 4px; font-weight:700;">${escapeHtml(row.apt || "")}</td>
                 <td style="padding:5px 4px;">${typeLabels[row.type] || row.type}</td>
                 <td style="padding:5px 4px;">${escapeHtml(row.category || "")}</td>
                 <td style="padding:5px 4px; text-align:right; font-weight:700; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}</td>
