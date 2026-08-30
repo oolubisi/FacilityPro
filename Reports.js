@@ -320,8 +320,8 @@ function handleReportLayoutSwitch() {
       ${unitPickerHtml}
       <label ${unitPickerHtml ? 'style="margin-top:10px; display:block;"' : ""}>REPORT PERIOD</label>
       <select id="rep_sc_period" class="form-control">
+        <option value="current_month" selected>Current Month</option>
         <option value="previous_month">Previous Month</option>
-        <option value="current_month">Current Month</option>
         <option value="custom">Custom Range</option>
       </select>
       <div id="rep_sc_custom_dates" style="display:none; margin-top:10px;">
