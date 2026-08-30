@@ -1389,18 +1389,36 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
     else if (row.type === "apartment_expense") totalApartmentExpense += amt;
   });
 
-  const typeLabels = { contribution: "Contribution", apartment_expense: "Apartment Expense", shared_expense: "Shared Expense (share)" };
+  const typeLabels = { contribution: "Contribution", apartment_expense: "Apartment Expense", shared_expense: "Shared Expense" };
 
-  // [CHANGE] Previously collapsed every row sharing an expenseId
-  // (a shared expense is stored as one ledger row per affected
-  // apartment) into a single summarized line. Reverted per explicit
-  // request — every individual charge now shows as its own row, same
-  // as contributions and apartment-specific expenses, so it's clear
-  // exactly which apartment got charged how much for a shared expense.
-  const sortedRows = [...periodRows].sort((a, b) => new Date(a.date) - new Date(b.date));
+  // [FEATURE] Every logged transaction gets one persistent Entry Number
+  // (yy/mm/NNN, assigned server-side at logging time — see
+  // generateNextServiceChargeEntryNumber in Code.gs). A shared expense
+  // is stored as one ledger row per affected apartment, but all of them
+  // carry the SAME entry number, since they're one logical transaction
+  // — grouped here into a single line item per entry number, matching
+  // that transaction-level view. The Apt column lists every apartment
+  // covered when a group has more than one. Entries logged before this
+  // feature shipped won't have an entryNumber yet — grouped by
+  // expenseId as a fallback so they still display sensibly.
+  const entryGroups = {};
+  const entryOrder = [];
+  periodRows.forEach((row) => {
+    const key = row.entryNumber || row.expenseId || row.entryId;
+    if (!entryGroups[key]) {
+      entryGroups[key] = { ...row, amount: 0, apts: [] };
+      entryOrder.push(key);
+    }
+    entryGroups[key].amount += Number(row.amount) || 0;
+    entryGroups[key].apts.push(row.apt);
+  });
+  const groupedRows = entryOrder.map((key) => entryGroups[key]);
+
+  const sortedRows = [...groupedRows].sort((a, b) => new Date(a.date) - new Date(b.date));
   const activityTable = sortedRows.length
     ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px;">
         <thead><tr style="border-bottom:2px solid #000; text-align:left;">
+          <th style="padding:6px 4px;">Entry #</th>
           <th style="padding:6px 4px;">Date</th>
           <th style="padding:6px 4px;">Apt</th>
           <th style="padding:6px 4px;">Type</th>
@@ -1411,8 +1429,9 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
           ${sortedRows
             .map(
               (row) => `<tr style="border-bottom:1px solid #eee;">
+                <td style="padding:5px 4px; font-weight:700;">${escapeHtml(row.entryNumber || "—")}</td>
                 <td style="padding:5px 4px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
-                <td style="padding:5px 4px; font-weight:700;">${escapeHtml(row.apt || "")}</td>
+                <td style="padding:5px 4px; font-weight:700;">${row.apts.map((a) => escapeHtml(a || "")).join(", ")}</td>
                 <td style="padding:5px 4px;">${typeLabels[row.type] || row.type}</td>
                 <td style="padding:5px 4px;">${escapeHtml(row.category || "")}</td>
                 <td style="padding:5px 4px; text-align:right; font-weight:700; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}</td>
@@ -1552,6 +1571,7 @@ function buildServiceChargeApartmentSectionHtml(unitId, ledger, occupancyLog, st
   const activityTable = sortedRows.length
     ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px;">
         <thead><tr style="border-bottom:2px solid #000; text-align:left;">
+          <th style="padding:6px 4px;">Entry #</th>
           <th style="padding:6px 4px;">Date</th>
           <th style="padding:6px 4px;">Type</th>
           <th style="padding:6px 4px;">Category</th>
@@ -1561,6 +1581,7 @@ function buildServiceChargeApartmentSectionHtml(unitId, ledger, occupancyLog, st
           ${sortedRows
             .map(
               (row) => `<tr style="border-bottom:1px solid #eee;">
+            <td style="padding:5px 4px; font-weight:700;">${escapeHtml(row.entryNumber || "—")}</td>
             <td style="padding:5px 4px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
             <td style="padding:5px 4px;">${typeLabels[row.type] || row.type}</td>
             <td style="padding:5px 4px;">${escapeHtml(row.category || "")}</td>
