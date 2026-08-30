@@ -263,6 +263,7 @@ function renderServiceChargeLedgerTable(container, ledger) {
 
   container.innerHTML = `<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:13px;">
     <thead><tr style="border-bottom:2px solid #000; text-align:left;">
+      <th style="padding:8px 6px;">Entry #</th>
       <th style="padding:8px 6px;">Date</th>
       <th style="padding:8px 6px;">Apt</th>
       <th style="padding:8px 6px;">Type</th>
@@ -276,6 +277,7 @@ function renderServiceChargeLedgerTable(container, ledger) {
           const canDelete = isEntrySameCalendarDay(row.createdAt);
           const amountDisplay = `${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}`;
           return `<tr style="border-bottom:1px solid #eee;">
+            <td style="padding:6px; font-weight:800;">${escapeHtml(row.entryNumber || "—")}</td>
             <td style="padding:6px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
             <td style="padding:6px; font-weight:800;">${escapeHtml(row.apt || "")}</td>
             <td style="padding:6px;"><span style="background:${typeColors[row.type] || "#666"}22; color:${typeColors[row.type] || "#666"}; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:800;">${typeLabels[row.type] || row.type}</span></td>
