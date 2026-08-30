@@ -483,7 +483,47 @@ function resolveServiceChargeReportPeriod() {
   };
 }
 
-function compileReportPreview() {
+// [FEATURE] Shared busy-guard for report actions (Generate/Download/
+// Print) — shows a spinner on the triggering button and blocks
+// re-invoking any of these three while one is already running. One
+// shared flag across all three since they're mutually exclusive from
+// the user's perspective (e.g. clicking Print while a report is still
+// being generated shouldn't queue up a second, conflicting run).
+let reportActionInProgress = false;
+
+async function runReportAction(buttonIds, loadingLabel, workFn) {
+  if (reportActionInProgress) {
+    showToast("Still working on the previous request — please wait.", "warning");
+    return;
+  }
+  reportActionInProgress = true;
+  // Mobile and desktop render their own separate report-action buttons
+  // with different IDs, both wired to these same shared functions —
+  // check every candidate and use whichever one actually exists in
+  // the current shell's DOM.
+  const ids = Array.isArray(buttonIds) ? buttonIds : [buttonIds];
+  const btn = ids.map((id) => document.getElementById(id)).find((el) => el);
+  const originalHtml = btn ? btn.innerHTML : null;
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${escapeHtml(loadingLabel)}`;
+  }
+  try {
+    await workFn();
+  } catch (err) {
+    console.error("Report action failed:", err);
+    showToast("Something went wrong. Please try again.", "error");
+  } finally {
+    reportActionInProgress = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+    }
+  }
+}
+
+async function compileReportPreview() {
+  await runReportAction(["rep-generate-btn", "desktop-preview-report"], "Generating...", async () => {
   const layout = document.getElementById("rep-layout-selector").value;
   const viewport = document.getElementById("report-preview-viewport");
   if (!layout) return;
@@ -521,7 +561,7 @@ function compileReportPreview() {
       return;
     }
     const includeApartmentBreakdowns = document.getElementById("rep_sc_include_apartments")?.checked === true;
-    generateServiceChargeOverallReport(startDate, endDate, includeApartmentBreakdowns);
+    await generateServiceChargeOverallReport(startDate, endDate, includeApartmentBreakdowns);
     return;
   }
   if (layout === "sc_per_apartment") {
@@ -531,7 +571,7 @@ function compileReportPreview() {
       showToast("Please select a unit and a start/end date.", "warning");
       return;
     }
-    generateServiceChargePerApartmentReport(unit, startDate, endDate);
+    await generateServiceChargePerApartmentReport(unit, startDate, endDate);
     return;
   }
   if (layout === "pending_outflow") {
@@ -950,6 +990,7 @@ function compileReportPreview() {
   window.currentReportRef = ref;
   window.currentReportRawContent = out;
   setOnscreenPreviewCardDisplay("block");
+  });
 }
 
 function getTotalRecordCount() {
@@ -2068,14 +2109,15 @@ function generateLedgerReport(ledgerType) {
   setOnscreenPreviewCardDisplay("block");
 }
 
-function downloadCurrentReportPDF() {
+async function downloadCurrentReportPDF() {
+  await runReportAction(["rep-download-btn", "desktop-pdf-report"], "Preparing PDF...", async () => {
   const source = document.getElementById("report-preview-viewport");
   if (!source || !source.innerHTML.trim()) {
     showToast("Please generate a report first.", "warning");
     return;
   }
   const rawContent = window.currentReportRawContent || source.innerHTML;
-  compileAndDownloadUnifiedPDF(
+  await compileAndDownloadUnifiedPDF(
     rawContent,
     window.currentReportAttachmentManifest || [],
     window.currentReportFilename || "Facility_Report",
@@ -2090,9 +2132,11 @@ function downloadCurrentReportPDF() {
     // same flag each report function sets alongside currentReportTitle.
     window.currentReportShowTitleLine !== false,
   );
+  });
 }
 
-function printCurrentReport() {
+async function printCurrentReport() {
+  await runReportAction(["rep-print-btn", "desktop-print-report"], "Preparing...", async () => {
   const source = document.getElementById("report-preview-viewport");
   if (!source || !source.innerHTML.trim()) {
     showToast("Please generate a report first.", "warning");
@@ -2101,9 +2145,13 @@ function printCurrentReport() {
   const originalTitle = document.title;
   document.title = window.currentReportFilename || "Facility_Report";
   window.print();
-  setTimeout(() => {
-    document.title = originalTitle;
-  }, 1000);
+  await new Promise((resolve) => {
+    setTimeout(() => {
+      document.title = originalTitle;
+      resolve();
+    }, 1000);
+  });
+  });
 }
 
 function generateApartmentManifestReport() {
