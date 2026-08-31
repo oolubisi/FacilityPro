@@ -1481,9 +1481,41 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
   });
   const groupedRows = entryOrder.map((key) => entryGroups[key]);
 
+  // [FEATURE] Balance-after-transaction — computed from the FULL
+  // ledger's transactions (grouped by entry, same as above) in
+  // chronological order, not just the ones falling in the displayed
+  // period, so it correctly continues from the pooled balance as it
+  // stood before the period started (same principle as Opening Pooled
+  // Balance). Each transaction's net effect on the pool is the signed
+  // sum of every row belonging to it — a shared expense's total debit
+  // across all its apartments, a contribution's credit, etc.
+  const fullEntryNet = {};
+  const fullEntryDates = {};
+  const fullEntryOrder = [];
+  ledger.forEach((row) => {
+    if (!row) return;
+    const key = row.entryNumber || row.expenseId || row.entryId;
+    if (fullEntryNet[key] === undefined) {
+      fullEntryNet[key] = 0;
+      fullEntryDates[key] = row.date;
+      fullEntryOrder.push(key);
+    }
+    const amt = Number(row.amount) || 0;
+    fullEntryNet[key] += row.direction === "credit" ? amt : -amt;
+  });
+  const sortedFullKeys = [...fullEntryOrder].sort(
+    (a, b) => new Date(fullEntryDates[a]) - new Date(fullEntryDates[b]),
+  );
+  let runningPoolBalance = 0;
+  const poolBalanceAfterEntry = {};
+  sortedFullKeys.forEach((key) => {
+    runningPoolBalance += fullEntryNet[key];
+    poolBalanceAfterEntry[key] = runningPoolBalance;
+  });
+
   const sortedRows = [...groupedRows].sort((a, b) => new Date(a.date) - new Date(b.date));
   const activityTable = sortedRows.length
-    ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px;">
+    ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; table-layout:fixed;">
         <thead><tr style="border-bottom:2px solid #000; text-align:left;">
           <th style="padding:6px 4px;">Entry #</th>
           <th style="padding:6px 4px;">Date</th>
@@ -1491,19 +1523,23 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
           <th style="padding:6px 4px;">Type</th>
           <th style="padding:6px 4px;">Category</th>
           <th style="padding:6px 4px; text-align:right;">Amount</th>
+          <th style="padding:6px 4px; text-align:right;">Balance</th>
         </tr></thead>
         <tbody>
           ${sortedRows
-            .map(
-              (row) => `<tr style="border-bottom:1px solid #eee;">
+            .map((row) => {
+              const key = row.entryNumber || row.expenseId || row.entryId;
+              const balance = poolBalanceAfterEntry[key];
+              return `<tr style="border-bottom:1px solid #eee;">
                 <td style="padding:5px 4px; font-weight:700;">${escapeHtml(row.entryNumber || "—")}</td>
                 <td style="padding:5px 4px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
                 <td style="padding:5px 4px; font-weight:700;">${row.fullUnitCount > 1 ? `${row.fullUnitCount} apts` : escapeHtml(row.apts[0] || "")}</td>
                 <td style="padding:5px 4px;">${typeLabels[row.type] || row.type}</td>
-                <td style="padding:5px 4px;">${escapeHtml(row.category || "")}</td>
+                <td style="padding:5px 4px; word-break:break-word; overflow-wrap:break-word; white-space:normal;">${escapeHtml(row.category || "")}</td>
                 <td style="padding:5px 4px; text-align:right; font-weight:700; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}</td>
-              </tr>`,
-            )
+                <td style="padding:5px 4px; text-align:right; font-weight:700; color:${balance >= 0 ? "#000" : "#dc3545"};">₦${formatMoney(balance)}</td>
+              </tr>`;
+            })
             .join("")}
         </tbody>
       </table>`
@@ -1654,14 +1690,30 @@ function buildServiceChargeApartmentSectionHtml(unitId, ledger, occupancyLog, st
     return typeLabels[row.type] || row.type;
   };
   const sortedRows = [...periodRows].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  // [FEATURE] Balance-after-transaction — computed from this
+  // apartment's FULL ledger history (chronological), not just the
+  // period being displayed, so it correctly continues from the
+  // opening balance rather than restarting at zero.
+  let runningBalance = 0;
+  const balanceAfterEntryId = {};
+  [...unitLedger]
+    .sort((a, b) => new Date(a.date) - new Date(b.date))
+    .forEach((row) => {
+      const amt = Number(row.amount) || 0;
+      runningBalance += row.direction === "credit" ? amt : -amt;
+      balanceAfterEntryId[row.entryId] = runningBalance;
+    });
+
   const activityTable = sortedRows.length
-    ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px;">
+    ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; table-layout:fixed;">
         <thead><tr style="border-bottom:2px solid #000; text-align:left;">
           <th style="padding:6px 4px;">Entry #</th>
           <th style="padding:6px 4px;">Date</th>
           <th style="padding:6px 4px;">Type</th>
           <th style="padding:6px 4px;">Category</th>
           <th style="padding:6px 4px; text-align:right;">Amount</th>
+          <th style="padding:6px 4px; text-align:right;">Balance</th>
         </tr></thead>
         <tbody>
           ${sortedRows
@@ -1670,8 +1722,9 @@ function buildServiceChargeApartmentSectionHtml(unitId, ledger, occupancyLog, st
             <td style="padding:5px 4px; font-weight:700;">${escapeHtml(row.entryNumber || "—")}</td>
             <td style="padding:5px 4px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
             <td style="padding:5px 4px;">${escapeHtml(getTypeLabel(row))}</td>
-            <td style="padding:5px 4px;">${escapeHtml(row.category || "")}</td>
+            <td style="padding:5px 4px; word-break:break-word; overflow-wrap:break-word; white-space:normal;">${escapeHtml(row.category || "")}</td>
             <td style="padding:5px 4px; text-align:right; font-weight:700; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}</td>
+            <td style="padding:5px 4px; text-align:right; font-weight:700; color:${balanceAfterEntryId[row.entryId] >= 0 ? "#000" : "#dc3545"};">₦${formatMoney(balanceAfterEntryId[row.entryId])}</td>
           </tr>`,
             )
             .join("")}
