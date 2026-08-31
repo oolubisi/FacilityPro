@@ -74,12 +74,12 @@ function applyRoleBasedUIVisibility() {
   if (!currentUserMeetsRole("manager")) {
     const desktopScNav = document.getElementById("desktop-servicecharge-nav");
     if (desktopScNav) desktopScNav.style.display = "none";
-    const mobileScTile = document.getElementById("mobile-servicecharge-tile");
-    if (mobileScTile) mobileScTile.style.display = "none";
+    const dashboardScTile = document.getElementById("dashboard-servicecharge-tile");
+    if (dashboardScTile) dashboardScTile.style.display = "none";
     const desktopPcNav = document.getElementById("desktop-pettycash-nav");
     if (desktopPcNav) desktopPcNav.style.display = "none";
-    const mobilePcTile = document.getElementById("mobile-pettycash-tile");
-    if (mobilePcTile) mobilePcTile.style.display = "none";
+    const dashboardPcTile = document.getElementById("dashboard-pettycash-tile");
+    if (dashboardPcTile) dashboardPcTile.style.display = "none";
   }
 }
 

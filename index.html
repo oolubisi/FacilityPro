@@ -168,25 +168,25 @@
             </div>
             <div
               class="nav-card"
-              onclick="showPage('maint')"
+              id="dashboard-servicecharge-tile"
+              onclick="showPage('servicecharge')"
               role="button"
               tabindex="0"
-              aria-label="Tickets"
+              aria-label="Service Charge"
             >
-              <i class="fas fa-clipboard-list"></i>
-              <div id="count-maint" class="count">--</div>
-              <small>Tickets</small>
+              <i class="fas fa-coins"></i>
+              <small>Service Charge</small>
             </div>
             <div
               class="nav-card"
-              onclick="showPage('workorders')"
+              id="dashboard-pettycash-tile"
+              onclick="showPage('pettycash')"
               role="button"
               tabindex="0"
-              aria-label="Work Orders"
+              aria-label="Petty Cash"
             >
-              <i class="fas fa-file-invoice-dollar"></i>
-              <div id="s-wo" class="count">--</div>
-              <small>Pending Work Orders</small>
+              <i class="fas fa-wallet"></i>
+              <small>Petty Cash</small>
             </div>
             <div
               class="nav-card"
@@ -232,6 +232,26 @@
           </div>
 
           <div class="nav-grid">
+            <div
+              class="nav-card-small"
+              onclick="showPage('maint')"
+              role="button"
+              tabindex="0"
+            >
+              <i class="fas fa-clipboard-list"></i>
+              <div id="count-maint" class="count">--</div>
+              <small>Tickets</small>
+            </div>
+            <div
+              class="nav-card-small"
+              onclick="showPage('workorders')"
+              role="button"
+              tabindex="0"
+            >
+              <i class="fas fa-file-invoice-dollar"></i>
+              <div id="s-wo" class="count">--</div>
+              <small>Pending Work Orders</small>
+            </div>
             <div
               class="nav-card-small"
               onclick="showPage('serviceunits')"
@@ -324,28 +344,6 @@
             >
               <i class="fas fa-cog" style="color: #6c757d"></i>
               <small style="color: #6c757d">Settings</small>
-            </div>
-            <div
-              class="nav-card-small"
-              id="mobile-servicecharge-tile"
-              onclick="showPage('servicecharge')"
-              style="grid-column: span 2; background: #e9ecef"
-              role="button"
-              tabindex="0"
-            >
-              <i class="fas fa-coins" style="color: #6c757d"></i>
-              <small style="color: #6c757d">Service Charge</small>
-            </div>
-            <div
-              class="nav-card-small"
-              id="mobile-pettycash-tile"
-              onclick="showPage('pettycash')"
-              style="grid-column: span 2; background: #e9ecef"
-              role="button"
-              tabindex="0"
-            >
-              <i class="fas fa-wallet" style="color: #6c757d"></i>
-              <small style="color: #6c757d">Petty Cash</small>
             </div>
             <div
               class="nav-card-small"
