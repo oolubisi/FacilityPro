@@ -1516,13 +1516,22 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
   const sortedRows = [...groupedRows].sort((a, b) => new Date(a.date) - new Date(b.date));
   const activityTable = sortedRows.length
     ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; table-layout:fixed;">
+        <colgroup>
+          <col style="width:9%;">
+          <col style="width:9%;">
+          <col style="width:11%;">
+          <col style="width:13%;">
+          <col style="width:30%;">
+          <col style="width:14%;">
+          <col style="width:14%;">
+        </colgroup>
         <thead><tr style="border-bottom:2px solid #000; text-align:left;">
           <th style="padding:6px 4px;">Entry #</th>
           <th style="padding:6px 4px;">Date</th>
           <th style="padding:6px 4px;">Apt</th>
           <th style="padding:6px 4px;">Type</th>
           <th style="padding:6px 4px;">Category</th>
-          <th style="padding:6px 4px; text-align:right;">Amount</th>
+          <th style="padding:6px 2px; text-align:right;">Amount</th>
           <th style="padding:6px 4px; text-align:right;">Balance</th>
         </tr></thead>
         <tbody>
@@ -1536,7 +1545,7 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
                 <td style="padding:5px 4px; font-weight:700;">${row.fullUnitCount > 1 ? `${row.fullUnitCount} apts` : escapeHtml(row.apts[0] || "")}</td>
                 <td style="padding:5px 4px;">${typeLabels[row.type] || row.type}</td>
                 <td style="padding:5px 4px; word-break:break-word; overflow-wrap:break-word; white-space:normal;">${escapeHtml(row.category || "")}</td>
-                <td style="padding:5px 4px; text-align:right; font-weight:700; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}</td>
+                <td style="padding:5px 2px; text-align:right; font-weight:700; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}</td>
                 <td style="padding:5px 4px; text-align:right; font-weight:700; color:${balance >= 0 ? "#000" : "#dc3545"};">₦${formatMoney(balance)}</td>
               </tr>`;
             })
@@ -1707,12 +1716,20 @@ function buildServiceChargeApartmentSectionHtml(unitId, ledger, occupancyLog, st
 
   const activityTable = sortedRows.length
     ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; table-layout:fixed;">
+        <colgroup>
+          <col style="width:11%;">
+          <col style="width:11%;">
+          <col style="width:19%;">
+          <col style="width:31%;">
+          <col style="width:14%;">
+          <col style="width:14%;">
+        </colgroup>
         <thead><tr style="border-bottom:2px solid #000; text-align:left;">
           <th style="padding:6px 4px;">Entry #</th>
           <th style="padding:6px 4px;">Date</th>
           <th style="padding:6px 4px;">Type</th>
           <th style="padding:6px 4px;">Category</th>
-          <th style="padding:6px 4px; text-align:right;">Amount</th>
+          <th style="padding:6px 2px; text-align:right;">Amount</th>
           <th style="padding:6px 4px; text-align:right;">Balance</th>
         </tr></thead>
         <tbody>
@@ -1723,7 +1740,7 @@ function buildServiceChargeApartmentSectionHtml(unitId, ledger, occupancyLog, st
             <td style="padding:5px 4px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
             <td style="padding:5px 4px;">${escapeHtml(getTypeLabel(row))}</td>
             <td style="padding:5px 4px; word-break:break-word; overflow-wrap:break-word; white-space:normal;">${escapeHtml(row.category || "")}</td>
-            <td style="padding:5px 4px; text-align:right; font-weight:700; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}</td>
+            <td style="padding:5px 2px; text-align:right; font-weight:700; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}</td>
             <td style="padding:5px 4px; text-align:right; font-weight:700; color:${balanceAfterEntryId[row.entryId] >= 0 ? "#000" : "#dc3545"};">₦${formatMoney(balanceAfterEntryId[row.entryId])}</td>
           </tr>`,
             )
