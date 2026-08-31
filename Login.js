@@ -76,6 +76,10 @@ function applyRoleBasedUIVisibility() {
     if (desktopScNav) desktopScNav.style.display = "none";
     const mobileScTile = document.getElementById("mobile-servicecharge-tile");
     if (mobileScTile) mobileScTile.style.display = "none";
+    const desktopPcNav = document.getElementById("desktop-pettycash-nav");
+    if (desktopPcNav) desktopPcNav.style.display = "none";
+    const mobilePcTile = document.getElementById("mobile-pettycash-tile");
+    if (mobilePcTile) mobilePcTile.style.display = "none";
   }
 }
 

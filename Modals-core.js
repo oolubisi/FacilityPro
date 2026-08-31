@@ -321,6 +321,135 @@ function deleteServiceChargeLedgerEntry(entryId) {
 }
 
 // ─────────────────────────────────────────────
+// § PETTY CASH (manager+ only — see checkBusinessPermission in
+// Code.gs). Independent of the Service Charge ledger and the older
+// CashExpenses feature (untouched) — its own sheet, its own running
+// balance. A Service Charge Apartment/Shared Expense can optionally
+// also create a linked outflow here (see logApartmentExpense/
+// logSharedExpense in Code.gs) — that's the only point of contact
+// between the two systems; this section otherwise fetches/refreshes
+// independently, same reasoning as the Service Charge section.
+// ─────────────────────────────────────────────
+let lastFetchedPettyCashLedger = [];
+
+async function refreshPettyCashSection() {
+  const containerId = isDesktopShell() ? "desktop-pc-ledger" : "mobile-pc-ledger";
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  container.innerHTML = `<p style="color:var(--muted); font-size:13px;">Loading ledger...</p>`;
+  const result = await callApi("getPettyCashLedger", {});
+
+  if (!result || !Array.isArray(result)) {
+    container.innerHTML = `<p style="color:var(--danger); font-size:13px; font-weight:700;">${escapeHtml((result && result.message) || "Couldn't load the ledger.")}</p>`;
+    return;
+  }
+
+  lastFetchedPettyCashLedger = result;
+  renderPettyCashSummary();
+  renderPettyCashLedgerTable(container, result);
+}
+
+function renderPettyCashSummary() {
+  const summaryId = isDesktopShell() ? "desktop-pc-summary" : "mobile-pc-summary";
+  const el = document.getElementById(summaryId);
+  if (!el) return;
+
+  const balance = computePettyCashBalanceAsOf(lastFetchedPettyCashLedger, null);
+
+  el.innerHTML = `
+    <div style="background:#fff; border:2px solid #000; border-radius:12px; padding:14px; margin-bottom:16px;">
+      <div style="font-size:11px; font-weight:900; text-transform:uppercase; color:var(--muted);">Petty Cash Balance (now)</div>
+      <div style="font-size:22px; font-weight:900; margin-top:4px; color:${balance >= 0 ? "inherit" : "#dc3545"};">₦${formatMoney(balance)}</div>
+    </div>
+  `;
+}
+
+// Balance as of a date = sum of every entry dated on or before it,
+// inflow adding and outflow subtracting. asOfDate === null means "as
+// of right now." Starts from ₦0 by design — see the conversation this
+// was scoped in: existing history predates balance tracking, so
+// there's no meaningful opening figure to seed it with.
+function computePettyCashBalanceAsOf(ledger, asOfDate) {
+  const cutoff = asOfDate ? new Date(asOfDate).getTime() : null;
+  let balance = 0;
+  [...(ledger || [])]
+    .sort((a, b) => new Date(a.date) - new Date(b.date))
+    .forEach((row) => {
+      if (!row) return;
+      const rowTime = new Date(row.date).getTime();
+      if (cutoff !== null && (isNaN(rowTime) || rowTime > cutoff)) return;
+      const amt = Number(row.amount) || 0;
+      balance += String(row.direction).toLowerCase() === "inflow" ? amt : -amt;
+    });
+  return balance;
+}
+
+function renderPettyCashLedgerTable(container, ledger) {
+  const sorted = [...ledger].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  if (sorted.length === 0) {
+    container.innerHTML = `<p style="color:var(--muted); font-size:13px;">No entries yet.</p>`;
+    return;
+  }
+
+  // [FEATURE] Running balance shown after every entry — computed
+  // chronologically (oldest first) so each row's balance reflects
+  // everything up to and including that point, then reversed for
+  // display (newest first, matching every other ledger table's
+  // convention in this app).
+  let running = 0;
+  const withBalance = sorted.map((row) => {
+    const amt = Number(row.amount) || 0;
+    running += String(row.direction).toLowerCase() === "inflow" ? amt : -amt;
+    return { ...row, runningBalance: running };
+  });
+  const displayRows = [...withBalance].reverse();
+
+  container.innerHTML = `<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:13px;">
+    <thead><tr style="border-bottom:2px solid #000; text-align:left;">
+      <th style="padding:8px 6px;">Date</th>
+      <th style="padding:8px 6px;">Apt</th>
+      <th style="padding:8px 6px;">Category</th>
+      <th style="padding:8px 6px; text-align:right;">Amount</th>
+      <th style="padding:8px 6px; text-align:right;">Balance</th>
+      <th style="padding:8px 6px;"></th>
+    </tr></thead>
+    <tbody>
+      ${displayRows
+        .map((row) => {
+          const canDelete = isEntrySameCalendarDay(row.createdAt);
+          const isInflow = String(row.direction).toLowerCase() === "inflow";
+          const amountDisplay = `${isInflow ? "+" : "-"}₦${formatMoney(row.amount)}`;
+          return `<tr style="border-bottom:1px solid #eee;">
+            <td style="padding:6px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
+            <td style="padding:6px; font-weight:800;">${escapeHtml(row.apt || "")}</td>
+            <td style="padding:6px;">${escapeHtml(row.category || "")}${row.linkedServiceChargeEntry ? ` <span style="color:var(--muted); font-size:11px;">(SC ${escapeHtml(row.linkedServiceChargeEntry)})</span>` : ""}</td>
+            <td style="padding:6px; text-align:right; font-weight:800; color:${isInflow ? "#198754" : "#dc3545"};">${amountDisplay}</td>
+            <td style="padding:6px; text-align:right; font-weight:800; color:${row.runningBalance >= 0 ? "inherit" : "#dc3545"};">₦${formatMoney(row.runningBalance)}</td>
+            <td style="padding:6px; text-align:right; white-space:nowrap;">
+              ${canDelete ? `<button type="button" data-modal-action="delete-petty-cash-entry" data-id="${escapeHtml(row.entryId)}" style="background:#fdecea; color:#dc3545; border:0; border-radius:6px; padding:4px 8px; font-size:11px; font-weight:700; cursor:pointer;">Delete</button>` : `<span style="color:var(--muted); font-size:11px;">Locked</span>`}
+            </td>
+          </tr>`;
+        })
+        .join("")}
+    </tbody>
+  </table></div>`;
+}
+
+function deletePettyCashLedgerEntry(entryId) {
+  if (!window.confirm("Delete this entry? This can't be undone.")) return;
+  callApi("deletePettyCashEntry", { entryId }).then((result) => {
+    if (result && result.status === "success") {
+      showToast("Entry deleted.", "success");
+      refreshPettyCashSection();
+    } else {
+      showToast((result && result.message) || "Failed to delete entry.", "error");
+    }
+  });
+}
+
+// ─────────────────────────────────────────────
 // § DELEGATED CLICK HANDLING (modal body)
 // #modalBody markup (here and in Modals-forms.js) uses data-modal-action
 // attributes instead of inline onclick="..." strings, matching the
@@ -372,6 +501,9 @@ function handleModalContentClick(event) {
       break;
     case "delete-service-charge-entry":
       deleteServiceChargeLedgerEntry(actionEl.dataset.id);
+      break;
+    case "delete-petty-cash-entry":
+      deletePettyCashLedgerEntry(actionEl.dataset.id);
       break;
   }
 }

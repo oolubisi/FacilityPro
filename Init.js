@@ -603,6 +603,8 @@ function showPage(p) {
     renderUsersList("mobile-user-list");
   } else if (p === "servicecharge") {
     refreshServiceChargeSection();
+  } else if (p === "pettycash") {
+    refreshPettyCashSection();
   }
   else if (p === "help") renderMobileHelpContent();
   else if (p === "utilities") {

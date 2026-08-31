@@ -554,6 +554,7 @@ async function openModal(type, editData = null) {
       <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="sc_ae_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" ${ls}></div>
       <div class="form-field"><label ${lbl}>Date</label><input id="sc_ae_date" type="date" value="${getLocalDateString()}" ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="sc_ae_description" ${ls}></div>
+      <div class="form-field span-3"><label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer;"><input type="checkbox" id="sc_ae_from_petty_cash" style="width:auto;"> Pay from Petty Cash</label></div>
     `;
     populateOccupiedUnitDropdown("sc_ae_apt");
 
@@ -572,6 +573,7 @@ async function openModal(type, editData = null) {
         category: sanitizeInput(document.getElementById("sc_ae_category").value) || "Expense",
         date: document.getElementById("sc_ae_date").value,
         description: sanitizeInput(document.getElementById("sc_ae_description").value),
+        fromPettyCash: document.getElementById("sc_ae_from_petty_cash").checked,
       })
         .then((result) => {
           submit.disabled = false;
@@ -607,6 +609,7 @@ async function openModal(type, editData = null) {
       <div class="form-field"><label ${lbl}>Total Amount (₦)</label><input id="sc_se_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" ${ls}></div>
       <div class="form-field"><label ${lbl}>Date</label><input id="sc_se_date" type="date" value="${getLocalDateString()}" ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="sc_se_description" ${ls}></div>
+      <div class="form-field span-3"><label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer;"><input type="checkbox" id="sc_se_from_petty_cash" style="width:auto;"> Pay from Petty Cash</label></div>
     `;
 
     submit.onclick = () => {
@@ -623,6 +626,7 @@ async function openModal(type, editData = null) {
         category,
         date: document.getElementById("sc_se_date").value,
         description: sanitizeInput(document.getElementById("sc_se_description").value),
+        fromPettyCash: document.getElementById("sc_se_from_petty_cash").checked,
       })
         .then((result) => {
           submit.disabled = false;
@@ -634,6 +638,96 @@ async function openModal(type, editData = null) {
           closeModal();
           showToast(`Shared expense split across ${result.splits.length} apartment(s).`, "success");
           if (typeof refreshServiceChargeSection === "function") refreshServiceChargeSection();
+        })
+        .catch(() => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+        });
+    };
+  }
+
+  // ── PETTY CASH: INFLOW ──
+  else if (type === "pettycashinflow") {
+    title.innerText = "Log Petty Cash Inflow";
+    body.innerHTML = `
+      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="pc_in_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Date</label><input id="pc_in_date" type="date" value="${getLocalDateString()}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Category</label><input id="pc_in_category" placeholder="e.g. Top-up from Estate Account" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Apartment (optional)</label><select id="pc_in_apt" ${ls}></select></div>
+      <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="pc_in_description" ${ls}></div>
+    `;
+    populateUnitDropdown("pc_in_apt");
+
+    submit.onclick = () => {
+      const amount = document.getElementById("pc_in_amount").value.replace(/,/g, "");
+      if (!amount || Number(amount) <= 0) {
+        showToast("Enter a positive amount.", "error");
+        return;
+      }
+      submit.disabled = true;
+      submit.classList.add("loading");
+      callApi("logPettyCashInflow", {
+        amount,
+        date: document.getElementById("pc_in_date").value,
+        category: sanitizeInput(document.getElementById("pc_in_category").value) || "Inflow",
+        apt: document.getElementById("pc_in_apt").value,
+        description: sanitizeInput(document.getElementById("pc_in_description").value),
+      })
+        .then((result) => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+          if (!result || result.status !== "success") {
+            showToast((result && result.message) || "Failed to log inflow.", "error");
+            return;
+          }
+          closeModal();
+          showToast("Petty cash inflow logged.", "success");
+          if (typeof refreshPettyCashSection === "function") refreshPettyCashSection();
+        })
+        .catch(() => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+        });
+    };
+  }
+
+  // ── PETTY CASH: OUTFLOW ──
+  else if (type === "pettycashoutflow") {
+    title.innerText = "Log Petty Cash Outflow";
+    body.innerHTML = `
+      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="pc_out_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Date</label><input id="pc_out_date" type="date" value="${getLocalDateString()}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Category</label><input id="pc_out_category" placeholder="e.g. Office Supplies" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Apartment (optional)</label><select id="pc_out_apt" ${ls}></select></div>
+      <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="pc_out_description" ${ls}></div>
+    `;
+    populateUnitDropdown("pc_out_apt");
+
+    submit.onclick = () => {
+      const amount = document.getElementById("pc_out_amount").value.replace(/,/g, "");
+      if (!amount || Number(amount) <= 0) {
+        showToast("Enter a positive amount.", "error");
+        return;
+      }
+      submit.disabled = true;
+      submit.classList.add("loading");
+      callApi("logPettyCashOutflow", {
+        amount,
+        date: document.getElementById("pc_out_date").value,
+        category: sanitizeInput(document.getElementById("pc_out_category").value) || "Outflow",
+        apt: document.getElementById("pc_out_apt").value,
+        description: sanitizeInput(document.getElementById("pc_out_description").value),
+      })
+        .then((result) => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+          if (!result || result.status !== "success") {
+            showToast((result && result.message) || "Failed to log outflow.", "error");
+            return;
+          }
+          closeModal();
+          showToast("Petty cash outflow logged.", "success");
+          if (typeof refreshPettyCashSection === "function") refreshPettyCashSection();
         })
         .catch(() => {
           submit.disabled = false;

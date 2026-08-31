@@ -109,6 +109,12 @@ const viewMeta = {
     key: "servicecharge", // not a real cache key — renderDesktop() special-cases this view
     empty: "",
   },
+  pettycash: {
+    title: "Petty Cash",
+    kicker: "Inflow, outflow & running balance — managers only",
+    key: "pettycash", // not a real cache key — renderDesktop() special-cases this view
+    empty: "",
+  },
   reports: {
     title: "Reports",
     kicker: "Desktop shortcuts",
@@ -405,6 +411,7 @@ function renderDesktop() {
   if (desktopState.view === "help") return renderHelpView();
   if (desktopState.view === "archived") return renderArchivedShortcuts();
   if (desktopState.view === "servicecharge") return renderServiceChargeShortcuts();
+  if (desktopState.view === "pettycash") return renderPettyCashShortcuts();
 
   const records = sortRecords(desktopState.view, filterRecords(cache[meta.key] || []));
   desktopState.lastRecords = records;
@@ -1136,6 +1143,25 @@ function renderServiceChargeShortcuts() {
     </div>
   `;
   refreshServiceChargeSection();
+}
+
+function renderPettyCashShortcuts() {
+  document.getElementById("record-count").textContent = "";
+  document.getElementById("card-grid").innerHTML = `
+    <div id="desktop-pc-summary" style="grid-column:1/-1;"></div>
+    <div class="desktop-form-card" style="grid-column:1/-1;">
+      <h3 style="margin:0 0 12px; font-size:15px;">Log an Entry</h3>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="action-btn" style="width:auto; background:var(--green);" onclick="openModal('pettycashinflow')"><i class="fas fa-arrow-down"></i> New Inflow</button>
+        <button class="action-btn" style="width:auto; background:var(--red);" onclick="openModal('pettycashoutflow')"><i class="fas fa-arrow-up"></i> New Outflow</button>
+      </div>
+    </div>
+    <div class="desktop-form-card" style="grid-column:1/-1;">
+      <h3 style="margin:0 0 12px; font-size:15px;">Ledger</h3>
+      <div id="desktop-pc-ledger"></div>
+    </div>
+  `;
+  refreshPettyCashSection();
 }
 
 function renderHelpView() {
