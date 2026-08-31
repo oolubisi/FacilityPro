@@ -270,6 +270,7 @@ function handleReportProfileSwitch() {
       ["fin_wo", "Approved Work Orders Ledger"],
       ["sc_overall", "Service Charge — Overall"],
       ["sc_per_apartment", "Service Charge — Per Apartment"],
+      ["petty_cash", "Petty Cash Ledger"],
     ],
     executive: [
       ["", "-- Select Report --"],
@@ -280,13 +281,13 @@ function handleReportProfileSwitch() {
     ],
   };
   (options[profile] || [])
-    // [FEATURE] Service Charge reports are manager+ only, same as the
-    // whole Service Charge section — filtered out of the picker
+    // [FEATURE] Service Charge AND Petty Cash reports are manager+
+    // only, same as their whole sections — filtered out of the picker
     // entirely for other roles rather than just disabled, matching
     // "no access at all" (the server would also refuse the underlying
-    // getServiceChargeLedger fetch regardless, but there's no reason
-    // to let staff even see these exist).
-    .filter(([val]) => val.indexOf("sc_") !== 0 || currentUserMeetsRole("manager"))
+    // fetch regardless, but there's no reason to let staff even see
+    // these exist).
+    .filter(([val]) => (val.indexOf("sc_") !== 0 && val !== "petty_cash") || currentUserMeetsRole("manager"))
     .forEach(([val, label]) => {
       const o = document.createElement("option");
       o.value = val;
@@ -323,7 +324,7 @@ function handleReportLayoutSwitch() {
     ].includes(layout)
   ) {
     paramsFrame.innerHTML = `<div style="display:flex; gap:10px;"><div style="flex:1;"><label>START DATE</label><input type="date" id="rep_start_date"></div><div style="flex:1;"><label>END DATE</label><input type="date" id="rep_end_date"></div></div>`;
-  } else if (layout === "sc_overall" || layout === "sc_per_apartment") {
+  } else if (layout === "sc_overall" || layout === "sc_per_apartment" || layout === "petty_cash") {
     const unitPickerHtml =
       layout === "sc_per_apartment"
         ? `<label>SELECT APARTMENT UNIT</label><select id="rep-param-unit" class="form-control"></select>`
@@ -572,6 +573,15 @@ async function compileReportPreview() {
       return;
     }
     await generateServiceChargePerApartmentReport(unit, startDate, endDate);
+    return;
+  }
+  if (layout === "petty_cash") {
+    const { start: startDate, end: endDate } = resolveServiceChargeReportPeriod();
+    if (!startDate || !endDate) {
+      showToast("Please select a start and end date.", "warning");
+      return;
+    }
+    await generatePettyCashReport(startDate, endDate);
     return;
   }
   if (layout === "pending_outflow") {
@@ -1711,6 +1721,108 @@ async function generateServiceChargePerApartmentReport(unitId, startDateStr, end
   window.currentReportFilename = `Service_Charge_${unitId}_` + Date.now();
   window.currentReportAttachmentManifest = [];
   window.currentReportTitle = `Service Charge — Unit ${unitId}`;
+  window.currentReportShowTitleLine = true;
+  window.currentReportRef = ref;
+  window.currentReportRawContent = out;
+  setOnscreenPreviewCardDisplay("block");
+}
+
+// =========================================================
+// § PETTY CASH REPORT
+// Reuses resolveServiceChargeReportPeriod() and the same period-
+// selector UI as the two Service Charge reports (Previous/Current
+// Month/Custom Range) — the period concept and its resolution logic
+// aren't specific to either feature.
+// =========================================================
+async function generatePettyCashReport(startDateStr, endDateStr) {
+  const viewport = document.getElementById("report-preview-viewport");
+  if (!viewport) return;
+
+  viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading Petty Cash ledger...</p>`;
+
+  const ledger = await callApi("getPettyCashLedger", {});
+  if (!ledger || !Array.isArray(ledger)) {
+    viewport.innerHTML = `<p style="padding:20px; color:#dc3545; font-weight:700;">${escapeHtml((ledger && ledger.message) || "Couldn't load the Petty Cash ledger.")}</p>`;
+    return;
+  }
+
+  const startDate = new Date(startDateStr);
+  const endDate = new Date(endDateStr);
+  endDate.setHours(23, 59, 59, 999);
+  const dayBeforeStart = new Date(startDate.getTime() - 1);
+
+  const openingBalance = computePettyCashBalanceAsOf(ledger, dayBeforeStart);
+  const closingBalance = computePettyCashBalanceAsOf(ledger, endDate);
+
+  // Running balance is computed from the FULL ledger chronologically
+  // (matching the live ledger table's own logic) so each period row's
+  // balance correctly continues from the opening balance rather than
+  // restarting at zero — then filtered down to just the rows that
+  // actually fall within the selected period for display.
+  let running = 0;
+  const withBalance = [...ledger]
+    .sort((a, b) => new Date(a.date) - new Date(b.date))
+    .map((row) => {
+      const amt = Number(row.amount) || 0;
+      running += String(row.direction).toLowerCase() === "inflow" ? amt : -amt;
+      return { ...row, runningBalance: running };
+    });
+  const periodRows = withBalance.filter((row) => {
+    const d = new Date(row.date);
+    return !isNaN(d.getTime()) && d >= startDate && d <= endDate;
+  });
+
+  let totalInflow = 0,
+    totalOutflow = 0;
+  periodRows.forEach((row) => {
+    const amt = Number(row.amount) || 0;
+    if (String(row.direction).toLowerCase() === "inflow") totalInflow += amt;
+    else totalOutflow += amt;
+  });
+
+  const activityTable = periodRows.length
+    ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px;">
+        <thead><tr style="border-bottom:2px solid #000; text-align:left;">
+          <th style="padding:6px 4px;">Date</th>
+          <th style="padding:6px 4px;">Apt</th>
+          <th style="padding:6px 4px;">Category</th>
+          <th style="padding:6px 4px; text-align:right;">Amount</th>
+          <th style="padding:6px 4px; text-align:right;">Balance</th>
+        </tr></thead>
+        <tbody>
+          ${periodRows
+            .map((row) => {
+              const isInflow = String(row.direction).toLowerCase() === "inflow";
+              return `<tr style="border-bottom:1px solid #eee;">
+                <td style="padding:5px 4px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
+                <td style="padding:5px 4px; font-weight:700;">${escapeHtml(row.apt || "")}</td>
+                <td style="padding:5px 4px;">${escapeHtml(row.category || "")}${row.linkedServiceChargeEntry ? ` <span style="color:#666; font-size:11px;">(SC ${escapeHtml(row.linkedServiceChargeEntry)})</span>` : ""}</td>
+                <td style="padding:5px 4px; text-align:right; font-weight:700; color:${isInflow ? "#198754" : "#dc3545"};">${isInflow ? "+" : "-"}₦${formatMoney(row.amount)}</td>
+                <td style="padding:5px 4px; text-align:right; font-weight:700; color:${row.runningBalance >= 0 ? "#000" : "#dc3545"};">₦${formatMoney(row.runningBalance)}</td>
+              </tr>`;
+            })
+            .join("")}
+        </tbody>
+      </table>`
+    : `<p style="color:#666; font-size:13px; margin-top:8px;">No activity in this period.</p>`;
+
+  const out = `<div style="font-size:13px;">
+    <table style="width:100%; border-collapse:collapse; border:2px solid #000; font-size:14px; font-weight:bold; margin-bottom:20px;">
+      <tr><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Opening Balance</td><td style="border:1px solid #000; padding:6px; width:25%; color:${openingBalance >= 0 ? "#000" : "#dc3545"};">₦${formatMoney(openingBalance)}</td><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Closing Balance</td><td style="border:1px solid #000; padding:6px; width:25%; color:${closingBalance >= 0 ? "#000" : "#dc3545"};">₦${formatMoney(closingBalance)}</td></tr>
+      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Total Inflow</td><td style="border:1px solid #000; padding:6px; color:#198754;">₦${formatMoney(totalInflow)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Total Outflow</td><td style="border:1px solid #000; padding:6px; color:#dc3545;">₦${formatMoney(totalOutflow)}</td></tr>
+    </table>
+    <h3 style="font-size:14px; font-weight:900; text-transform:uppercase; margin:0 0 6px 0; text-decoration:underline;">Activity (${escapeHtml(formatDateForDisplay(startDateStr))} &mdash; ${escapeHtml(formatDateForDisplay(endDateStr))})</h3>
+    ${activityTable}
+  </div>`;
+
+  const ref = generateReportRef("RPT");
+  const wrapped = wrapReportContent(out, "Petty Cash Ledger", ref);
+  viewport.innerHTML = wrapped;
+  const printContainer = document.getElementById("report-print-container");
+  if (printContainer) printContainer.innerHTML = wrapped;
+  window.currentReportFilename = "Petty_Cash_Ledger_" + Date.now();
+  window.currentReportAttachmentManifest = [];
+  window.currentReportTitle = "Petty Cash Ledger";
   window.currentReportShowTitleLine = true;
   window.currentReportRef = ref;
   window.currentReportRawContent = out;
