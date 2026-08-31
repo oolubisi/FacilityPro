@@ -1518,10 +1518,10 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
     ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; table-layout:fixed;">
         <colgroup>
           <col style="width:9%;">
-          <col style="width:9%;">
+          <col style="width:14%;">
           <col style="width:11%;">
           <col style="width:13%;">
-          <col style="width:30%;">
+          <col style="width:25%;">
           <col style="width:14%;">
           <col style="width:14%;">
         </colgroup>
@@ -1541,7 +1541,7 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
               const balance = poolBalanceAfterEntry[key];
               return `<tr style="border-bottom:1px solid #eee;">
                 <td style="padding:5px 4px; font-weight:700;">${escapeHtml(row.entryNumber || "—")}</td>
-                <td style="padding:5px 4px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
+                <td style="padding:5px 4px; white-space:nowrap;">${escapeHtml(formatDateForDisplay(row.date))}</td>
                 <td style="padding:5px 4px; font-weight:700;">${row.fullUnitCount > 1 ? `${row.fullUnitCount} apts` : escapeHtml(row.apts[0] || "")}</td>
                 <td style="padding:5px 4px;">${typeLabels[row.type] || row.type}</td>
                 <td style="padding:5px 4px; word-break:break-word; overflow-wrap:break-word; white-space:normal;">${escapeHtml(row.category || "")}</td>
@@ -1718,9 +1718,9 @@ function buildServiceChargeApartmentSectionHtml(unitId, ledger, occupancyLog, st
     ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; table-layout:fixed;">
         <colgroup>
           <col style="width:11%;">
-          <col style="width:11%;">
+          <col style="width:16%;">
           <col style="width:19%;">
-          <col style="width:31%;">
+          <col style="width:26%;">
           <col style="width:14%;">
           <col style="width:14%;">
         </colgroup>
@@ -1737,7 +1737,7 @@ function buildServiceChargeApartmentSectionHtml(unitId, ledger, occupancyLog, st
             .map(
               (row) => `<tr style="border-bottom:1px solid #eee;">
             <td style="padding:5px 4px; font-weight:700;">${escapeHtml(row.entryNumber || "—")}</td>
-            <td style="padding:5px 4px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
+            <td style="padding:5px 4px; white-space:nowrap;">${escapeHtml(formatDateForDisplay(row.date))}</td>
             <td style="padding:5px 4px;">${escapeHtml(getTypeLabel(row))}</td>
             <td style="padding:5px 4px; word-break:break-word; overflow-wrap:break-word; white-space:normal;">${escapeHtml(row.category || "")}</td>
             <td style="padding:5px 2px; text-align:right; font-weight:700; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}</td>
