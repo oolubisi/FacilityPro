@@ -652,11 +652,9 @@ async function openModal(type, editData = null) {
     body.innerHTML = `
       <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="pc_in_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" ${ls}></div>
       <div class="form-field"><label ${lbl}>Date</label><input id="pc_in_date" type="date" value="${getLocalDateString()}" ${ls}></div>
-      <div class="form-field"><label ${lbl}>Category</label><input id="pc_in_category" placeholder="e.g. Top-up from Estate Account" ${ls}></div>
-      <div class="form-field"><label ${lbl}>Apartment (optional)</label><select id="pc_in_apt" ${ls}></select></div>
+      <div class="form-field span-3"><label ${lbl}>Category</label><input id="pc_in_category" placeholder="e.g. Top-up from Estate Account" ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="pc_in_description" ${ls}></div>
     `;
-    populateUnitDropdown("pc_in_apt");
 
     submit.onclick = () => {
       const amount = document.getElementById("pc_in_amount").value.replace(/,/g, "");
@@ -670,7 +668,6 @@ async function openModal(type, editData = null) {
         amount,
         date: document.getElementById("pc_in_date").value,
         category: sanitizeInput(document.getElementById("pc_in_category").value) || "Inflow",
-        apt: document.getElementById("pc_in_apt").value,
         description: sanitizeInput(document.getElementById("pc_in_description").value),
       })
         .then((result) => {
@@ -698,13 +695,27 @@ async function openModal(type, editData = null) {
       <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="pc_out_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" ${ls}></div>
       <div class="form-field"><label ${lbl}>Date</label><input id="pc_out_date" type="date" value="${getLocalDateString()}" ${ls}></div>
       <div class="form-field"><label ${lbl}>Category</label><input id="pc_out_category" placeholder="e.g. Office Supplies" ${ls}></div>
-      <div class="form-field"><label ${lbl}>Apartment (optional)</label><select id="pc_out_apt" ${ls}></select></div>
+      <div class="form-field"><label ${lbl}>Apartment</label><select id="pc_out_apt" ${ls}></select></div>
       <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="pc_out_description" ${ls}></div>
     `;
     populateUnitDropdown("pc_out_apt");
+    // [FEATURE] Apartment is required for an outflow — "Shared" (a
+    // general/estate-wide expense not tied to one unit) replaces the
+    // usual blank "-- Choose Unit --" placeholder as the first, default
+    // option, rather than leaving the field blank/optional.
+    const pcOutAptSelect = document.getElementById("pc_out_apt");
+    if (pcOutAptSelect && pcOutAptSelect.options.length > 0) {
+      pcOutAptSelect.options[0].value = "Shared";
+      pcOutAptSelect.options[0].textContent = "Shared";
+    }
 
     submit.onclick = () => {
       const amount = document.getElementById("pc_out_amount").value.replace(/,/g, "");
+      const apt = document.getElementById("pc_out_apt").value;
+      if (!apt) {
+        showToast("Select an apartment (or Shared).", "error");
+        return;
+      }
       if (!amount || Number(amount) <= 0) {
         showToast("Enter a positive amount.", "error");
         return;
@@ -715,7 +726,7 @@ async function openModal(type, editData = null) {
         amount,
         date: document.getElementById("pc_out_date").value,
         category: sanitizeInput(document.getElementById("pc_out_category").value) || "Outflow",
-        apt: document.getElementById("pc_out_apt").value,
+        apt,
         description: sanitizeInput(document.getElementById("pc_out_description").value),
       })
         .then((result) => {
