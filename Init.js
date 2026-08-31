@@ -631,7 +631,8 @@ function setupKeyboardHandlers() {
 // ─────────────────────────────────────────────
 function setupPullToRefresh() {
   let startY = 0,
-    isPulling = false;
+    isPulling = false,
+    pullDistance = 0;
   const indicator = document.getElementById("pull-indicator");
   document.addEventListener(
     "touchstart",
@@ -639,6 +640,7 @@ function setupPullToRefresh() {
       if (window.scrollY === 0) {
         startY = e.touches[0].clientY;
         isPulling = true;
+        pullDistance = 0;
       }
     },
     { passive: true },
@@ -648,6 +650,7 @@ function setupPullToRefresh() {
     (e) => {
       if (!isPulling || !indicator) return;
       const diff = e.touches[0].clientY - startY;
+      pullDistance = diff;
       if (diff > 60 && diff < 200 && window.scrollY === 0) {
         indicator.style.display = "flex";
         indicator.style.transform = `translateY(${Math.min(diff - 60, 0)}px)`;
@@ -658,10 +661,18 @@ function setupPullToRefresh() {
   document.addEventListener("touchend", () => {
     if (!isPulling || !indicator) return;
     isPulling = false;
+    // [BUG FIX] This only ever checked isPulling — true for ANY tap
+    // starting at the top of the page, not just a genuine pull-down
+    // gesture — so every single tap while scrolled to the top
+    // triggered a full data reload. Now requires the same >60px pull
+    // distance already used to decide whether to even show the visual
+    // indicator during touchmove, so a plain tap with no real movement
+    // no longer refreshes anything.
+    const didPullFarEnough = pullDistance > 60;
     indicator.style.transform = "translateY(-60px)";
     setTimeout(() => {
       indicator.style.display = "none";
-      if (window.scrollY === 0) {
+      if (didPullFarEnough && window.scrollY === 0) {
         showToast("Refreshing data...", "info");
         bootstrapDataRegistriesPipeline();
       }
