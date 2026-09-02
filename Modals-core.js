@@ -145,6 +145,8 @@ function resetUserPin(userId) {
 // so this section fetches and refreshes independently.
 // ─────────────────────────────────────────────
 let lastFetchedServiceChargeLedger = [];
+let lastFetchedServiceChargeBudgets = [];
+let lastFetchedRecurringTemplates = [];
 
 async function refreshServiceChargeSection() {
   const containerId = isDesktopShell() ? "desktop-sc-ledger" : "mobile-sc-ledger";
@@ -152,7 +154,11 @@ async function refreshServiceChargeSection() {
   if (!container) return;
 
   container.innerHTML = `<p style="color:var(--muted); font-size:13px;">Loading ledger...</p>`;
-  const result = await callApi("getServiceChargeLedger", {});
+  const [result, budgets, templates] = await Promise.all([
+    callApi("getServiceChargeLedger", {}),
+    callApi("getServiceChargeBudgets", {}),
+    callApi("getRecurringExpenseTemplates", {}),
+  ]);
 
   if (!result || !Array.isArray(result)) {
     container.innerHTML = `<p style="color:var(--danger); font-size:13px; font-weight:700;">${escapeHtml((result && result.message) || "Couldn't load the ledger.")}</p>`;
@@ -160,8 +166,13 @@ async function refreshServiceChargeSection() {
   }
 
   lastFetchedServiceChargeLedger = result;
+  lastFetchedServiceChargeBudgets = Array.isArray(budgets) ? budgets : [];
+  lastFetchedRecurringTemplates = Array.isArray(templates) ? templates : [];
   renderServiceChargeSummary();
   renderServiceChargeLedgerTable(container, result);
+  renderRecurringExpensesDue();
+  renderServiceChargeBudgetsList();
+  renderRecurringTemplatesList();
 }
 
 function renderServiceChargeSummary() {
@@ -293,6 +304,130 @@ function renderServiceChargeLedgerTable(container, ledger) {
   </table></div>`;
 }
 
+// [FEATURE] "Prompt to confirm" — a template is "due" once it hasn't
+// been confirmed for the CURRENT calendar month yet, shown any time
+// during the month rather than gated to an exact day. Confirming
+// opens a small pre-filled form (amount still editable, since costs
+// like diesel fluctuate) before it actually logs anything.
+function renderRecurringExpensesDue() {
+  const dueId = isDesktopShell() ? "desktop-sc-recurring-due" : "mobile-sc-recurring-due";
+  const el = document.getElementById(dueId);
+  if (!el) return;
+
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const due = (lastFetchedRecurringTemplates || []).filter(
+    (t) => t && t.active !== "No" && t.lastConfirmedMonth !== currentMonth,
+  );
+
+  if (due.length === 0) {
+    el.innerHTML = "";
+    return;
+  }
+
+  el.innerHTML = `
+    <div style="background:#fff3cd; border:2px solid #ffc107; border-radius:12px; padding:14px; margin-bottom:16px;">
+      <div style="font-weight:900; font-size:13px; text-transform:uppercase; color:#856404; margin-bottom:8px;"><i class="fas fa-clock"></i> Recurring Expenses Due This Month (${due.length})</div>
+      ${due
+        .map(
+          (t) => `<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid rgba(0,0,0,0.08);">
+            <div>
+              <strong style="font-size:13px;">${escapeHtml(t.category)}</strong>
+              <div style="font-size:12px; color:#666;">${escapeHtml(t.description || "")} — ₦${formatMoney(t.defaultAmount)}</div>
+            </div>
+            <button type="button" data-modal-action="confirm-recurring-expense" data-id="${escapeHtml(t.templateId)}" style="background:#856404; color:#fff; border:0; border-radius:6px; padding:6px 12px; font-size:12px; font-weight:700; cursor:pointer; white-space:nowrap;">Confirm</button>
+          </div>`,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderServiceChargeBudgetsList() {
+  const listId = isDesktopShell() ? "desktop-sc-budgets-list" : "mobile-sc-budgets-list";
+  const el = document.getElementById(listId);
+  if (!el) return;
+
+  // A category can have several budget entries over time (see
+  // saveServiceChargeBudget) — show only the most recently effective
+  // one per category, since that's the one actually in force.
+  const currentByCategory = {};
+  (lastFetchedServiceChargeBudgets || []).forEach((b) => {
+    if (!b || !b.category) return;
+    const existing = currentByCategory[b.category];
+    if (!existing || new Date(b.effectiveFrom) > new Date(existing.effectiveFrom)) {
+      currentByCategory[b.category] = b;
+    }
+  });
+  const current = Object.values(currentByCategory).sort((a, b) => a.category.localeCompare(b.category));
+
+  if (current.length === 0) {
+    el.innerHTML = `<p style="color:var(--muted); font-size:13px;">No budgets set yet.</p>`;
+    return;
+  }
+
+  el.innerHTML = `<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:13px;">
+    <thead><tr style="border-bottom:2px solid #000; text-align:left;">
+      <th style="padding:6px;">Category</th>
+      <th style="padding:6px; text-align:right;">Monthly Budget</th>
+      <th style="padding:6px;">Effective From</th>
+      <th style="padding:6px;"></th>
+    </tr></thead>
+    <tbody>
+      ${current
+        .map(
+          (b) => `<tr style="border-bottom:1px solid #eee;">
+            <td style="padding:6px; font-weight:700;">${escapeHtml(b.category)}</td>
+            <td style="padding:6px; text-align:right; font-weight:800;">₦${formatMoney(b.monthlyBudgetAmount)}</td>
+            <td style="padding:6px;">${escapeHtml(formatDateForDisplay(b.effectiveFrom))}</td>
+            <td style="padding:6px; text-align:right;"><button type="button" data-modal-action="delete-service-charge-budget" data-id="${escapeHtml(b.budgetId)}" style="background:#fdecea; color:#dc3545; border:0; border-radius:6px; padding:4px 8px; font-size:11px; font-weight:700; cursor:pointer;">Delete</button></td>
+          </tr>`,
+        )
+        .join("")}
+    </tbody>
+  </table></div>`;
+}
+
+function renderRecurringTemplatesList() {
+  const listId = isDesktopShell() ? "desktop-sc-recurring-list" : "mobile-sc-recurring-list";
+  const el = document.getElementById(listId);
+  if (!el) return;
+
+  const templates = (lastFetchedRecurringTemplates || []).filter(Boolean);
+  if (templates.length === 0) {
+    el.innerHTML = `<p style="color:var(--muted); font-size:13px;">No recurring expenses set up yet.</p>`;
+    return;
+  }
+
+  el.innerHTML = `<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:13px;">
+    <thead><tr style="border-bottom:2px solid #000; text-align:left;">
+      <th style="padding:6px;">Category</th>
+      <th style="padding:6px;">Description</th>
+      <th style="padding:6px; text-align:right;">Amount</th>
+      <th style="padding:6px;">Day Due</th>
+      <th style="padding:6px;">Last Confirmed</th>
+      <th style="padding:6px;"></th>
+    </tr></thead>
+    <tbody>
+      ${templates
+        .map(
+          (t) => `<tr style="border-bottom:1px solid #eee;">
+            <td style="padding:6px; font-weight:700;">${escapeHtml(t.category)}</td>
+            <td style="padding:6px;">${escapeHtml(t.description || "")}</td>
+            <td style="padding:6px; text-align:right; font-weight:800;">₦${formatMoney(t.defaultAmount)}</td>
+            <td style="padding:6px;">${escapeHtml(t.dayOfMonth || 1)}</td>
+            <td style="padding:6px;">${t.lastConfirmedMonth ? escapeHtml(t.lastConfirmedMonth) : "—"}</td>
+            <td style="padding:6px; text-align:right; white-space:nowrap;">
+              <button type="button" data-modal-action="edit-recurring-template" data-id="${escapeHtml(t.templateId)}" style="background:var(--text); color:#fff; border:0; border-radius:6px; padding:4px 8px; font-size:11px; font-weight:700; cursor:pointer;">Edit</button>
+              <button type="button" data-modal-action="delete-recurring-template" data-id="${escapeHtml(t.templateId)}" style="background:#fdecea; color:#dc3545; border:0; border-radius:6px; padding:4px 8px; font-size:11px; font-weight:700; cursor:pointer;">Delete</button>
+            </td>
+          </tr>`,
+        )
+        .join("")}
+    </tbody>
+  </table></div>`;
+}
+
 // Entries can only be deleted the same calendar day they were created
 // — mirrors Code.gs's isSameCalendarDay(), which is the actual
 // enforcement. This client-side copy only controls whether the Delete
@@ -318,6 +453,48 @@ function deleteServiceChargeLedgerEntry(entryId) {
       showToast((result && result.message) || "Failed to delete entry.", "error");
     }
   });
+}
+
+function deleteServiceChargeBudgetEntry(budgetId) {
+  if (!window.confirm("Delete this budget entry?")) return;
+  callApi("deleteServiceChargeBudget", { budgetId }).then((result) => {
+    if (result && result.status === "success") {
+      showToast("Budget deleted.", "success");
+      refreshServiceChargeSection();
+    } else {
+      showToast((result && result.message) || "Failed to delete budget.", "error");
+    }
+  });
+}
+
+function editRecurringTemplate(templateId) {
+  const template = (lastFetchedRecurringTemplates || []).find((t) => String(t.templateId) === String(templateId));
+  if (!template) {
+    showToast("Template not found.", "error");
+    return;
+  }
+  openModal("recurringtemplate", template);
+}
+
+function deleteRecurringTemplateEntry(templateId) {
+  if (!window.confirm("Delete this recurring expense template? This won't affect any expenses already logged from it.")) return;
+  callApi("deleteRecurringExpenseTemplate", { templateId }).then((result) => {
+    if (result && result.status === "success") {
+      showToast("Template deleted.", "success");
+      refreshServiceChargeSection();
+    } else {
+      showToast((result && result.message) || "Failed to delete template.", "error");
+    }
+  });
+}
+
+function confirmRecurringExpenseEntry(templateId) {
+  const template = (lastFetchedRecurringTemplates || []).find((t) => String(t.templateId) === String(templateId));
+  if (!template) {
+    showToast("Template not found.", "error");
+    return;
+  }
+  openModal("confirmrecurring", template);
 }
 
 // ─────────────────────────────────────────────
@@ -502,12 +679,15 @@ function renderInventoryDashboard() {
   const outOfStock = consumables.filter((i) => (Number(i.currentQty) || 0) <= 0).length;
   // "Awaiting purchase" is a DISTINCT, earlier threshold than "low
   // stock" — reorderLevel is meant to trigger a purchase before
-  // minQty is actually reached, giving lead time to restock.
+  // minQty is actually reached, giving lead time to restock. Excludes
+  // items already marked On Order, since those don't need action
+  // again until they either arrive or the order falls through.
   const awaitingPurchase = consumables.filter((i) => {
     const qty = Number(i.currentQty) || 0;
     const level = Number(i.reorderLevel) || 0;
-    return level > 0 && qty <= level;
+    return level > 0 && qty <= level && i.onOrder !== "Yes";
   }).length;
+  const onOrderCount = consumables.filter((i) => i.onOrder === "Yes").length;
   const stockValue = consumables.reduce(
     (sum, i) => sum + (Number(i.currentQty) || 0) * (Number(i.unitCost) || 0),
     0,
@@ -534,6 +714,10 @@ function renderInventoryDashboard() {
       <div style="background:#fff; border:2px solid #000; border-radius:12px; padding:12px;">
         <div style="font-size:10px; font-weight:900; text-transform:uppercase; color:var(--muted);">Awaiting Purchase</div>
         <div style="font-size:20px; font-weight:900; color:#dc3545;">${awaitingPurchase}</div>
+      </div>
+      <div style="background:#fff; border:2px solid #000; border-radius:12px; padding:12px;">
+        <div style="font-size:10px; font-weight:900; text-transform:uppercase; color:var(--muted);">On Order</div>
+        <div style="font-size:20px; font-weight:900; color:#856404;">${onOrderCount}</div>
       </div>
       <div style="background:#fff; border:2px solid #000; border-radius:12px; padding:12px;">
         <div style="font-size:10px; font-weight:900; text-transform:uppercase; color:var(--muted);">Stock Value</div>
@@ -591,6 +775,9 @@ function renderInventoryItemList(container, items) {
             else if (level > 0 && qty <= level) stockBadge = `<span style="color:#dc3545; font-weight:800; font-size:11px;">REORDER</span>`;
             else stockBadge = `<span style="color:#198754; font-weight:800; font-size:11px;">OK</span>`;
           }
+          if (!isTool && item.onOrder === "Yes") {
+            stockBadge += `<br><span style="color:#856404; font-weight:800; font-size:10px;">ON ORDER</span>`;
+          }
           return `<tr style="border-bottom:1px solid #eee; cursor:pointer;" data-modal-action="view-inventory-item-timeline" data-id="${escapeHtml(item.itemCode)}">
             <td style="padding:6px; font-weight:800;">${escapeHtml(item.itemCode)}</td>
             <td style="padding:6px;">${escapeHtml(item.name || "")}${isTool ? ` <span style="color:var(--muted); font-size:11px;">(Tool)</span>` : ""}</td>
@@ -623,6 +810,15 @@ function editInventoryItem(itemCode) {
   }
   const isTool = (item.itemType || "consumable") === "tool";
   openModal(isTool ? "inventorytool" : "inventoryitem", item);
+}
+
+function openMarkOnOrderModal(itemCode) {
+  const item = (lastFetchedInventoryItems || []).find((i) => String(i.itemCode) === String(itemCode));
+  if (!item) {
+    showToast("Item not found.", "error");
+    return;
+  }
+  openModal("markonorder", item);
 }
 
 // ─────────────────────────────────────────────
@@ -680,6 +876,21 @@ function handleModalContentClick(event) {
       break;
     case "edit-inventory-item":
       editInventoryItem(actionEl.dataset.id);
+      break;
+    case "mark-item-on-order":
+      openMarkOnOrderModal(actionEl.dataset.id);
+      break;
+    case "delete-service-charge-budget":
+      deleteServiceChargeBudgetEntry(actionEl.dataset.id);
+      break;
+    case "edit-recurring-template":
+      editRecurringTemplate(actionEl.dataset.id);
+      break;
+    case "delete-recurring-template":
+      deleteRecurringTemplateEntry(actionEl.dataset.id);
+      break;
+    case "confirm-recurring-expense":
+      confirmRecurringExpenseEntry(actionEl.dataset.id);
       break;
   }
 }

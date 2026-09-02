@@ -1098,6 +1098,8 @@
 
           <div id="mobile-sc-summary"></div>
 
+          <div id="mobile-sc-recurring-due"></div>
+
           <div class="card">
             <h4
               style="
@@ -1144,6 +1146,48 @@
               Ledger
             </h4>
             <div id="mobile-sc-ledger"></div>
+          </div>
+
+          <div class="card" style="margin-top: 15px">
+            <h4
+              style="
+                font-weight: 800;
+                text-transform: uppercase;
+                margin-bottom: 10px;
+                color: var(--primary);
+              "
+            >
+              Category Budgets
+            </h4>
+            <button
+              class="action-btn"
+              style="background: var(--primary); margin-bottom: 10px"
+              onclick="openModal('servicechargebudget')"
+            >
+              <i class="fas fa-plus"></i> Set Category Budget
+            </button>
+            <div id="mobile-sc-budgets-list"></div>
+          </div>
+
+          <div class="card" style="margin-top: 15px">
+            <h4
+              style="
+                font-weight: 800;
+                text-transform: uppercase;
+                margin-bottom: 10px;
+                color: var(--primary);
+              "
+            >
+              Recurring Expenses
+            </h4>
+            <button
+              class="action-btn"
+              style="background: #fd7e14; margin-bottom: 10px"
+              onclick="openModal('recurringtemplate')"
+            >
+              <i class="fas fa-plus"></i> New Recurring Expense
+            </button>
+            <div id="mobile-sc-recurring-list"></div>
           </div>
         </div>
 

@@ -1028,6 +1028,7 @@ function renderServiceChargeShortcuts() {
   document.getElementById("record-count").textContent = "";
   document.getElementById("card-grid").innerHTML = `
     <div id="desktop-sc-summary" style="grid-column:1/-1;"></div>
+    <div id="desktop-sc-recurring-due" style="grid-column:1/-1;"></div>
     <div class="desktop-form-card" style="grid-column:1/-1;">
       <h3 style="margin:0 0 12px; font-size:15px;">Log an Entry</h3>
       <div style="display:flex; gap:10px; flex-wrap:wrap;">
@@ -1039,6 +1040,16 @@ function renderServiceChargeShortcuts() {
     <div class="desktop-form-card" style="grid-column:1/-1;">
       <h3 style="margin:0 0 12px; font-size:15px;">Ledger</h3>
       <div id="desktop-sc-ledger"></div>
+    </div>
+    <div class="desktop-form-card" style="grid-column:1/-1;">
+      <h3 style="margin:0 0 12px; font-size:15px;">Category Budgets</h3>
+      <button class="action-btn" style="width:auto; background:var(--blue); margin-bottom:12px;" onclick="openModal('servicechargebudget')"><i class="fas fa-plus"></i> Set Category Budget</button>
+      <div id="desktop-sc-budgets-list"></div>
+    </div>
+    <div class="desktop-form-card" style="grid-column:1/-1;">
+      <h3 style="margin:0 0 12px; font-size:15px;">Recurring Expenses</h3>
+      <button class="action-btn" style="width:auto; background:#fd7e14; margin-bottom:12px;" onclick="openModal('recurringtemplate')"><i class="fas fa-plus"></i> New Recurring Expense</button>
+      <div id="desktop-sc-recurring-list"></div>
     </div>
   `;
   refreshServiceChargeSection();

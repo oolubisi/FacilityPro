@@ -37,6 +37,31 @@ function buildInventoryCategoryOptionsHtml(selectedValue) {
   ).join("");
 }
 
+// [FEATURE] Predefined category list for SHARED Service Charge
+// expenses specifically — deliberately not applied to Apartment
+// Expense, since per-unit maintenance items ("Plumbing Repair for Unit
+// 5") are naturally varied and one-off, while these categories exist
+// so Budgets and Recurring Expense Templates can reliably match actual
+// spend to a category (that only makes sense for estate-wide,
+// recurring-style costs like staff salary or generator diesel).
+const SERVICE_CHARGE_CATEGORIES = [
+  "Staff Salary",
+  "Generator/Diesel",
+  "Security",
+  "Cleaning",
+  "Utilities",
+  "Repairs & Maintenance",
+  "Insurance",
+  "Administrative",
+  "Other",
+];
+
+function buildServiceChargeCategoryOptionsHtml(selectedValue) {
+  return SERVICE_CHARGE_CATEGORIES.map(
+    (c) => `<option value="${escapeHtml(c)}" ${selectedValue === c ? "selected" : ""}>${escapeHtml(c)}</option>`,
+  ).join("");
+}
+
 function renderAssetMaintenanceHistory(assetTag) {
   const listEl = document.getElementById("assetMaintHistoryList");
   if (!listEl) return;
@@ -466,7 +491,7 @@ async function openModal(type, editData = null) {
       <div class="form-field span-3" style="background:#f0f4ff; border:2px solid #c7d2fe; border-radius:10px; padding:10px 14px; margin-bottom:4px;">
         <small style="font-weight:700; color:#4f46e5;"><i class="fas fa-diagram-project"></i> This amount is automatically split across every currently-occupied apartment, by that unit's Service Charge Weight.</small>
       </div>
-      <div class="form-field span-3"><label ${lbl}>Category</label><input id="sc_se_category" placeholder="e.g. Staff Salary, Generator Maintenance" ${ls}></div>
+      <div class="form-field span-3"><label ${lbl}>Category</label><select id="sc_se_category" ${ls}>${buildServiceChargeCategoryOptionsHtml("")}</select></div>
       <div class="form-field"><label ${lbl}>Total Amount (₦)</label><input id="sc_se_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" ${ls}></div>
       <div class="form-field"><label ${lbl}>Date</label><input id="sc_se_date" type="date" value="${getLocalDateString()}" ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="sc_se_description" ${ls}></div>
@@ -475,7 +500,7 @@ async function openModal(type, editData = null) {
 
     submit.onclick = () => {
       const amount = document.getElementById("sc_se_amount").value.replace(/,/g, "");
-      const category = sanitizeInput(document.getElementById("sc_se_category").value);
+      const category = document.getElementById("sc_se_category").value;
       if (!category || !amount || Number(amount) <= 0) {
         showToast("Enter a category and a positive amount.", "error");
         return;
@@ -498,6 +523,144 @@ async function openModal(type, editData = null) {
           }
           closeModal();
           showToast(`Shared expense split across ${result.splits.length} apartment(s).`, "success");
+          if (typeof refreshServiceChargeSection === "function") refreshServiceChargeSection();
+        })
+        .catch(() => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+        });
+    };
+  }
+
+  // ── SERVICE CHARGE: BUDGET ──
+  // Saving a budget for a category that already has one doesn't
+  // overwrite it — it adds a new effective-from entry, so past
+  // variance reports still reflect what the budget actually was then.
+  else if (type === "servicechargebudget") {
+    title.innerText = "Set Category Budget";
+    body.innerHTML = `
+      <div class="form-field span-3"><label ${lbl}>Category</label><select id="scb_category" ${ls}>${buildServiceChargeCategoryOptionsHtml("")}</select></div>
+      <div class="form-field"><label ${lbl}>Monthly Budget (₦)</label><input id="scb_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Effective From</label><input id="scb_effective" type="date" value="${getLocalDateString()}" ${ls}></div>
+      <p style="font-size:12px; color:var(--muted); grid-column:span 3; margin:0;">This applies as this category's standing monthly budget going forward — it doesn't need to be re-entered every month.</p>
+    `;
+
+    submit.onclick = () => {
+      const category = document.getElementById("scb_category").value;
+      const amount = document.getElementById("scb_amount").value.replace(/,/g, "");
+      if (!category || !amount) {
+        showToast("Select a category and enter a budget amount.", "error");
+        return;
+      }
+      submit.disabled = true;
+      submit.classList.add("loading");
+      callApi("saveServiceChargeBudget", {
+        category,
+        monthlyBudgetAmount: amount,
+        effectiveFrom: document.getElementById("scb_effective").value,
+      })
+        .then((result) => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+          if (!result || result.status !== "success") {
+            showToast((result && result.message) || "Failed to save budget.", "error");
+            return;
+          }
+          closeModal();
+          showToast("Budget saved.", "success");
+          if (typeof refreshServiceChargeSection === "function") refreshServiceChargeSection();
+        })
+        .catch(() => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+        });
+    };
+  }
+
+  // ── SERVICE CHARGE: RECURRING EXPENSE TEMPLATE ──
+  else if (type === "recurringtemplate") {
+    title.innerText = isEdit ? "Edit Recurring Expense" : "New Recurring Expense";
+    body.innerHTML = `
+      <div class="form-field span-3"><label ${lbl}>Category</label><select id="rxt_category" ${ls}>${buildServiceChargeCategoryOptionsHtml(isEdit ? editData.category : "")}</select></div>
+      <div class="form-field span-3"><label ${lbl}>Description</label><input id="rxt_description" value="${isEdit ? escapeHtml(editData.description || "") : ""}" placeholder="e.g. Monthly generator diesel" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Default Amount (₦)</label><input id="rxt_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" value="${isEdit ? Number(editData.defaultAmount || 0).toLocaleString("en-US") : ""}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Day of Month Due</label><input id="rxt_day" type="number" min="1" max="28" value="${isEdit ? escapeHtml(editData.dayOfMonth || 1) : "1"}" ${ls}></div>
+      <p style="font-size:12px; color:var(--muted); grid-column:span 3; margin:0;">This won't log anything by itself — it'll show up as "due" on the Service Charge section each month until you confirm it, and you can still adjust the amount at confirmation time.</p>
+    `;
+
+    submit.onclick = () => {
+      const category = document.getElementById("rxt_category").value;
+      const description = sanitizeInput(document.getElementById("rxt_description").value);
+      const amount = document.getElementById("rxt_amount").value.replace(/,/g, "");
+      if (!category || !description || !amount) {
+        showToast("Category, description, and a default amount are required.", "error");
+        return;
+      }
+      const payload = {
+        category,
+        description,
+        defaultAmount: amount,
+        dayOfMonth: document.getElementById("rxt_day").value,
+      };
+      if (isEdit) payload.templateId = editData.templateId;
+      submit.disabled = true;
+      submit.classList.add("loading");
+      callApi(isEdit ? "updateRecurringExpenseTemplate" : "saveRecurringExpenseTemplate", payload)
+        .then((result) => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+          if (!result || result.status !== "success") {
+            showToast((result && result.message) || "Failed to save template.", "error");
+            return;
+          }
+          closeModal();
+          showToast(isEdit ? "Template updated." : "Recurring expense created.", "success");
+          if (typeof refreshServiceChargeSection === "function") refreshServiceChargeSection();
+        })
+        .catch(() => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+        });
+    };
+  }
+
+  // ── SERVICE CHARGE: CONFIRM RECURRING EXPENSE ──
+  else if (type === "confirmrecurring") {
+    title.innerText = "Confirm Recurring Expense";
+    body.innerHTML = `
+      <div class="form-field span-3"><label ${lbl}>Category</label><input value="${escapeHtml(editData.category)}" disabled ${ls}></div>
+      <div class="form-field span-3"><label ${lbl}>Description</label><input id="cr_description" value="${escapeHtml(editData.description || "")}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="cr_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" value="${Number(editData.defaultAmount || 0).toLocaleString("en-US")}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Date</label><input id="cr_date" type="date" value="${getLocalDateString()}" ${ls}></div>
+      <div class="form-field span-3"><label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer;"><input type="checkbox" id="cr_from_petty_cash" style="width:auto;"> Pay from Petty Cash</label></div>
+      <p style="font-size:12px; color:var(--muted); grid-column:span 3; margin:0;">Confirming logs this as a normal Shared Expense — split by weight across occupied units, same as logging it manually.</p>
+    `;
+    submit.innerText = "Confirm & Log";
+
+    submit.onclick = () => {
+      const amount = document.getElementById("cr_amount").value.replace(/,/g, "");
+      if (!amount || Number(amount) <= 0) {
+        showToast("Enter a positive amount.", "error");
+        return;
+      }
+      submit.disabled = true;
+      submit.classList.add("loading");
+      callApi("confirmRecurringExpense", {
+        templateId: editData.templateId,
+        amount,
+        description: sanitizeInput(document.getElementById("cr_description").value),
+        date: document.getElementById("cr_date").value,
+        fromPettyCash: document.getElementById("cr_from_petty_cash").checked,
+      })
+        .then((result) => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+          if (!result || result.status !== "success") {
+            showToast((result && result.message) || "Failed to confirm expense.", "error");
+            return;
+          }
+          closeModal();
+          showToast("Recurring expense confirmed and logged.", "success");
           if (typeof refreshServiceChargeSection === "function") refreshServiceChargeSection();
         })
         .catch(() => {
@@ -1339,6 +1502,78 @@ async function openModal(type, editData = null) {
     };
   }
 
+  // ── INVENTORY: MARK AS ORDERED / CANCEL ORDER ──
+  // Nothing about quantity or cost changes here — the order hasn't
+  // arrived yet. It's cleared automatically the moment Receive Stock
+  // runs against this item, or manually via Cancel Order if the
+  // purchase falls through before delivery.
+  else if (type === "markonorder") {
+    const isCancelling = editData && editData.onOrder === "Yes";
+    title.innerText = isCancelling ? "Cancel Order" : "Mark as Ordered";
+    if (isCancelling) {
+      body.innerHTML = `
+        <p style="grid-column:span 3; margin:0;">${escapeHtml(editData.name)} is currently marked as On Order (${escapeHtml(editData.onOrderQty || "")} ${escapeHtml(editData.unit || "")}, ordered ${escapeHtml(formatDateForDisplay(editData.onOrderDate))}).</p>
+        <p style="grid-column:span 3; margin:8px 0 0 0; color:var(--muted); font-size:13px;">Cancelling clears this status without affecting stock — use this if the order fell through before delivery.</p>
+      `;
+      submit.innerText = "Cancel Order";
+      submit.onclick = () => {
+        submit.disabled = true;
+        submit.classList.add("loading");
+        callApi("cancelOnOrder", { itemCode: editData.itemCode })
+          .then((result) => {
+            submit.disabled = false;
+            submit.classList.remove("loading");
+            if (!result || result.status !== "success") {
+              showToast((result && result.message) || "Failed to cancel order.", "error");
+              return;
+            }
+            closeModal();
+            showToast("Order cancelled.", "success");
+            if (typeof refreshInventorySection === "function") refreshInventorySection();
+          })
+          .catch(() => {
+            submit.disabled = false;
+            submit.classList.remove("loading");
+          });
+      };
+    } else {
+      body.innerHTML = `
+        <div class="form-field span-3"><label ${lbl}>Item</label><input value="${escapeHtml(editData.name)} (${escapeHtml(editData.itemCode)})" disabled ${ls}></div>
+        <div class="form-field"><label ${lbl}>Quantity Ordered</label><input id="mo_qty" type="number" min="0" step="0.01" value="${escapeHtml(editData.reorderQty || 0)}" ${ls}></div>
+        <div class="form-field"><label ${lbl}>Date</label><input id="mo_date" type="date" value="${getLocalDateString()}" ${ls}></div>
+      `;
+      submit.onclick = () => {
+        const qty = document.getElementById("mo_qty").value;
+        if (!qty || Number(qty) <= 0) {
+          showToast("Enter a positive order quantity.", "error");
+          return;
+        }
+        submit.disabled = true;
+        submit.classList.add("loading");
+        callApi("markItemOnOrder", {
+          itemCode: editData.itemCode,
+          quantity: qty,
+          date: document.getElementById("mo_date").value,
+        })
+          .then((result) => {
+            submit.disabled = false;
+            submit.classList.remove("loading");
+            if (!result || result.status !== "success") {
+              showToast((result && result.message) || "Failed to mark as ordered.", "error");
+              return;
+            }
+            closeModal();
+            showToast("Marked as ordered.", "success");
+            if (typeof refreshInventorySection === "function") refreshInventorySection();
+          })
+          .catch(() => {
+            submit.disabled = false;
+            submit.classList.remove("loading");
+          });
+      };
+    }
+  }
+
   // ── INVENTORY: ITEM TIMELINE (view-only) ──
   // "The most important screen" per the original spec — every
   // receive/issue/adjustment for one item, chronological, with a
@@ -1385,13 +1620,21 @@ async function openModal(type, editData = null) {
           .join("")
       : `<p style="color:var(--muted); font-size:13px;">No movements recorded yet.</p>`;
 
+    const onOrderBadge = !isTool && editData.onOrder === "Yes"
+      ? `<div style="margin-top:6px;"><span style="background:#fff3cd; color:#856404; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:800;">ON ORDER: ${escapeHtml(editData.onOrderQty || "")} ${escapeHtml(editData.unit || "")} (${escapeHtml(formatDateForDisplay(editData.onOrderDate))})</span></div>`
+      : "";
+
     body.innerHTML = `
       <div class="form-field span-3" style="background:#f9f9f9; border-radius:8px; padding:12px; display:flex; justify-content:space-between; align-items:center; gap:10px;">
         <div>
           <strong>Current ${isTool ? "status" : "stock"}: ${isTool ? escapeHtml(editData.status || "—") : (editData.currentQty || 0) + " " + escapeHtml(editData.unit || "")}</strong><br>
           ${!isTool ? `<span style="font-size:12px; color:#666;">Weighted-avg unit cost: ₦${formatMoney(editData.unitCost || 0)}</span>` : `<span style="font-size:12px; color:#666;">Custodian: ${escapeHtml(editData.custodian || "Unassigned")}</span>`}
+          ${onOrderBadge}
         </div>
-        <button type="button" data-modal-action="edit-inventory-item" data-id="${escapeHtml(editData.itemCode)}" style="background:var(--text); color:#fff; border:0; border-radius:6px; padding:6px 12px; font-size:12px; font-weight:700; cursor:pointer; white-space:nowrap;">Edit</button>
+        <div style="display:flex; flex-direction:column; gap:6px; align-items:flex-end;">
+          <button type="button" data-modal-action="edit-inventory-item" data-id="${escapeHtml(editData.itemCode)}" style="background:var(--text); color:#fff; border:0; border-radius:6px; padding:6px 12px; font-size:12px; font-weight:700; cursor:pointer; white-space:nowrap;">Edit</button>
+          ${!isTool ? `<button type="button" data-modal-action="mark-item-on-order" data-id="${escapeHtml(editData.itemCode)}" style="background:${editData.onOrder === "Yes" ? "#fdecea" : "#fff3cd"}; color:${editData.onOrder === "Yes" ? "#dc3545" : "#856404"}; border:0; border-radius:6px; padding:6px 12px; font-size:12px; font-weight:700; cursor:pointer; white-space:nowrap;">${editData.onOrder === "Yes" ? "Cancel Order" : "Mark as Ordered"}</button>` : ""}
+        </div>
       </div>
       <div class="form-field span-3">${rowsHtml}</div>
     `;

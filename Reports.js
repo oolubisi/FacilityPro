@@ -255,6 +255,8 @@ function handleReportProfileSwitch() {
       ["pm_schedule", "PM Schedule"],
       ["asset_register", "Master Asset Register"],
       ["ticket_report", "Maintenance Tickets"],
+      ["inventory_consumption", "Inventory Consumption"],
+      ["inventory_valuation", "Inventory Stock Valuation"],
     ],
     financials: [
       ["", "-- Select Report --"],
@@ -263,6 +265,7 @@ function handleReportProfileSwitch() {
       ["ledger", "Ledger"],
       ["sc_overall", "Service Charge — Overall"],
       ["sc_per_apartment", "Service Charge — Per Apartment"],
+      ["sc_budget_variance", "Service Charge — Budget vs Actual"],
       ["petty_cash", "Petty Cash Ledger"],
     ],
     executive: [
@@ -274,13 +277,17 @@ function handleReportProfileSwitch() {
     ],
   };
   (options[profile] || [])
-    // [FEATURE] Service Charge AND Petty Cash reports are manager+
-    // only, same as their whole sections — filtered out of the picker
-    // entirely for other roles rather than just disabled, matching
-    // "no access at all" (the server would also refuse the underlying
-    // fetch regardless, but there's no reason to let staff even see
-    // these exist).
-    .filter(([val]) => (val.indexOf("sc_") !== 0 && val !== "petty_cash") || currentUserMeetsRole("manager"))
+    // [FEATURE] Service Charge, Petty Cash, AND Inventory reports are
+    // manager+ only, same as their whole sections — filtered out of
+    // the picker entirely for other roles rather than just disabled,
+    // matching "no access at all" (the server would also refuse the
+    // underlying fetch regardless, but there's no reason to let staff
+    // even see these exist).
+    .filter(
+      ([val]) =>
+        (val.indexOf("sc_") !== 0 && val !== "petty_cash" && val.indexOf("inventory_") !== 0) ||
+        currentUserMeetsRole("manager"),
+    )
     .forEach(([val, label]) => {
       const o = document.createElement("option");
       o.value = val;
@@ -316,10 +323,30 @@ function handleReportLayoutSwitch() {
     ].includes(layout)
   ) {
     paramsFrame.innerHTML = `<div style="display:flex; gap:10px;"><div style="flex:1;"><label>START DATE</label><input type="date" id="rep_start_date"></div><div style="flex:1;"><label>END DATE</label><input type="date" id="rep_end_date"></div></div>`;
-  } else if (layout === "sc_overall" || layout === "sc_per_apartment" || layout === "petty_cash") {
+  } else if (
+    layout === "sc_overall" ||
+    layout === "sc_per_apartment" ||
+    layout === "petty_cash" ||
+    layout === "inventory_consumption" ||
+    layout === "inventory_valuation" ||
+    layout === "sc_budget_variance"
+  ) {
     const unitPickerHtml =
       layout === "sc_per_apartment"
         ? `<label>SELECT APARTMENT UNIT</label><select id="rep-param-unit" class="form-control"></select>`
+        : "";
+    const groupByHtml =
+      layout === "inventory_consumption"
+        ? `<label style="margin-top:10px; display:block;">GROUP BY</label>
+           <select id="rep_inv_groupby" class="form-control">
+             <option value="category">Category</option>
+             <option value="apartment">Apartment</option>
+             <option value="month">Month</option>
+             <option value="employee">Recipient / Employee</option>
+             <option value="mostused">Most-Used Items</option>
+             <option value="highestcost">Highest-Cost Items</option>
+             <option value="wastage">Wastage / Adjustments</option>
+           </select>`
         : "";
     paramsFrame.innerHTML = `
       ${unitPickerHtml}
@@ -335,6 +362,7 @@ function handleReportLayoutSwitch() {
           <div style="flex:1;"><label>END DATE</label><input type="date" id="rep_end_date"></div>
         </div>
       </div>
+      ${groupByHtml}
       ${
         layout === "sc_overall"
           ? `<label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer; margin-top:14px;"><input type="checkbox" id="rep_sc_include_apartments" style="width:auto;"> Include a full breakdown report for each occupied apartment</label>`
@@ -573,6 +601,34 @@ async function compileReportPreview() {
       return;
     }
     await generatePettyCashReport(startDate, endDate);
+    return;
+  }
+  if (layout === "inventory_consumption") {
+    const { start: startDate, end: endDate } = resolveServiceChargeReportPeriod();
+    const groupBy = document.getElementById("rep_inv_groupby")?.value || "category";
+    if (!startDate || !endDate) {
+      showToast("Please select a start and end date.", "warning");
+      return;
+    }
+    await generateInventoryConsumptionReport(startDate, endDate, groupBy);
+    return;
+  }
+  if (layout === "inventory_valuation") {
+    const { start: startDate, end: endDate } = resolveServiceChargeReportPeriod();
+    if (!startDate || !endDate) {
+      showToast("Please select a start and end date.", "warning");
+      return;
+    }
+    await generateInventoryValuationReport(startDate, endDate);
+    return;
+  }
+  if (layout === "sc_budget_variance") {
+    const { start: startDate, end: endDate } = resolveServiceChargeReportPeriod();
+    if (!startDate || !endDate) {
+      showToast("Please select a start and end date.", "warning");
+      return;
+    }
+    await generateServiceChargeBudgetVarianceReport(startDate, endDate);
     return;
   }
   if (layout === "pending_outflow") {
@@ -1801,6 +1857,389 @@ async function generatePettyCashReport(startDateStr, endDateStr) {
   window.currentReportFilename = "Petty_Cash_Ledger_" + Date.now();
   window.currentReportAttachmentManifest = [];
   window.currentReportTitle = "Petty Cash Ledger";
+  window.currentReportShowTitleLine = true;
+  window.currentReportRef = ref;
+  window.currentReportRawContent = out;
+  setOnscreenPreviewCardDisplay("block");
+}
+
+// =========================================================
+// § INVENTORY CONSUMPTION REPORT
+// Consumption = stock actually issued out (not received, not
+// adjusted) — grouped a number of different ways depending on what
+// question you're asking. "Wastage" is the one exception: it reads
+// adjustment movements with a negative quantity (damaged/expired/
+// missing), not issues, since that's genuinely a different question
+// ("what did we lose" vs "what did we use").
+// =========================================================
+async function generateInventoryConsumptionReport(startDateStr, endDateStr, groupBy) {
+  const viewport = document.getElementById("report-preview-viewport");
+  if (!viewport) return;
+
+  viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading inventory data...</p>`;
+  const [items, movements] = await Promise.all([
+    callApi("getInventoryItems", {}),
+    callApi("getInventoryMovements", {}),
+  ]);
+  if (!items || !Array.isArray(items) || !movements || !Array.isArray(movements)) {
+    viewport.innerHTML = `<p style="padding:20px; color:#dc3545; font-weight:700;">Couldn't load inventory data.</p>`;
+    return;
+  }
+
+  const itemByCode = {};
+  items.forEach((i) => { if (i) itemByCode[i.itemCode] = i; });
+
+  const startDate = new Date(startDateStr);
+  const endDate = new Date(endDateStr);
+  endDate.setHours(23, 59, 59, 999);
+
+  const inPeriod = (m) => {
+    const d = new Date(m.date);
+    return !isNaN(d.getTime()) && d >= startDate && d <= endDate;
+  };
+
+  const groupLabels = {
+    category: "Category",
+    apartment: "Apartment",
+    month: "Month",
+    employee: "Recipient",
+    mostused: "Item",
+    highestcost: "Item",
+    wastage: "Item",
+  };
+
+  let rows = [];
+  let title = "";
+
+  if (groupBy === "wastage") {
+    title = "Wastage / Adjustments";
+    const adjustments = movements.filter(
+      (m) => m && m.movementType === "adjustment" && Number(m.quantity) < 0 && inPeriod(m),
+    );
+    const grouped = {};
+    adjustments.forEach((m) => {
+      const item = itemByCode[m.itemCode];
+      const key = m.itemCode;
+      if (!grouped[key]) {
+        grouped[key] = { label: item ? item.name : m.itemCode, qty: 0, value: 0, reasons: {} };
+      }
+      grouped[key].qty += Math.abs(Number(m.quantity) || 0);
+      grouped[key].value += Math.abs(Number(m.totalValue) || 0);
+      const reason = m.reason || "Unspecified";
+      grouped[key].reasons[reason] = (grouped[key].reasons[reason] || 0) + Math.abs(Number(m.quantity) || 0);
+    });
+    rows = Object.values(grouped)
+      .map((g) => ({
+        ...g,
+        reasonSummary: Object.entries(g.reasons).map(([r, q]) => `${r}: ${q}`).join(", "),
+      }))
+      .sort((a, b) => b.value - a.value);
+  } else if (groupBy === "mostused" || groupBy === "highestcost") {
+    title = groupBy === "mostused" ? "Most-Used Items" : "Highest-Cost Items";
+    const issues = movements.filter((m) => m && m.movementType === "issue" && inPeriod(m));
+    const grouped = {};
+    issues.forEach((m) => {
+      const item = itemByCode[m.itemCode];
+      const key = m.itemCode;
+      if (!grouped[key]) grouped[key] = { label: item ? item.name : m.itemCode, qty: 0, value: 0 };
+      grouped[key].qty += Math.abs(Number(m.quantity) || 0);
+      grouped[key].value += Math.abs(Number(m.totalValue) || 0);
+    });
+    rows = Object.values(grouped).sort((a, b) =>
+      groupBy === "mostused" ? b.qty - a.qty : b.value - a.value,
+    );
+  } else {
+    title = `Consumption by ${groupLabels[groupBy] || groupBy}`;
+    const issues = movements.filter((m) => m && m.movementType === "issue" && inPeriod(m));
+    const grouped = {};
+    issues.forEach((m) => {
+      const item = itemByCode[m.itemCode];
+      let key;
+      if (groupBy === "category") key = (item && item.category) || "Uncategorized";
+      else if (groupBy === "apartment") key = m.apt || "Shared";
+      else if (groupBy === "employee") key = m.recipient || "Unspecified";
+      else if (groupBy === "month") key = formatDateForDisplay(m.date).split("/").slice(1).join("/") || "Unknown";
+      else key = "Other";
+      if (!grouped[key]) grouped[key] = { label: key, qty: 0, value: 0 };
+      grouped[key].qty += Math.abs(Number(m.quantity) || 0);
+      grouped[key].value += Math.abs(Number(m.totalValue) || 0);
+    });
+    rows = Object.values(grouped).sort((a, b) => b.value - a.value);
+  }
+
+  const totalValue = rows.reduce((s, r) => s + r.value, 0);
+  const showReasons = groupBy === "wastage";
+
+  const activityTable = rows.length
+    ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px;">
+        <thead><tr style="border-bottom:2px solid #000; text-align:left;">
+          <th style="padding:6px 4px;">${escapeHtml(groupLabels[groupBy] || "Group")}</th>
+          <th style="padding:6px 4px; text-align:right;">Qty</th>
+          <th style="padding:6px 4px; text-align:right;">Value</th>
+          ${showReasons ? `<th style="padding:6px 4px;">Reasons</th>` : ""}
+        </tr></thead>
+        <tbody>
+          ${rows
+            .map(
+              (r) => `<tr style="border-bottom:1px solid #eee;">
+                <td style="padding:5px 4px; font-weight:700;">${escapeHtml(r.label)}</td>
+                <td style="padding:5px 4px; text-align:right;">${r.qty}</td>
+                <td style="padding:5px 4px; text-align:right; font-weight:700;">₦${formatMoney(r.value)}</td>
+                ${showReasons ? `<td style="padding:5px 4px; word-break:break-word; overflow-wrap:break-word; white-space:normal;">${escapeHtml(r.reasonSummary || "")}</td>` : ""}
+              </tr>`,
+            )
+            .join("")}
+        </tbody>
+      </table>`
+    : `<p style="color:#666; font-size:13px; margin-top:8px;">No activity in this period.</p>`;
+
+  const out = `<div style="font-size:13px;">
+    <table style="width:100%; border-collapse:collapse; border:2px solid #000; font-size:14px; font-weight:bold; margin-bottom:20px;">
+      <tr><td style="border:1px solid #000; padding:6px; width:50%; background:#f9f9f9;">Total Value</td><td style="border:1px solid #000; padding:6px; width:50%;">₦${formatMoney(totalValue)}</td></tr>
+    </table>
+    <h3 style="font-size:14px; font-weight:900; text-transform:uppercase; margin:0 0 6px 0; text-decoration:underline;">${escapeHtml(title)} (${escapeHtml(formatDateForDisplay(startDateStr))} &mdash; ${escapeHtml(formatDateForDisplay(endDateStr))})</h3>
+    ${activityTable}
+  </div>`;
+
+  const ref = generateReportRef("RPT");
+  const wrapped = wrapReportContent(out, `Inventory Consumption — ${title}`, ref);
+  viewport.innerHTML = wrapped;
+  const printContainer = document.getElementById("report-print-container");
+  if (printContainer) printContainer.innerHTML = wrapped;
+  window.currentReportFilename = "Inventory_Consumption_" + Date.now();
+  window.currentReportAttachmentManifest = [];
+  window.currentReportTitle = `Inventory Consumption — ${title}`;
+  window.currentReportShowTitleLine = true;
+  window.currentReportRef = ref;
+  window.currentReportRawContent = out;
+  setOnscreenPreviewCardDisplay("block");
+}
+
+// =========================================================
+// § INVENTORY STOCK VALUATION REPORT
+// Opening + Purchases − Issues (+/− Adjustments) = Closing.
+// Quantity as of a given date is reconstructed exactly by replaying
+// every movement up to that point (the ledger is the source of
+// truth). Unit cost as of that date uses the most recent movement's
+// own recorded unitCostAtTime on or before it — a reasonable
+// approximation for items with no movement history yet before the
+// period (falls back to the item's current cost), since we don't
+// separately store a full cost-history timeline outside the
+// movements themselves.
+// =========================================================
+async function generateInventoryValuationReport(startDateStr, endDateStr) {
+  const viewport = document.getElementById("report-preview-viewport");
+  if (!viewport) return;
+
+  viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading inventory data...</p>`;
+  const [items, movements] = await Promise.all([
+    callApi("getInventoryItems", {}),
+    callApi("getInventoryMovements", {}),
+  ]);
+  if (!items || !Array.isArray(items) || !movements || !Array.isArray(movements)) {
+    viewport.innerHTML = `<p style="padding:20px; color:#dc3545; font-weight:700;">Couldn't load inventory data.</p>`;
+    return;
+  }
+
+  const consumables = items.filter((i) => i && (i.itemType || "consumable") === "consumable");
+  const startDate = new Date(startDateStr);
+  const dayBeforeStart = new Date(startDate.getTime() - 1);
+  const endDate = new Date(endDateStr);
+  endDate.setHours(23, 59, 59, 999);
+
+  function valueAsOf(itemCode, asOfDate, currentCost) {
+    const itemMoves = movements
+      .filter((m) => m && m.itemCode === itemCode)
+      .map((m) => ({ ...m, _d: new Date(m.date) }))
+      .filter((m) => !isNaN(m._d.getTime()))
+      .sort((a, b) => a._d - b._d);
+    let qty = 0;
+    let lastCost = currentCost;
+    let foundCostBeforeCutoff = false;
+    itemMoves.forEach((m) => {
+      if (m._d > asOfDate) return;
+      qty += Number(m.quantity) || 0;
+      if (m.unitCostAtTime !== undefined && m.unitCostAtTime !== "") {
+        lastCost = Number(m.unitCostAtTime) || lastCost;
+        foundCostBeforeCutoff = true;
+      }
+    });
+    return { qty, value: qty * (foundCostBeforeCutoff ? lastCost : currentCost) };
+  }
+
+  let openingTotal = 0, closingTotal = 0, purchasesTotal = 0, issuesTotal = 0, adjustmentsTotal = 0;
+  const rows = consumables.map((item) => {
+    const currentCost = Number(item.unitCost) || 0;
+    const opening = valueAsOf(item.itemCode, dayBeforeStart, currentCost);
+    const closing = valueAsOf(item.itemCode, endDate, currentCost);
+    const itemMovesInPeriod = movements.filter((m) => {
+      if (!m || m.itemCode !== item.itemCode) return false;
+      const d = new Date(m.date);
+      return !isNaN(d.getTime()) && d >= startDate && d <= endDate;
+    });
+    const purchases = itemMovesInPeriod.filter((m) => m.movementType === "receive").reduce((s, m) => s + (Number(m.totalValue) || 0), 0);
+    const issues = itemMovesInPeriod.filter((m) => m.movementType === "issue").reduce((s, m) => s + Math.abs(Number(m.totalValue) || 0), 0);
+    const adjustments = itemMovesInPeriod.filter((m) => m.movementType === "adjustment").reduce((s, m) => s + (Number(m.totalValue) || 0), 0);
+
+    openingTotal += opening.value;
+    closingTotal += closing.value;
+    purchasesTotal += purchases;
+    issuesTotal += issues;
+    adjustmentsTotal += adjustments;
+
+    return {
+      name: item.name, itemCode: item.itemCode,
+      openingQty: opening.qty, openingValue: opening.value,
+      purchases, issues, adjustments,
+      closingQty: closing.qty, closingValue: closing.value,
+    };
+  }).filter((r) => r.openingValue !== 0 || r.closingValue !== 0 || r.purchases !== 0 || r.issues !== 0 || r.adjustments !== 0);
+
+  const rowsHtml = rows.length
+    ? rows
+        .map(
+          (r) => `<tr style="border-bottom:1px solid #eee;">
+            <td style="padding:5px 4px; font-weight:700;">${escapeHtml(r.name)}</td>
+            <td style="padding:5px 4px; text-align:right;">₦${formatMoney(r.openingValue)}</td>
+            <td style="padding:5px 4px; text-align:right; color:#198754;">₦${formatMoney(r.purchases)}</td>
+            <td style="padding:5px 4px; text-align:right; color:#dc3545;">₦${formatMoney(r.issues)}</td>
+            <td style="padding:5px 4px; text-align:right;">₦${formatMoney(r.adjustments)}</td>
+            <td style="padding:5px 4px; text-align:right; font-weight:700;">₦${formatMoney(r.closingValue)}</td>
+          </tr>`,
+        )
+        .join("")
+    : `<tr><td colspan="6" style="padding:10px; text-align:center; color:#666;">No inventory activity in this period.</td></tr>`;
+
+  const out = `<div style="font-size:13px;">
+    <table style="width:100%; border-collapse:collapse; border:2px solid #000; font-size:14px; font-weight:bold; margin-bottom:20px;">
+      <tr><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Opening Value</td><td style="border:1px solid #000; padding:6px; width:25%;">₦${formatMoney(openingTotal)}</td><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Closing Value</td><td style="border:1px solid #000; padding:6px; width:25%;">₦${formatMoney(closingTotal)}</td></tr>
+      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Purchases</td><td style="border:1px solid #000; padding:6px; color:#198754;">₦${formatMoney(purchasesTotal)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Issues</td><td style="border:1px solid #000; padding:6px; color:#dc3545;">₦${formatMoney(issuesTotal)}</td></tr>
+      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Net Adjustments</td><td colspan="3" style="border:1px solid #000; padding:6px;">₦${formatMoney(adjustmentsTotal)}</td></tr>
+    </table>
+    <p style="font-size:12px; color:#666; margin:0 0 12px 0;">Reconciliation: Opening + Purchases − Issues + Adjustments = ₦${formatMoney(openingTotal + purchasesTotal - issuesTotal + adjustmentsTotal)} (Closing shown above: ₦${formatMoney(closingTotal)})</p>
+    <h3 style="font-size:14px; font-weight:900; text-transform:uppercase; margin:0 0 6px 0; text-decoration:underline;">By Item (${escapeHtml(formatDateForDisplay(startDateStr))} &mdash; ${escapeHtml(formatDateForDisplay(endDateStr))})</h3>
+    <table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; table-layout:fixed;">
+      <colgroup><col style="width:28%;"><col style="width:16%;"><col style="width:14%;"><col style="width:14%;"><col style="width:14%;"><col style="width:14%;"></colgroup>
+      <thead><tr style="border-bottom:2px solid #000; text-align:left;">
+        <th style="padding:6px 4px;">Item</th>
+        <th style="padding:6px 4px; text-align:right;">Opening</th>
+        <th style="padding:6px 4px; text-align:right;">Purchases</th>
+        <th style="padding:6px 4px; text-align:right;">Issues</th>
+        <th style="padding:6px 4px; text-align:right;">Adjustments</th>
+        <th style="padding:6px 4px; text-align:right;">Closing</th>
+      </tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+  </div>`;
+
+  const ref = generateReportRef("RPT");
+  const wrapped = wrapReportContent(out, "Inventory Stock Valuation", ref);
+  viewport.innerHTML = wrapped;
+  const printContainer = document.getElementById("report-print-container");
+  if (printContainer) printContainer.innerHTML = wrapped;
+  window.currentReportFilename = "Inventory_Valuation_" + Date.now();
+  window.currentReportAttachmentManifest = [];
+  window.currentReportTitle = "Inventory Stock Valuation";
+  window.currentReportShowTitleLine = true;
+  window.currentReportRef = ref;
+  window.currentReportRawContent = out;
+  setOnscreenPreviewCardDisplay("block");
+}
+
+// =========================================================
+// § SERVICE CHARGE — BUDGET VS ACTUAL
+// Scoped to Shared Expenses only, matching the fixed category list —
+// Apartment Expenses use a separate, free-text taxonomy that was
+// deliberately never standardized (per-unit maintenance items are
+// naturally varied), so they can't be reliably matched to a budget
+// category at all.
+// =========================================================
+async function generateServiceChargeBudgetVarianceReport(startDateStr, endDateStr) {
+  const viewport = document.getElementById("report-preview-viewport");
+  if (!viewport) return;
+
+  viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading Service Charge data...</p>`;
+  const [ledger, budgets] = await Promise.all([
+    callApi("getServiceChargeLedger", {}),
+    callApi("getServiceChargeBudgets", {}),
+  ]);
+  if (!ledger || !Array.isArray(ledger) || !budgets || !Array.isArray(budgets)) {
+    viewport.innerHTML = `<p style="padding:20px; color:#dc3545; font-weight:700;">Couldn't load Service Charge data.</p>`;
+    return;
+  }
+
+  const startDate = new Date(startDateStr);
+  const endDate = new Date(endDateStr);
+  endDate.setHours(23, 59, 59, 999);
+  const monthSpan = Math.max(
+    1,
+    (endDate.getFullYear() - startDate.getFullYear()) * 12 + (endDate.getMonth() - startDate.getMonth()) + 1,
+  );
+
+  function budgetForCategory(category) {
+    const applicable = budgets
+      .filter((b) => b && b.category === category && new Date(b.effectiveFrom) <= startDate)
+      .sort((a, b) => new Date(b.effectiveFrom) - new Date(a.effectiveFrom));
+    return applicable.length ? Number(applicable[0].monthlyBudgetAmount) || 0 : 0;
+  }
+
+  const sharedExpensesInPeriod = ledger.filter((r) => {
+    if (!r || r.type !== "shared_expense") return false;
+    const d = new Date(r.date);
+    return !isNaN(d.getTime()) && d >= startDate && d <= endDate;
+  });
+
+  const rows = SERVICE_CHARGE_CATEGORIES.map((category) => {
+    const monthlyBudget = budgetForCategory(category);
+    const budgetAmount = monthlyBudget * monthSpan;
+    const actual = sharedExpensesInPeriod
+      .filter((r) => r.category === category)
+      .reduce((s, r) => s + (Number(r.amount) || 0), 0);
+    return { category, budgetAmount, actual, variance: budgetAmount - actual };
+  }).filter((r) => r.budgetAmount > 0 || r.actual > 0);
+
+  const totalBudget = rows.reduce((s, r) => s + r.budgetAmount, 0);
+  const totalActual = rows.reduce((s, r) => s + r.actual, 0);
+
+  const rowsHtml = rows.length
+    ? rows
+        .map(
+          (r) => `<tr style="border-bottom:1px solid #eee;">
+            <td style="padding:5px 4px; font-weight:700;">${escapeHtml(r.category)}</td>
+            <td style="padding:5px 4px; text-align:right;">₦${formatMoney(r.budgetAmount)}</td>
+            <td style="padding:5px 4px; text-align:right;">₦${formatMoney(r.actual)}</td>
+            <td style="padding:5px 4px; text-align:right; font-weight:700; color:${r.variance >= 0 ? "#198754" : "#dc3545"};">${r.variance >= 0 ? "" : "-"}₦${formatMoney(Math.abs(r.variance))} ${r.variance >= 0 ? "under" : "over"}</td>
+          </tr>`,
+        )
+        .join("")
+    : `<tr><td colspan="4" style="padding:10px; text-align:center; color:#666;">No budgets or shared expenses to compare in this period.</td></tr>`;
+
+  const out = `<div style="font-size:13px;">
+    <table style="width:100%; border-collapse:collapse; border:2px solid #000; font-size:14px; font-weight:bold; margin-bottom:20px;">
+      <tr><td style="border:1px solid #000; padding:6px; width:33%; background:#f9f9f9;">Total Budget</td><td style="border:1px solid #000; padding:6px; width:33%;">₦${formatMoney(totalBudget)}</td><td style="border:1px solid #000; padding:6px; width:34%; background:#f9f9f9;">Total Actual</td></tr>
+      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Total Variance</td><td colspan="2" style="border:1px solid #000; padding:6px; color:${totalBudget - totalActual >= 0 ? "#198754" : "#dc3545"};">${totalBudget - totalActual >= 0 ? "" : "-"}₦${formatMoney(Math.abs(totalBudget - totalActual))} ${totalBudget - totalActual >= 0 ? "under budget" : "over budget"} (Actual: ₦${formatMoney(totalActual)})</td></tr>
+    </table>
+    <p style="font-size:12px; color:#666; margin:0 0 12px 0;">Scoped to Shared Expenses only, matched to their category — Apartment-specific expenses use free-text categories and aren't included here.</p>
+    <h3 style="font-size:14px; font-weight:900; text-transform:uppercase; margin:0 0 6px 0; text-decoration:underline;">By Category (${escapeHtml(formatDateForDisplay(startDateStr))} &mdash; ${escapeHtml(formatDateForDisplay(endDateStr))})</h3>
+    <table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px;">
+      <thead><tr style="border-bottom:2px solid #000; text-align:left;">
+        <th style="padding:6px 4px;">Category</th>
+        <th style="padding:6px 4px; text-align:right;">Budget</th>
+        <th style="padding:6px 4px; text-align:right;">Actual</th>
+        <th style="padding:6px 4px; text-align:right;">Variance</th>
+      </tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+  </div>`;
+
+  const ref = generateReportRef("RPT");
+  const wrapped = wrapReportContent(out, "Service Charge — Budget vs Actual", ref);
+  viewport.innerHTML = wrapped;
+  const printContainer = document.getElementById("report-print-container");
+  if (printContainer) printContainer.innerHTML = wrapped;
+  window.currentReportFilename = "Service_Charge_Budget_Variance_" + Date.now();
+  window.currentReportAttachmentManifest = [];
+  window.currentReportTitle = "Service Charge — Budget vs Actual";
   window.currentReportShowTitleLine = true;
   window.currentReportRef = ref;
   window.currentReportRawContent = out;
