@@ -87,14 +87,6 @@ const viewMeta = {
     newType: "staff",
     empty: "No staff records found.",
   },
-  utilities: {
-    title: "Utilities & Plant",
-    kicker: "Meter and generator logs",
-    key: "utilities",
-    action: "getUtilities",
-    newType: "utility", // the extra "New Plant Log" button (see wireDesktopEvents) covers the 'generator' half
-    empty: "No utility records found.",
-  },
   archived: {
     title: "Archived",
     kicker: "Retired assets, staff, vendors & inventory",
@@ -202,19 +194,10 @@ function wireDesktopEvents() {
 
   // Single delegated handler for everything rendered inside dynamic markup
   // (record cards, popout/print/toggle buttons, section headers, bulk
-  // action bar, recent-windows list) — see handleDesktopActionClick for
-  // why this replaces per-render addEventListener/onclick wiring.
+  // action bar) — see handleDesktopActionClick for why this replaces
+  // per-render addEventListener/onclick wiring.
   document.addEventListener("click", handleDesktopActionClick);
   document.addEventListener("keydown", handleDesktopActionKeydown);
-
-  document.addEventListener("click", (event) => {
-    const panel = document.getElementById("recent-windows-panel");
-    const btn = document.getElementById("recent-windows-btn");
-    if (!panel || panel.style.display !== "block") return;
-    if (!panel.contains(event.target) && event.target !== btn && !btn.contains(event.target)) {
-      panel.style.display = "none";
-    }
-  });
 
   const debouncedSearch = debounce((value) => {
     desktopState.query = value.trim().toLowerCase();
@@ -229,7 +212,6 @@ function wireDesktopEvents() {
     await processSyncQueue();
     await loadAndRender();
   });
-  document.getElementById("open-mobile").addEventListener("click", openMobileApp);
   document.getElementById("new-record").addEventListener("click", openNewRecord);
 
   document.addEventListener("keydown", (event) => {
@@ -403,6 +385,16 @@ function renderDesktop() {
 
   const plantLogBtn = document.getElementById("new-plant-log-btn");
   if (plantLogBtn) plantLogBtn.style.display = desktopState.view === "utilities" ? "inline-flex" : "none";
+
+  // [FEATURE] Apartments/Assets counts now only show while actually
+  // viewing the Apartments dashboard, not persistently on every
+  // section — Open Tickets/Pending Work Orders are unaffected, since
+  // only these two were flagged as appearing "everywhere."
+  const isApartmentsView = desktopState.view === "apartments";
+  const metricApartmentsBtn = document.getElementById("metric-apartments-btn");
+  if (metricApartmentsBtn) metricApartmentsBtn.style.display = isApartmentsView ? "" : "none";
+  const metricAssetsBtn = document.getElementById("metric-assets-btn");
+  if (metricAssetsBtn) metricAssetsBtn.style.display = isApartmentsView ? "" : "none";
 
   if (desktopState.view === "reports") return renderReportShortcuts();
   if (desktopState.view === "settings") return renderSettingsShortcuts();
@@ -1160,7 +1152,8 @@ function renderInventoryShortcuts() {
     <div class="desktop-form-card" style="grid-column:1/-1;">
       <h3 style="margin:0 0 12px; font-size:15px;">Actions</h3>
       <div style="display:flex; gap:10px; flex-wrap:wrap;">
-        <button class="action-btn" style="width:auto; background:var(--blue);" onclick="openModal('inventoryitem')"><i class="fas fa-plus"></i> New Item</button>
+        <button class="action-btn" style="width:auto; background:var(--blue);" onclick="openModal('inventoryitem')"><i class="fas fa-plus"></i> New Consumable Item</button>
+        <button class="action-btn" style="width:auto; background:#6f42c1;" onclick="openModal('inventorytool')"><i class="fas fa-screwdriver-wrench"></i> New Tool / Equipment</button>
         <button class="action-btn" style="width:auto; background:var(--green);" onclick="openModal('receivestock')"><i class="fas fa-arrow-down"></i> Receive Stock</button>
         <button class="action-btn" style="width:auto; background:var(--red);" onclick="openModal('issuestock')"><i class="fas fa-arrow-up"></i> Issue Stock</button>
         <button class="action-btn" style="width:auto; background:#fd7e14;" onclick="openModal('adjuststock')"><i class="fas fa-sliders"></i> Stock Adjustment</button>
@@ -1268,10 +1261,6 @@ function renderHelpView() {
   `;
 }
 
-function openMobileApp() {
-  window.open("./index.html", "_blank", "noopener");
-}
-
 function activeCount(records) {
   return (records || []).filter((item) => !isClosedStatus(item.status || item.Status || item.archived || item.Archived)).length;
 }
@@ -1340,14 +1329,6 @@ function openSnapshotWindow(title, rowsHtml) {
     desktopState.recentWindows.length = MAX_RECENT_WINDOWS;
   }
   renderRecentWindowsList();
-}
-
-function toggleRecentWindowsPanel() {
-  const panel = document.getElementById("recent-windows-panel");
-  if (!panel) return;
-  const isOpen = panel.style.display === "block";
-  panel.style.display = isOpen ? "none" : "block";
-  if (!isOpen) renderRecentWindowsList();
 }
 
 function renderRecentWindowsList() {

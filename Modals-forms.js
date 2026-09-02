@@ -14,6 +14,29 @@
 // ─────────────────────────────────────────────
 let editingMaintenanceLogId = null; // non-null while the mini-form is in "edit" mode
 
+// [FEATURE] Predefined category list for the Inventory module's item
+// forms — a dropdown rather than free text, so categories stay
+// consistent (matters for filtering/reporting later, and avoids
+// "Plumbing" vs "plumbing" vs "Plumbing " variants piling up).
+const INVENTORY_CATEGORIES = [
+  "Plumbing",
+  "Electrical",
+  "Cleaning",
+  "Painting",
+  "Carpentry",
+  "Gardening",
+  "Security",
+  "Safety Equipment",
+  "Office Supplies",
+  "General",
+];
+
+function buildInventoryCategoryOptionsHtml(selectedValue) {
+  return INVENTORY_CATEGORIES.map(
+    (c) => `<option value="${escapeHtml(c)}" ${selectedValue === c ? "selected" : ""}>${escapeHtml(c)}</option>`,
+  ).join("");
+}
+
 function renderAssetMaintenanceHistory(assetTag) {
   const listEl = document.getElementById("assetMaintHistoryList");
   if (!listEl) return;
@@ -1326,43 +1349,27 @@ async function openModal(type, editData = null) {
   }
 
   // ── INVENTORY: ITEM MASTER (create/edit) ──
+  // ── INVENTORY: CONSUMABLE ITEM (create/edit) ──
   else if (type === "inventoryitem") {
-    title.innerText = isEdit ? "Edit Inventory Item" : "New Inventory Item";
-    const itemType = isEdit ? editData.itemType || "consumable" : "consumable";
+    title.innerText = isEdit ? "Edit Consumable Item" : "New Consumable Item";
     body.innerHTML = `
       ${isEdit ? `<div class="form-field span-3"><label ${lbl}>Item Code</label><input value="${escapeHtml(editData.itemCode)}" disabled ${ls}></div>` : ""}
-      <div class="form-field span-3"><label ${lbl}>Item Type</label>
-        <select id="ii_type" ${ls} onchange="document.getElementById('ii_tool_fields').style.display = this.value === 'tool' ? 'contents' : 'none';" ${isEdit ? "disabled" : ""}>
-          <option value="consumable" ${itemType === "consumable" ? "selected" : ""}>Consumable (tracked stock, used up & reordered)</option>
-          <option value="tool" ${itemType === "tool" ? "selected" : ""}>Tool / Equipment (durable, assigned to a custodian)</option>
-        </select>
-      </div>
       <div class="form-field"><label ${lbl}>Name</label><input id="ii_name" value="${isEdit ? escapeHtml(editData.name || "") : ""}" placeholder="e.g. PTFE Tape" ${ls}></div>
-      <div class="form-field"><label ${lbl}>Category</label><input id="ii_category" value="${isEdit ? escapeHtml(editData.category || "") : ""}" placeholder="e.g. Plumbing" ${ls}></div>
-      <div class="form-field"><label ${lbl}>Sub-category</label><input id="ii_subcategory" value="${isEdit ? escapeHtml(editData.subCategory || "") : ""}" placeholder="e.g. Consumables" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Category</label>
+        <select id="ii_category" ${ls}>${buildInventoryCategoryOptionsHtml(isEdit ? editData.category : "")}</select>
+      </div>
       <div class="form-field"><label ${lbl}>Unit</label><input id="ii_unit" value="${isEdit ? escapeHtml(editData.unit || "") : ""}" placeholder="e.g. Roll, Pcs, Litre" ${ls}></div>
       <div class="form-field"><label ${lbl}>Minimum Qty</label><input id="ii_minqty" type="number" min="0" value="${isEdit ? escapeHtml(editData.minQty || 0) : "0"}" ${ls}></div>
       <div class="form-field"><label ${lbl}>Reorder Level</label><input id="ii_reorderlevel" type="number" min="0" value="${isEdit ? escapeHtml(editData.reorderLevel || 0) : "0"}" ${ls}></div>
       <div class="form-field"><label ${lbl}>Reorder Qty</label><input id="ii_reorderqty" type="number" min="0" value="${isEdit ? escapeHtml(editData.reorderQty || 0) : "0"}" ${ls}></div>
-      ${!isEdit ? `<div class="form-field"><label ${lbl}>Starting Unit Cost (₦)</label><input id="ii_unitcost" type="number" min="0" step="0.01" value="0" ${ls}></div>
-      <div class="form-field"><label ${lbl}>Starting Qty</label><input id="ii_startqty" type="number" min="0" value="0" ${ls}></div>` : ""}
-      <div class="form-field"><label ${lbl}>Preferred Supplier</label><input id="ii_supplier" value="${isEdit ? escapeHtml(editData.preferredSupplier || "") : ""}" ${ls}></div>
-      <div class="form-field"><label ${lbl}>Lead Time (days)</label><input id="ii_leadtime" type="number" min="0" value="${isEdit ? escapeHtml(editData.leadTimeDays || 0) : "0"}" ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Specification</label><input id="ii_spec" value="${isEdit ? escapeHtml(editData.specification || "") : ""}" placeholder='e.g. ½" × 10 m' ${ls}></div>
-      <div id="ii_tool_fields" style="display:${itemType === "tool" ? "contents" : "none"};">
-        <div class="form-field"><label ${lbl}>Asset Number</label><input id="ii_assetnumber" value="${isEdit ? escapeHtml(editData.assetNumber || "") : ""}" ${ls}></div>
-        <div class="form-field"><label ${lbl}>Location</label><input id="ii_location" value="${isEdit ? escapeHtml(editData.location || "") : ""}" ${ls}></div>
-        <div class="form-field"><label ${lbl}>Custodian</label><input id="ii_custodian" value="${isEdit ? escapeHtml(editData.custodian || "") : ""}" ${ls}></div>
-        <div class="form-field"><label ${lbl}>Condition</label><input id="ii_condition" value="${isEdit ? escapeHtml(editData.condition || "") : ""}" placeholder="e.g. Good, Needs Service" ${ls}></div>
-        <div class="form-field"><label ${lbl}>Purchase Date</label><input id="ii_purchasedate" type="date" value="${isEdit && editData.purchaseDate ? String(editData.purchaseDate).slice(0, 10) : ""}" ${ls}></div>
-        <div class="form-field"><label ${lbl}>Calibration Due (optional)</label><input id="ii_calibrationdue" type="date" value="${isEdit && editData.calibrationDue ? String(editData.calibrationDue).slice(0, 10) : ""}" ${ls}></div>
-      </div>
       <div class="form-field span-3"><label ${lbl}>Status</label>
         <select id="ii_status" ${ls}>
           <option value="Active" ${!isEdit || editData.status === "Active" ? "selected" : ""}>Active</option>
           <option value="Inactive" ${isEdit && editData.status === "Inactive" ? "selected" : ""}>Inactive</option>
         </select>
       </div>
+      ${!isEdit ? `<p style="font-size:12px; color:var(--muted); grid-column:span 3; margin:0;">New items start at zero stock — use "Receive Stock" right after creating this to record its first batch.</p>` : ""}
     `;
 
     submit.onclick = () => {
@@ -1373,30 +1380,16 @@ async function openModal(type, editData = null) {
       }
       const payload = {
         name,
-        category: sanitizeInput(document.getElementById("ii_category").value),
-        subCategory: sanitizeInput(document.getElementById("ii_subcategory").value),
+        category: document.getElementById("ii_category").value,
         unit: sanitizeInput(document.getElementById("ii_unit").value),
         minQty: document.getElementById("ii_minqty").value,
         reorderLevel: document.getElementById("ii_reorderlevel").value,
         reorderQty: document.getElementById("ii_reorderqty").value,
-        preferredSupplier: sanitizeInput(document.getElementById("ii_supplier").value),
-        leadTimeDays: document.getElementById("ii_leadtime").value,
         specification: sanitizeInput(document.getElementById("ii_spec").value),
-        itemType: document.getElementById("ii_type").value,
-        assetNumber: sanitizeInput(document.getElementById("ii_assetnumber").value),
-        location: sanitizeInput(document.getElementById("ii_location").value),
-        custodian: sanitizeInput(document.getElementById("ii_custodian").value),
-        condition: sanitizeInput(document.getElementById("ii_condition").value),
-        purchaseDate: document.getElementById("ii_purchasedate").value,
-        calibrationDue: document.getElementById("ii_calibrationdue").value,
+        itemType: "consumable",
         status: document.getElementById("ii_status").value,
       };
-      if (!isEdit) {
-        payload.unitCost = document.getElementById("ii_unitcost").value;
-        payload.currentQty = document.getElementById("ii_startqty").value;
-      } else {
-        payload.itemCode = editData.itemCode;
-      }
+      if (isEdit) payload.itemCode = editData.itemCode;
       submit.disabled = true;
       submit.classList.add("loading");
       callApi(isEdit ? "updateInventoryItem" : "saveInventoryItem", payload)
@@ -1409,6 +1402,75 @@ async function openModal(type, editData = null) {
           }
           closeModal();
           showToast(isEdit ? "Item updated." : `Item ${result.itemCode} created.`, "success");
+          if (typeof refreshInventorySection === "function") refreshInventorySection();
+        })
+        .catch(() => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+        });
+    };
+  }
+
+  // ── INVENTORY: TOOL / EQUIPMENT (create/edit) ──
+  else if (type === "inventorytool") {
+    title.innerText = isEdit ? "Edit Tool / Equipment" : "New Tool / Equipment";
+    body.innerHTML = `
+      ${isEdit ? `<div class="form-field span-3"><label ${lbl}>Item Code</label><input value="${escapeHtml(editData.itemCode)}" disabled ${ls}></div>` : ""}
+      <div class="form-field"><label ${lbl}>Name</label><input id="it_name" value="${isEdit ? escapeHtml(editData.name || "") : ""}" placeholder="e.g. Angle Grinder" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Category</label>
+        <select id="it_category" ${ls}>${buildInventoryCategoryOptionsHtml(isEdit ? editData.category : "")}</select>
+      </div>
+      <div class="form-field"><label ${lbl}>Custodian</label>
+        <select id="it_custodian" ${ls}></select>
+      </div>
+      <div class="form-field span-3"><label ${lbl}>Specification</label><input id="it_spec" value="${isEdit ? escapeHtml(editData.specification || "") : ""}" placeholder="e.g. Model / capacity" ${ls}></div>
+      <div class="form-field span-3"><label ${lbl}>Status</label>
+        <select id="it_status" ${ls}>
+          <option value="Active" ${!isEdit || editData.status === "Active" ? "selected" : ""}>Active</option>
+          <option value="Inactive" ${isEdit && editData.status === "Inactive" ? "selected" : ""}>Inactive</option>
+        </select>
+      </div>
+    `;
+    const custodianSel = document.getElementById("it_custodian");
+    custodianSel.innerHTML = '<option value="">-- Unassigned --</option>';
+    (cache.staff || []).forEach((s) => {
+      if (!s) return;
+      const staffName = s.name || s.Name;
+      if (!staffName) return;
+      const o = document.createElement("option");
+      o.value = staffName;
+      o.textContent = staffName;
+      if (isEdit && editData.custodian === staffName) o.selected = true;
+      custodianSel.appendChild(o);
+    });
+
+    submit.onclick = () => {
+      const name = sanitizeInput(document.getElementById("it_name").value);
+      if (!name) {
+        showToast("Enter a name.", "error");
+        return;
+      }
+      const payload = {
+        name,
+        category: document.getElementById("it_category").value,
+        custodian: document.getElementById("it_custodian").value,
+        specification: sanitizeInput(document.getElementById("it_spec").value),
+        itemType: "tool",
+        status: document.getElementById("it_status").value,
+      };
+      if (isEdit) payload.itemCode = editData.itemCode;
+      submit.disabled = true;
+      submit.classList.add("loading");
+      callApi(isEdit ? "updateInventoryItem" : "saveInventoryItem", payload)
+        .then((result) => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+          if (!result || result.status !== "success") {
+            showToast((result && result.message) || "Failed to save item.", "error");
+            return;
+          }
+          closeModal();
+          showToast(isEdit ? "Updated." : `${result.itemCode} created.`, "success");
           if (typeof refreshInventorySection === "function") refreshInventorySection();
         })
         .catch(() => {
@@ -1643,9 +1705,12 @@ async function openModal(type, editData = null) {
       : `<p style="color:var(--muted); font-size:13px;">No movements recorded yet.</p>`;
 
     body.innerHTML = `
-      <div class="form-field span-3" style="background:#f9f9f9; border-radius:8px; padding:12px;">
-        <strong>Current ${isTool ? "status" : "stock"}: ${isTool ? escapeHtml(editData.condition || "—") : (editData.currentQty || 0) + " " + escapeHtml(editData.unit || "")}</strong><br>
-        ${!isTool ? `<span style="font-size:12px; color:#666;">Weighted-avg unit cost: ₦${formatMoney(editData.unitCost || 0)}</span>` : `<span style="font-size:12px; color:#666;">Custodian: ${escapeHtml(editData.custodian || "—")} | Location: ${escapeHtml(editData.location || "—")}</span>`}
+      <div class="form-field span-3" style="background:#f9f9f9; border-radius:8px; padding:12px; display:flex; justify-content:space-between; align-items:center; gap:10px;">
+        <div>
+          <strong>Current ${isTool ? "status" : "stock"}: ${isTool ? escapeHtml(editData.status || "—") : (editData.currentQty || 0) + " " + escapeHtml(editData.unit || "")}</strong><br>
+          ${!isTool ? `<span style="font-size:12px; color:#666;">Weighted-avg unit cost: ₦${formatMoney(editData.unitCost || 0)}</span>` : `<span style="font-size:12px; color:#666;">Custodian: ${escapeHtml(editData.custodian || "Unassigned")}</span>`}
+        </div>
+        <button type="button" data-modal-action="edit-inventory-item" data-id="${escapeHtml(editData.itemCode)}" style="background:var(--text); color:#fff; border:0; border-radius:6px; padding:6px 12px; font-size:12px; font-weight:700; cursor:pointer; white-space:nowrap;">Edit</button>
       </div>
       <div class="form-field span-3">${rowsHtml}</div>
     `;

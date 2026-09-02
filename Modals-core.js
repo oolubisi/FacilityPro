@@ -616,6 +616,16 @@ function viewInventoryItemTimeline(itemCode) {
   openModal("inventorytimeline", item);
 }
 
+function editInventoryItem(itemCode) {
+  const item = (lastFetchedInventoryItems || []).find((i) => String(i.itemCode) === String(itemCode));
+  if (!item) {
+    showToast("Item not found.", "error");
+    return;
+  }
+  const isTool = (item.itemType || "consumable") === "tool";
+  openModal(isTool ? "inventorytool" : "inventoryitem", item);
+}
+
 // ─────────────────────────────────────────────
 // § DELEGATED CLICK HANDLING (modal body)
 // #modalBody markup (here and in Modals-forms.js) uses data-modal-action
@@ -674,6 +684,9 @@ function handleModalContentClick(event) {
       break;
     case "view-inventory-item-timeline":
       viewInventoryItemTimeline(actionEl.dataset.id);
+      break;
+    case "edit-inventory-item":
+      editInventoryItem(actionEl.dataset.id);
       break;
   }
 }

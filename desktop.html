@@ -72,12 +72,6 @@
           <button class="nav-item" data-view="staff">
             <i class="fas fa-users"></i><span>Staff</span>
           </button>
-          <button class="nav-item" data-view="utilities">
-            <i class="fas fa-bolt"></i><span>Utilities & Plant</span>
-          </button>
-          <button class="nav-item" data-view="archived">
-            <i class="fas fa-box-archive"></i><span>Archived</span>
-          </button>
           <button id="desktop-servicecharge-nav" class="nav-item" data-view="servicecharge">
             <i class="fas fa-coins"></i><span>Service Charge</span>
           </button>
@@ -96,17 +90,8 @@
           <button id="refresh-now" class="nav-item muted">
             <i class="fas fa-database"></i><span>Refresh</span>
           </button>
-          <div style="position:relative;">
-            <button id="recent-windows-btn" class="nav-item muted" onclick="toggleRecentWindowsPanel()" style="width:100%;">
-              <i class="fas fa-clone"></i><span>Recent Windows</span>
-            </button>
-            <div id="recent-windows-panel" class="recent-windows-panel">
-              <div class="recent-windows-header">Recently Opened</div>
-              <div id="recent-windows-list"></div>
-            </div>
-          </div>
-          <button id="open-mobile" class="nav-item muted">
-            <i class="fas fa-mobile-screen"></i><span>Mobile View</span>
+          <button class="nav-item muted" data-view="archived">
+            <i class="fas fa-box-archive"></i><span>Archived</span>
           </button>
           <button id="desktop-settings-nav" class="nav-item muted" data-view="settings">
             <i class="fas fa-gear"></i><span>Settings</span>
@@ -139,10 +124,10 @@
         <div id="overdue-digest" class="overdue-digest" hidden></div>
 
         <section class="overview-grid" aria-label="Overview">
-          <button class="metric" data-view="apartments">
+          <button id="metric-apartments-btn" class="metric" data-view="apartments">
             <span>Apartments</span><strong id="metric-apartments">0</strong>
           </button>
-          <button class="metric" data-view="assets">
+          <button id="metric-assets-btn" class="metric" data-view="assets">
             <span>Assets</span><strong id="metric-assets">0</strong>
           </button>
           <button class="metric danger" data-view="tickets">
