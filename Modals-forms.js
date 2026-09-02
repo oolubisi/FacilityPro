@@ -1,8 +1,8 @@
 // =========================================================
 // MODALS-FORMS.JS — openModal(): all record-type form builders
-//                   (apartment, asset, maintenance, workorder,
+//                   (apartment, asset, maintenance,
 //                   payment, inventory, utility, generator,
-//                   staff, vendor, expenserequest, cashexpense)
+//                   staff, vendor)
 // Load order: 5th
 // Depends on: core.js, init.js, records.js, modals-core.js
 // =========================================================
@@ -173,60 +173,6 @@ async function addAssetMaintenanceLogEntry(assetTag) {
   }
 }
 
-// § WORK ORDER ↔ PAYMENT LINK
-// A payment's `reference` field already stores the linked Work Order's ID
-// when it's created against an approved work order (see the "Approved
-// Work Orders" optgroup in the payment form) — this just surfaces that
-// existing relationship inside the Work Order modal.
-// ─────────────────────────────────────────────
-function renderLinkedPaymentsForWorkOrder(workOrderId) {
-  const listEl = document.getElementById("woLinkedPaymentsList");
-  if (!listEl) return;
-  const linked = (cache.payments || []).filter(
-    (p) => p && String(p.reference || p.Reference || "") === String(workOrderId),
-  );
-
-  if (linked.length === 0) {
-    listEl.innerHTML = `<p style="color:var(--muted); font-size:14px; margin:0;">No payments linked to this work order yet.</p>`;
-    return;
-  }
-
-  listEl.innerHTML = linked
-    .map((p) => {
-      const paid = String(p.isPaid || p.IsPaid || "").toUpperCase() === "TRUE" || p.isPaid === true;
-      const paymentId = escapeHtml(p.paymentId || p.PaymentId || "");
-      return `<div class="linked-payment-row" data-modal-action="open-linked-payment" data-id="${paymentId}" style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #eee; cursor:pointer;">
-        <div>
-          <strong style="font-size:14px;">${escapeHtml(p.party || p.Party || paymentId)}</strong>
-          <div style="font-size:12px; color:var(--muted);">${paymentId} &middot; ${escapeHtml(formatDateForDisplay(p.date || p.Date))}</div>
-        </div>
-        <div style="text-align:right;">
-          <div style="font-weight:900; font-size:14px;">₦${formatMoney(p.amount || p.Amount || 0)}</div>
-          <span style="font-size:10px; font-weight:800; text-transform:uppercase; padding:2px 8px; border-radius:10px; background:${paid ? "var(--success)" : "#e9ecef"}; color:${paid ? "#fff" : "#666"};">${paid ? "Paid" : "Pending"}</span>
-        </div>
-      </div>`;
-    })
-    .join("");
-}
-
-function openLinkedPayment(paymentId) {
-  const payment = (cache.payments || []).find(
-    (p) => p && String(p.paymentId || p.PaymentId || "") === String(paymentId),
-  );
-  if (!payment) return;
-  closeModal();
-  setTimeout(() => openModal("payment", payment), 250);
-}
-
-function openLinkedWorkOrderFromPayment(workOrderId) {
-  const wo = (cache.workorders || []).find(
-    (w) => w && String(w.workOrderId || w.WorkOrderId || "") === String(workOrderId),
-  );
-  if (!wo) return;
-  closeModal();
-  setTimeout(() => openModal("workorder", wo), 250);
-}
-
 // ─────────────────────────────────────────────
 // § MODAL FORMS
 //
@@ -300,116 +246,8 @@ async function openModal(type, editData = null) {
   currentAvatarPhoto = "";
   currentSelectedRecord = editData;
 
-  // ── EXPENSE REQUEST ──
-  if (type === "expenserequest") {
-    const uniqueId = isEdit
-      ? editData.reqId || editData.ReqId
-      : await generateNextRecordId("EXR", "ExpenseRequests", "reqId", cache.expenseRequests || []);
-    title.innerText = isEdit
-      ? "Update Expense Request"
-      : "Draft Expense Request";
-    if (isEdit && (editData.attachments || editData.Attachments)) {
-      currentModalFiles = String(editData.attachments || editData.Attachments)
-        .split(",")
-        .filter(Boolean);
-    }
-    body.innerHTML = `
-      <label ${lbl}>Request ID</label><input type="text" value="${escapeHtml(uniqueId)}" disabled ${ls} style="background:#e9ecef; font-weight:900;">
-      <label ${lbl}>Date Created</label><input id="er_date" type="date" value="${isEdit ? fromSheetDate(editData.date) : new Date().toISOString().split("T")[0]}" ${ls}>
-      <label ${lbl}>Target Unit</label><select id="er_apt" ${ls}></select>
-      <label ${lbl}>Asset Tag (Optional)</label><input id="er_asset" value="${isEdit ? escapeHtml(editData.assetTag || "") : ""}" placeholder="e.g. AST-12345" ${ls}>
-      <label ${lbl}>Job Profile / Scope</label><textarea id="er_job" rows="3" placeholder="Multiline description..." ${ls}>${isEdit ? escapeHtml(editData.job || "") : ""}</textarea>
-      <label ${lbl}>Estimated Cost (₦)</label><input id="er_cost" type="number" required placeholder="Amount (₦)" value="${isEdit ? escapeHtml(editData.cost || "") : ""}" ${ls}>
-      <label ${lbl}>Supporting Attachments</label>
-      <div id="erPreviews" class="modal-preview-grid" style="display:none;"></div>
-      <label class="icon-upload-label"><i class="fas fa-paperclip"></i><input type="file" id="erCameraInput" accept="image/*,application/pdf" multiple style="display:none"></label>`;
-    populateUnitDropdown("er_apt", isEdit ? getUnitNumber(editData) : "");
-    if (isEdit && currentModalFiles.length > 0)
-      populateModalInlineImageGalleryPreviews("erPreviews");
-    document.getElementById("erCameraInput").onchange = (e) =>
-      processIncomingMultiAttachments(e.target.files, "erPreviews");
-    submit.onclick = () => {
-      if (!document.getElementById("er_cost").value) {
-        showToast("Estimated Cost is required.", "error");
-        return;
-      }
-      submit.disabled = true;
-      submit.classList.add("loading");
-      submitModalRecord(isEdit ? "updateExpenseRequest" : "saveExpenseRequest", {
-        reqId: uniqueId,
-        date: toSheetDate(document.getElementById("er_date").value),
-        apt: document.getElementById("er_apt").value,
-        assetTag: sanitizeInput(document.getElementById("er_asset").value),
-        job: sanitizeInput(document.getElementById("er_job").value),
-        cost: document.getElementById("er_cost").value,
-        attachments: currentModalFiles.join(","),
-      }, editData, "expenserequests")
-        .then(() => {
-          closeModal();
-          refreshData("expenserequests");
-          showToast(isEdit ? "Request updated" : "Request saved", "success");
-        })
-        .catch(() => {
-          submit.disabled = false;
-          submit.classList.remove("loading");
-        });
-    };
-  }
-
-  // ── CASH EXPENSE ──
-  else if (type === "cashexpense") {
-    const uniqueId = isEdit
-      ? editData.cashId || editData.CashId
-      : await generateNextRecordId("CSH", "CashExpenses", "cashId", cache.cashExpenses || []);
-    title.innerText = isEdit ? "Edit Cash Expense" : "Log Cash Expense";
-    if (isEdit && (editData.attachments || editData.Attachments)) {
-      currentModalFiles = String(editData.attachments || editData.Attachments)
-        .split(",")
-        .filter(Boolean);
-    }
-    body.innerHTML = `
-      <label ${lbl}>Cash ID</label><input type="text" value="${escapeHtml(uniqueId)}" disabled ${ls} style="background:#e9ecef; font-weight:900;">
-      <label ${lbl}>Date</label><input id="ce_date" type="date" value="${isEdit ? fromSheetDate(editData.date) : new Date().toISOString().split("T")[0]}" ${ls}>
-      <label ${lbl}>Target Unit</label><select id="ce_apt" ${ls}></select>
-      <label ${lbl}>Amount (₦)</label><input id="ce_amount" type="number" required placeholder="Amount (₦)" value="${isEdit ? escapeHtml(editData.amount || "") : ""}" ${ls}>
-      <label ${lbl}>Description / Notes</label><textarea id="ce_desc" rows="3" ${ls}>${isEdit ? escapeHtml(editData.description || "") : ""}</textarea>
-      <label ${lbl}>Supporting Attachments</label>
-      <div id="cePreviews" class="modal-preview-grid" style="display:none;"></div>
-      <label class="icon-upload-label"><i class="fas fa-paperclip"></i><input type="file" id="ceCameraInput" accept="image/*,application/pdf" multiple style="display:none"></label>`;
-    populateUnitDropdown("ce_apt", isEdit ? getUnitNumber(editData) : "");
-    if (isEdit && currentModalFiles.length > 0)
-      populateModalInlineImageGalleryPreviews("cePreviews");
-    document.getElementById("ceCameraInput").onchange = (e) =>
-      processIncomingMultiAttachments(e.target.files, "cePreviews");
-    submit.onclick = () => {
-      if (!document.getElementById("ce_amount").value) {
-        showToast("Amount is required.", "error");
-        return;
-      }
-      submit.disabled = true;
-      submit.classList.add("loading");
-      submitModalRecord(isEdit ? "updateCashExpense" : "saveCashExpense", {
-        cashId: uniqueId,
-        date: toSheetDate(document.getElementById("ce_date").value),
-        apt: document.getElementById("ce_apt").value,
-        amount: document.getElementById("ce_amount").value,
-        description: sanitizeInput(document.getElementById("ce_desc").value),
-        attachments: currentModalFiles.join(","),
-      }, editData, "cashexpenses")
-        .then(() => {
-          closeModal();
-          refreshData("cashexpenses");
-          showToast(isEdit ? "Expense updated" : "Expense saved", "success");
-        })
-        .catch(() => {
-          submit.disabled = false;
-          submit.classList.remove("loading");
-        });
-    };
-  }
-
   // ── APARTMENT ──
-  else if (type === "apartment") {
+  if (type === "apartment") {
     const currentUnit = getUnitNumber(editData);
     title.innerText = "Unit Profile: " + escapeHtml(currentUnit);
     if (isEdit && (editData.photos || editData.Photos))
@@ -948,140 +786,6 @@ async function openModal(type, editData = null) {
     };
   }
 
-  // ── WORK ORDER ──
-  else if (type === "workorder") {
-    const uniqueWO = isEdit
-      ? editData.workOrderId || editData.WorkOrderId
-      : await generateNextRecordId("WO", "WorkOrders", "workOrderId", cache.workorders || []);
-    const isApproved =
-      isEdit &&
-      String(editData.status || editData.Status || "").toUpperCase() ===
-        "APPROVED";
-    title.innerText = isEdit ? "Update Work Order" : "Create Work Order";
-    if (isEdit && (editData.attachments || editData.Attachments))
-      currentModalFiles = String(editData.attachments || editData.Attachments)
-        .split(",")
-        .filter(Boolean);
-    body.innerHTML = `
-      <label ${lbl}>Work Order ID</label><input value="${escapeHtml(uniqueWO)}" disabled ${ls} style="background:#e9ecef; font-weight:900;">
-      <label ${lbl}>Date</label><input id="w_date" type="date" value="${isEdit ? fromSheetDate(editData.date) : new Date().toISOString().split("T")[0]}" ${ls}>
-      <label ${lbl}>Target Unit</label><select id="w_apt" ${ls}></select>
-      <label ${lbl}>Asset (Optional)</label><select id="w_asset" ${ls}></select>
-      <label ${lbl}>Assigned To</label><select id="w_assigned" ${ls}></select>
-      <label ${lbl}>Expected Duration</label><input id="w_duration" value="${isEdit ? escapeHtml(editData.duration || editData.Duration || "") : ""}" placeholder="e.g. 3 days" ${ls}>
-      <label ${lbl}>Submitted Value (₦)</label><input id="w_submitted_val" type="number" value="${isEdit ? escapeHtml(editData.submittedValue || editData.SubmittedValue || "") : ""}" placeholder="Contractor's submitted amount" ${ls}>
-      <label ${lbl}>Negotiated Value (₦)</label><input id="w_amount" type="number" required value="${isEdit ? escapeHtml(editData.amount || editData.Amount || "") : ""}" placeholder="Approved/negotiated amount" ${ls} style="border-color:var(--primary); border-width:3px;">
-      <label ${lbl}>Approval Status</label>
-      <select id="w_status" ${ls} ${isApproved || !currentUserMeetsRole("manager") ? "disabled" : ""}>
-        ${["Pending Approval", "Approved", "Declined"].map((s) => `<option value="${s}" ${isEdit && String(editData.status || editData.Status || "") === s ? "selected" : ""}>${s}</option>`).join("")}
-      </select>
-      ${!currentUserMeetsRole("manager") ? `<small style="display:block; margin-top:-6px; color:var(--muted); font-weight:700;">Only managers can approve or decline Work Orders.</small>` : ""}
-      <label ${lbl}>Scope / Description</label><textarea id="w_desc" rows="3" ${ls}>${isEdit ? escapeHtml(editData.description || editData.Description || "") : ""}</textarea>
-      <label ${lbl}>Field Notes</label><textarea id="w_notes" rows="2" ${ls}>${isEdit ? escapeHtml(editData.notes || editData.Notes || "") : ""}</textarea>
-      <label ${lbl}>Form Attachments</label>
-      <div id="woPreviews" class="modal-preview-grid" style="display:none;"></div>
-      <label class="icon-upload-label"><i class="fas fa-paperclip"></i><input type="file" id="woCameraInput" accept="image/*,application/pdf" multiple style="display:none"></label>
-      ${isEdit ? `<div id="woLinkedPaymentsSection" style="margin-top:18px; padding-top:14px; border-top:2px dashed var(--border);"><label ${lbl}>Linked Payments</label><div id="woLinkedPaymentsList" style="max-height:200px; overflow-y:auto;"></div></div>` : ""}`;
-
-    populateUnitDropdown("w_apt", isEdit ? getUnitNumber(editData) : "");
-    const assetSel = document.getElementById("w_asset");
-    const populateAssets = (unitNum) => {
-      assetSel.innerHTML = '<option value="">-- No Specific Asset --</option>';
-      if (!unitNum) return;
-      (cache.assets || [])
-        .filter(
-          (a) =>
-            a &&
-            String(getUnitNumber(a)) === String(unitNum) &&
-            String(a.status || a.Status) !== "Archived",
-        )
-        .forEach((a) => {
-          const o = document.createElement("option");
-          o.value = a.tag || a.Tag;
-          o.textContent = `${a.type || "Asset"} (${a.tag || a.Tag})`;
-          if (
-            isEdit &&
-            String(editData.asset || editData.Asset) === String(o.value)
-          )
-            o.selected = true;
-          assetSel.appendChild(o);
-        });
-    };
-    setTimeout(
-      () => populateAssets(isEdit ? getUnitNumber(editData) : ""),
-      100,
-    );
-    document
-      .getElementById("w_apt")
-      .addEventListener("change", (e) => populateAssets(e.target.value));
-
-    const asSel = document.getElementById("w_assigned");
-    asSel.innerHTML = '<option value="">-- Choose Participant --</option>';
-    (cache.staff || []).forEach((s) => {
-      if (!s) return;
-      const o = document.createElement("option");
-      o.value = `${s.name || s.Name} (${s.role || s.Role})`;
-      o.textContent = `${s.name || s.Name} [Staff]`;
-      if (isEdit && (editData.assigned || editData.Assigned) === o.value)
-        o.selected = true;
-      asSel.appendChild(o);
-    });
-    (cache.vendors || []).forEach((v) => {
-      if (!v) return;
-      const o = document.createElement("option");
-      o.value = `${v.company || v.Company} (${v.trade || v.Trade})`;
-      o.textContent = `${v.company || v.Company} [Vendor]`;
-      if (isEdit && (editData.assigned || editData.Assigned) === o.value)
-        o.selected = true;
-      asSel.appendChild(o);
-    });
-
-    if (isEdit && currentModalFiles.length > 0)
-      populateModalInlineImageGalleryPreviews("woPreviews");
-    document.getElementById("woCameraInput").onchange = (e) =>
-      processIncomingMultiAttachments(e.target.files, "woPreviews");
-    if (isEdit) renderLinkedPaymentsForWorkOrder(uniqueWO);
-
-    if (isApproved) {
-      submit.style.display = "none";
-    } else {
-      submit.onclick = () => {
-        if (!document.getElementById("w_amount").value) {
-          showToast("Negotiated Value is required.", "error");
-          return;
-        }
-        submit.disabled = true;
-        submit.classList.add("loading");
-        submitModalRecord(isEdit ? "updateWorkOrder" : "saveWorkOrder", {
-          workOrderId: uniqueWO,
-          date: toSheetDate(document.getElementById("w_date").value),
-          apt: document.getElementById("w_apt").value,
-          asset: document.getElementById("w_asset").value,
-          assigned: asSel.value,
-          duration: sanitizeInput(document.getElementById("w_duration").value),
-          submittedValue: document.getElementById("w_submitted_val").value,
-          amount: document.getElementById("w_amount").value,
-          status: document.getElementById("w_status").value,
-          description: sanitizeInput(document.getElementById("w_desc").value),
-          notes: sanitizeInput(document.getElementById("w_notes").value),
-          attachments: currentModalFiles.join(","),
-        }, editData, "workorders")
-          .then(() => {
-            closeModal();
-            refreshData("workorders");
-            showToast(
-              isEdit ? "Work order updated" : "Work order saved",
-              "success",
-            );
-          })
-          .catch(() => {
-            submit.disabled = false;
-            submit.classList.remove("loading");
-          });
-      };
-    }
-  }
-
   // ── PAYMENT (STAGED) ──
   else if (type === "payment") {
     const uniqueId = isEdit
@@ -1137,31 +841,13 @@ async function openModal(type, editData = null) {
         inflowRefOpts += `<option value="${escapeHtml(val)}" ${isEdit && editData.reference === val ? "selected" : ""}>${escapeHtml(val)} - ${escapeHtml(a.tenant || "Vacant")}</option>`;
       }
     });
-    let outflowRefOpts = '<option value="">-- No Linked Record --</option>';
-    const approvedWOs = (cache.workorders || []).filter(
-      (w) =>
-        w && String(w.status || w.Status || "").toUpperCase() === "APPROVED",
-    );
-    const expReqs = cache.expenseRequests || [];
-    if (approvedWOs.length > 0) {
-      outflowRefOpts += '<optgroup label="Approved Work Orders">';
-      approvedWOs.forEach((w) => {
-        const wid = w.workOrderId || w.WorkOrderId;
-        outflowRefOpts += `<option value="${escapeHtml(wid)}" ${isEdit && editData.reference === wid ? "selected" : ""}>${escapeHtml(wid)} - ₦${formatMoney(w.amount)}</option>`;
-      });
-      outflowRefOpts += "</optgroup>";
-    }
-    if (expReqs.length > 0) {
-      outflowRefOpts += '<optgroup label="Expense Requests">';
-      expReqs.forEach((r) => {
-        if (!r) return;
-        outflowRefOpts += `<option value="${escapeHtml(r.reqId)}" ${isEdit && editData.reference === r.reqId ? "selected" : ""}>${escapeHtml(r.reqId)} - ₦${formatMoney(r.cost)}</option>`;
-      });
-      outflowRefOpts += "</optgroup>";
-    }
-    if (!approvedWOs.length && !expReqs.length)
-      outflowRefOpts +=
-        "<option disabled>⚠️ No Approved Records Available</option>";
+    // [FEATURE] Outflow payments used to optionally link to an approved
+    // Work Order or Expense Request — both features have since been
+    // removed, so there's nothing left to link an outflow payment to.
+    // Kept as a plain placeholder rather than removing the field
+    // entirely, since existing payment records may still have an old
+    // reference value worth preserving/displaying.
+    const outflowRefOpts = '<option value="">-- No Linked Record --</option>';
 
     body.innerHTML = `
       <label ${lbl}>Payment ID</label><input type="text" value="${escapeHtml(uniqueId)}" disabled ${ls} style="background:#e9ecef; font-weight:900;">
@@ -1187,11 +873,6 @@ async function openModal(type, editData = null) {
 
       <label ${lbl}>Linked Record</label>
       <select id="p_reference" ${ls} ${dis}></select>
-      ${
-        isEdit && (cache.workorders || []).some((w) => w && String(w.workOrderId || w.WorkOrderId || "") === String(editData.reference || editData.Reference || ""))
-          ? `<button type="button" data-modal-action="open-linked-work-order" data-id="${escapeHtml(editData.reference || editData.Reference || "")}" style="background:#f0f4ff; color:#4f46e5; border:2px solid #c7d2fe; border-radius:8px; padding:6px 12px; font-size:12px; font-weight:800; cursor:pointer; margin-top:-4px; margin-bottom:8px;"><i class="fas fa-diagram-project"></i> View Linked Work Order</button>`
-          : ""
-      }
 
       <label ${lbl}>Classification Note</label>
       <input id="p_type" value="${isEdit ? escapeHtml(editData.type || editData.Type || "") : ""}" placeholder="e.g. Rent, Vendor Payment" ${ls} ${dis}>

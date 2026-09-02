@@ -12,7 +12,6 @@ const filterList = debounce((pageType, query) => {
     apartments: "apt-list",
     assets: "asset-list",
     maintenance: "maint-list",
-    workorders: "wo-list",
     inventory: "inventory-list",
     payments: "payment-list",
     staff: "staff-list",
@@ -42,24 +41,20 @@ const GLOBAL_SEARCH_SOURCES = [
   { type: "apartment", key: "apts", idFn: (i) => getUnitNumber(i), titleFn: (i) => `Unit ${getUnitNumber(i)}`, subFn: (i) => i.tenant || i.Tenant || "" },
   { type: "asset", key: "assets", idFn: (i) => i.tag || i.Tag, titleFn: (i) => i.type || i.Type || i.tag || "Asset", subFn: (i) => i.loc || i.Loc || "" },
   { type: "maintenance", key: "tickets", idFn: (i) => i.ticketId || i.TicketId, titleFn: (i) => i.category || i.Category || "Ticket", subFn: (i) => i.description || i.Description || "" },
-  { type: "workorder", key: "workorders", idFn: (i) => i.workOrderId || i.WorkOrderId, titleFn: (i) => i.assigned || i.Assigned || "Work Order", subFn: (i) => i.description || i.Description || "" },
   { type: "inventory", key: "inventory", idFn: (i) => i.itemId || i.ItemId, titleFn: (i) => i.name || i.Name || "Item", subFn: (i) => i.category || i.Category || "" },
   { type: "vendor", key: "vendors", idFn: (i) => i.rowId || i.RowId, titleFn: (i) => i.company || i.Company || "Vendor", subFn: (i) => i.trade || i.Trade || "" },
   { type: "staff", key: "staff", idFn: (i) => i.rowId || i.RowId, titleFn: (i) => i.name || i.Name || "Staff", subFn: (i) => i.role || i.Role || "" },
   { type: "payment", key: "payments", idFn: (i) => i.paymentId || i.PaymentId, titleFn: (i) => i.party || i.Party || "Payment", subFn: (i) => i.reason || i.Reason || "" },
-  { type: "expenserequest", key: "expenseRequests", idFn: (i) => i.reqId, titleFn: (i) => i.job || i.Job || "Expense Request", subFn: (i) => `\u20a6${formatMoney(i.cost || i.Cost || 0)}` },
 ];
 
 const GLOBAL_SEARCH_TYPE_LABELS = {
   apartment: "Apartment",
   asset: "Asset",
   maintenance: "Ticket",
-  workorder: "Work Order",
   inventory: "Inventory",
   vendor: "Vendor",
   staff: "Staff",
   payment: "Payment",
-  expenserequest: "Expense Request",
 };
 
 const performGlobalSearch = debounce((rawQuery) => {
@@ -139,27 +134,6 @@ function handleRecordListClick(event) {
     case "open-record":
       openRecordRow(actionEl.dataset.recordType, id);
       break;
-    case "expense-create-wo":
-      processExpenseAction("CREATE_WO", id);
-      break;
-    case "expense-create-cash":
-      processExpenseAction("CREATE_CASH", id);
-      break;
-    case "expense-delete":
-      processExpenseAction("DELETE", id);
-      break;
-    case "print-expense-request":
-      printSingleExpenseRequestDirect(id);
-      break;
-    case "print-cash-expense":
-      printSingleCashExpenseDirect(id);
-      break;
-    case "print-work-order-text":
-      printSingleWorkOrderDirect(id, false);
-      break;
-    case "print-work-order-full":
-      printSingleWorkOrderDirect(id, true);
-      break;
     case "toggle-payment-request":
       togglePaymentRequestVisibility(id, actionEl);
       break;
@@ -187,48 +161,12 @@ function openRecordRow(type, lookupId) {
       find(cache.tickets, (i) => i.ticketId || i.TicketId || i.TICKETID),
     staff: () => find(cache.staff, (i) => i.rowId || i.RowId || i.ROWID),
     vendor: () => find(cache.vendors, (i) => i.rowId || i.RowId || i.ROWID),
-    workorder: () =>
-      find(
-        cache.workorders,
-        (i) => i.workOrderId || i.WorkOrderId || i.WORKORDERID,
-      ),
     payment: () => find(cache.payments, (i) => i.paymentId || i.PaymentId),
-    expenserequest: () => find(cache.expenseRequests, (i) => i.reqId),
-    cashexpense: () => find(cache.cashExpenses, (i) => i.cashId),
     utility: () => find(cache.utilities, (i) => i.rowId || i.id || i._tempId),
     generator: () => find(cache.utilities, (i) => i.rowId || i.id || i._tempId),
   };
   const match = matchers[type]?.();
   if (match) openModal(type, match);
-}
-
-// ─────────────────────────────────────────────
-// § EXPENSE ACTIONS
-// ─────────────────────────────────────────────
-function processExpenseAction(actionType, reqId) {
-  const req = cache.expenseRequests.find((r) => r && r.reqId === reqId);
-  if (!req) return;
-  if (actionType === "DELETE") {
-    if (confirm("Permanently delete this request?")) {
-      callApi("deleteExpenseRequest", { reqId }).then(() => {
-        showToast("Request deleted", "success");
-        refreshData("expenserequests");
-      });
-    }
-  } else if (actionType === "CREATE_WO") {
-    openModal("workorder", {
-      apt: req.apt,
-      description: req.job,
-      amount: req.cost,
-      asset: req.assetTag,
-    });
-  } else if (actionType === "CREATE_CASH") {
-    openModal("cashexpense", {
-      amount: req.cost,
-      description: req.job,
-      apt: req.apt,
-    });
-  }
 }
 
 // ─────────────────────────────────────────────
@@ -280,12 +218,9 @@ function refreshData(p) {
     utilities: "util-list",
     staff: "staff-list",
     vendors: "vendor-list",
-    workorders: "wo-list",
     inventory: "inventory-list",
     payments: "payment-list",
     archived: "archived-list",
-    expenserequests: "expense-req-list",
-    cashexpenses: "cash-expense-list",
   };
   const listEl = document.getElementById(idMap[p]);
   if (!listEl) return;
@@ -353,10 +288,7 @@ function refreshData(p) {
     vendors: "getVendors",
     staff: "getStaff",
     utilities: "getUtilities",
-    workorders: "getWorkOrders",
     payments: "getPayments",
-    expenserequests: "getExpenseRequests",
-    cashexpenses: "getCashExpenses",
   };
   const apiCmd = isMaint ? "getMaintenance" : apiCmdMap[p] || "getApartments";
 
@@ -369,11 +301,8 @@ function refreshData(p) {
     utilities: "utilities",
     staff: "staff",
     vendors: "vendors",
-    workorders: "workorders",
     inventory: "inventory",
     payments: "payments",
-    expenserequests: "expenseRequests",
-    cashexpenses: "cashExpenses",
   };
   const cacheKey = cacheKeyMap[p] || "apts";
   const hasCache = Array.isArray(cache[cacheKey]) && cache[cacheKey].length > 0;
@@ -428,29 +357,9 @@ function refreshData(p) {
         if (u && !u.rowId && !u.id) u._tempId = "UTIL-" + i;
       });
     }
-    if (p === "workorders") cache.workorders = displayData;
     if (p === "payments") {
       cache.payments = displayData;
-      if (!cache.cashExpenses || cache.cashExpenses.length === 0) {
-        callApi("getCashExpenses", {}).then((r) => {
-          cache.cashExpenses = Array.isArray(r) ? r : [];
-          renderTotalBalance();
-        });
-      } else {
-        renderTotalBalance();
-      }
-    }
-    if (p === "expenserequests") cache.expenseRequests = displayData;
-    if (p === "cashexpenses") {
-      cache.cashExpenses = displayData;
-      if (!cache.payments || cache.payments.length === 0) {
-        callApi("getPayments", {}).then((r) => {
-          cache.payments = Array.isArray(r) ? r : [];
-          renderTotalBalance();
-        });
-      } else {
-        renderTotalBalance();
-      }
+      renderTotalBalance();
     }
 
     // Apply local filters
@@ -468,14 +377,6 @@ function refreshData(p) {
           (item) => String(item.status || item.Status || "") === f.value,
         );
     }
-    if (p === "workorders") {
-      const f = document.getElementById("wo-status-filter");
-      if (f && f.value !== "ALL")
-        displayData = displayData.filter(
-          (item) => String(item.status || item.Status || "") === f.value,
-        );
-    }
-
     renderList(p, listEl, displayData);
     const emptyId = idMap[p].replace("-list", "-empty");
     const emptyEl = document.getElementById(emptyId);
@@ -532,35 +433,6 @@ function renderList(p, listEl, displayData) {
 function renderListCard(p, item, isMaintPage) {
   const unitId = escapeHtml(getUnitNumber(item));
 
-  if (p === "expenserequests") {
-    return `<div class="card">
-      <div style="display:flex; justify-content:space-between; align-items:start;" data-action="open-record" data-record-type="expenserequest" data-id="${escapeHtml(item.reqId)}">
-        <div><strong style="font-size:20px;">Unit ${unitId}</strong><br><small style="color:var(--muted); font-weight:700;">${escapeHtml(item.reqId)}</small></div>
-        <div style="font-size:20px; font-weight:900; color:var(--primary)">₦${formatMoney(item.cost)}</div>
-      </div>
-      <div style="font-size:15px; margin:8px 0; font-weight:600; color:#000;">${escapeHtml(item.job || "")}</div>
-      <div style="display:flex; gap:8px; margin-top:10px;">
-        <button data-action="expense-create-wo" data-id="${escapeHtml(item.reqId)}" style="flex:1; background:#000; color:#fff; padding:10px; border-radius:8px; font-weight:900; border:none; cursor:pointer; min-height:44px;">New WO</button>
-        <button data-action="expense-create-cash" data-id="${escapeHtml(item.reqId)}" style="flex:1; background:var(--primary); color:#fff; padding:10px; border-radius:8px; font-weight:900; border:none; cursor:pointer; min-height:44px;">Cash Exp</button>
-        <button data-action="expense-delete" data-id="${escapeHtml(item.reqId)}" style="background:var(--danger); color:#fff; padding:10px 15px; border-radius:8px; border:none; cursor:pointer; min-height:44px;" aria-label="Delete"><i class="fas fa-trash"></i></button>
-      </div>
-      <button data-action="print-expense-request" data-id="${escapeHtml(item.reqId)}" style="width:100%; margin-top:8px; background:var(--card-light); color:#000; border:2px solid var(--border); padding:10px; border-radius:8px; font-size:12px; font-weight:800; cursor:pointer; text-transform:uppercase; min-height:44px;"><i class="fas fa-print"></i> Print Request</button>
-    </div>`;
-  }
-
-  if (p === "cashexpenses") {
-    return `<div class="card" data-action="open-record" data-record-type="cashexpense" data-id="${escapeHtml(item.cashId)}">
-      <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:4px;">
-        <div><strong style="font-size:20px;">Unit ${unitId || "N/A"}</strong><br><small style="color:var(--muted); font-weight:700;">ID: ${escapeHtml(item.cashId)}</small></div>
-        <div style="display:flex; flex-direction:column; align-items:flex-end; gap:8px;">
-          <div style="text-align:right;"><span style="font-size:20px; font-weight:900; color:var(--danger);">-₦${formatMoney(item.amount)}</span><br><small style="font-size:11px; font-weight:700; color:var(--muted);">${formatDateForDisplay(item.date)}</small></div>
-          <button data-action="print-cash-expense" data-id="${escapeHtml(item.cashId)}" style="background:var(--primary); color:#fff; border:none; padding:6px 12px; border-radius:6px; font-size:11px; font-weight:800; cursor:pointer; text-transform:uppercase; min-height:32px;"><i class="fas fa-print"></i> Print</button>
-        </div>
-      </div>
-      <div style="font-size:15px; font-weight:600; color:#000;">${escapeHtml(item.description || "")}</div>
-    </div>`;
-  }
-
   if (isMaintPage) {
     const status = String(item.status || "").toLowerCase();
     return `<div class="card" data-action="open-record" data-record-type="maintenance" data-id="${escapeHtml(item.ticketId || item.TicketId)}">      <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:4px;">
@@ -569,35 +441,6 @@ function renderListCard(p, item, isMaintPage) {
       </div>
       <div style="font-size:16px; font-weight:800; color:var(--primary);">${escapeHtml(item.category || item.Category || "")}</div>
       <div style="font-size:15px; color:#000; font-weight:600;">${escapeHtml(item.description || item.Description || "")}</div>
-    </div>`;
-  }
-
-  if (p === "workorders") {
-    const woId = item.workOrderId || item.WorkOrderId;
-    const submittedPreview =
-      item.submittedValue || item.SubmittedValue
-        ? `<span style="font-size:13px; font-weight:700; color:var(--muted); text-decoration:line-through; margin-left:8px;">₦${formatMoney(item.submittedValue || item.SubmittedValue)}</span>`
-        : "";
-    const statusColor =
-      String(item.status || "") === "Approved"
-        ? "var(--success)"
-        : String(item.status || "") === "Declined"
-          ? "var(--danger)"
-          : "var(--warning)";
-    return `<div class="card" data-action="open-record" data-record-type="workorder" data-id="${escapeHtml(woId)}">
-      <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:4px;">
-        <div><strong style="font-size:20px;">Unit ${unitId}</strong><br><small style="color:var(--muted); font-weight:700;">${escapeHtml(woId)}</small></div>
-        <div style="display:flex; flex-direction:column; align-items:flex-end; gap:8px;">
-          <span style="padding:4px 10px; border:2px solid #000; border-radius:6px; font-size:12px; font-weight:900; background:${statusColor}; color:#fff;">${escapeHtml(String(item.status || "PENDING").toUpperCase())}</span>
-          <div style="display:flex; gap:5px;">
-            <button data-action="print-work-order-text" data-id="${escapeHtml(woId)}" style="background:var(--card-light); color:#000; border:2px solid var(--border); padding:6px 10px; border-radius:6px; font-size:11px; font-weight:800; cursor:pointer; min-height:32px;"><i class="fas fa-file-alt"></i> Text</button>
-            <button data-action="print-work-order-full" data-id="${escapeHtml(woId)}" style="background:var(--primary); color:#fff; border:none; padding:6px 10px; border-radius:6px; font-size:11px; font-weight:800; cursor:pointer; min-height:32px;"><i class="fas fa-paperclip"></i> Full</button>
-          </div>
-        </div>
-      </div>
-      <div style="display:flex; align-items:baseline; margin:4px 0;"><div style="font-size:18px; font-weight:900; color:var(--success)">₦${formatMoney(item.amount)}</div>${submittedPreview}</div>
-      ${item.assigned ? `<div style="font-size:14px; font-weight:700; color:var(--muted); margin-bottom:4px;"><i class="fas fa-user-check"></i> ${escapeHtml(item.assigned)} ${item.duration ? `• ${escapeHtml(item.duration)}` : ""}</div>` : ""}
-      <div style="font-size:15px; font-weight:600; color:#000;">${escapeHtml(item.description || item.Description || "")}</div>
     </div>`;
   }
 

@@ -322,9 +322,8 @@ function deleteServiceChargeLedgerEntry(entryId) {
 
 // ─────────────────────────────────────────────
 // § PETTY CASH (manager+ only — see checkBusinessPermission in
-// Code.gs). Independent of the Service Charge ledger and the older
-// CashExpenses feature (untouched) — its own sheet, its own running
-// balance. A Service Charge Apartment/Shared Expense can optionally
+// Code.gs). Independent of the Service Charge ledger — its own sheet,
+// its own running balance. A Service Charge Apartment/Shared Expense can optionally
 // also create a linked outflow here (see logApartmentExpense/
 // logSharedExpense in Code.gs) — that's the only point of contact
 // between the two systems; this section otherwise fetches/refreshes
@@ -658,12 +657,6 @@ function handleModalContentClick(event) {
       break;
     case "cancel-edit-maintenance-log":
       cancelEditMaintenanceLogEntry();
-      break;
-    case "open-linked-payment":
-      openLinkedPayment(id);
-      break;
-    case "open-linked-work-order":
-      openLinkedWorkOrderFromPayment(id);
       break;
     case "clear-avatar-photo":
       clearAvatarPhotoFrame();

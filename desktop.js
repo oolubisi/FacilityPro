@@ -33,14 +33,6 @@ const viewMeta = {
     newType: "maintenance",
     empty: "No tickets found.",
   },
-  workorders: {
-    title: "Work Orders",
-    kicker: "Approvals and payments",
-    key: "workorders",
-    action: "getWorkOrders",
-    newType: "workorder",
-    empty: "No work orders found.",
-  },
   inventory: {
     title: "Inventory",
     kicker: "Stock, tools & valuation — managers only",
@@ -62,22 +54,6 @@ const viewMeta = {
     action: "getPayments",
     newType: "payment",
     empty: "No payments found.",
-  },
-  expenserequests: {
-    title: "Expense Requests",
-    kicker: "Awaiting review",
-    key: "expenseRequests",
-    action: "getExpenseRequests",
-    newType: "expenserequest",
-    empty: "No expense requests found.",
-  },
-  cashexpenses: {
-    title: "Cash Expenses",
-    kicker: "Petty cash log",
-    key: "cashExpenses",
-    action: "getCashExpenses",
-    newType: "cashexpense",
-    empty: "No cash expenses found.",
   },
   staff: {
     title: "Staff",
@@ -456,16 +432,9 @@ function renderOverdueDigest() {
   const dueAssets = (cache.assets || []).filter(
     (a) => a && (String(a.status || a.Status || "") === "Faulty" || isMaintenanceDueSoon(a)),
   ).length;
-  const pendingWO = (cache.workorders || []).filter(
-    (w) => w && String(w.status || w.Status || "") === "Pending Approval",
-  ).length;
   const openTickets = (cache.tickets || []).filter(
     (t) => t && String(t.status || t.Status || "") !== "Resolved",
   ).length;
-  // ExpenseRequests have no status field — every request sits in this
-  // sheet until it's actioned (converted to a Work Order/Payment), so the
-  // full count is the meaningful "awaiting review" number.
-  const pendingExpenseRequests = (cache.expenseRequests || []).filter(Boolean).length;
   const leaseExpiryWindow = new Date(startOfToday());
   leaseExpiryWindow.setDate(leaseExpiryWindow.getDate() + 30);
   const expiringLeases = (cache.apts || []).filter((a) => {
@@ -478,14 +447,8 @@ function renderOverdueDigest() {
     dueAssets
       ? { count: dueAssets, label: `asset${dueAssets === 1 ? "" : "s"} need attention`, view: "assets" }
       : null,
-    pendingWO
-      ? { count: pendingWO, label: `work order${pendingWO === 1 ? "" : "s"} pending approval`, view: "workorders" }
-      : null,
     openTickets
       ? { count: openTickets, label: `ticket${openTickets === 1 ? "" : "s"} open`, view: "tickets" }
-      : null,
-    pendingExpenseRequests
-      ? { count: pendingExpenseRequests, label: `expense request${pendingExpenseRequests === 1 ? "" : "s"} awaiting review`, view: "expenserequests" }
       : null,
     expiringLeases
       ? { count: expiringLeases, label: `lease${expiringLeases === 1 ? "" : "s"} expiring within 30 days`, view: "apartments" }
@@ -517,20 +480,6 @@ const sectionedViewConfig = {
     sections: [
       { key: "pending", label: "Pending Payments" },
       { key: "cleared", label: "Cleared Payments" },
-    ],
-  },
-  workorders: {
-    classify: (item) => {
-      const s = String(item.status || item.Status || "");
-      if (s === "Pending Approval") return "pending";
-      if (s === "Approved") return "approved";
-      if (s === "Declined") return "declined";
-      return "other";
-    },
-    sections: [
-      { key: "pending", label: "Pending" },
-      { key: "approved", label: "Approved" },
-      { key: "declined", label: "Declined" },
     ],
   },
   apartments: {
@@ -759,10 +708,6 @@ function updateMetrics() {
     "metric-tickets",
     (cache.tickets || []).filter((item) => !isClosedStatus(item.status || item.Status)).length,
   );
-  setText(
-    "metric-workorders",
-    (cache.workorders || []).filter((item) => String(item.status || item.Status || "") === "Pending Approval").length,
-  );
 }
 
 function filterRecords(records) {
@@ -859,15 +804,6 @@ function getCardModel(view, item) {
     };
   }
 
-  if (view === "workorders") {
-    return {
-      title: item.assigned || item.Assigned || item.description || item.Description || "Work Order",
-      subtitle: item.description || item.Description || item.scope || item.Scope || item.asset || item.Asset || "",
-      meta: `ID: ${item.workOrderId || item.WorkOrderId || "N/A"} | ${item.status || item.Status || "Pending"}`,
-      tone: statusTone(item.status || item.Status || item.paidStatus),
-    };
-  }
-
   if (view === "vendors") {
     return {
       title: item.company || item.Company || item.name || item.Name || "Vendor",
@@ -877,32 +813,12 @@ function getCardModel(view, item) {
     };
   }
 
-  if (view === "expenserequests") {
-    return {
-      title: item.job || item.Job || item.reqId || item.ReqId || "Expense Request",
-      subtitle: [getUnitNumber(item) && `Unit ${getUnitNumber(item)}`, item.assetTag || item.AssetTag]
-        .filter(Boolean)
-        .join(" | "),
-      meta: `ID: ${item.reqId || item.ReqId || "N/A"} | ₦${formatMoney(item.cost || item.Cost || 0)}`,
-      tone: "",
-    };
-  }
-
   if (view === "staff") {
     return {
       title: item.name || item.Name || "Staff",
       subtitle: item.role || item.Role || "",
       meta: `ID: ${item.rowId || item.RowId || "N/A"}`,
       tone: "",
-    };
-  }
-
-  if (view === "cashexpenses") {
-    return {
-      title: item.description || item.Description || item.cashId || item.CashId || "Cash Expense",
-      subtitle: getUnitNumber(item) ? `Unit ${getUnitNumber(item)}` : "",
-      meta: `ID: ${item.cashId || item.CashId || "N/A"} | ₦${formatMoney(item.amount || item.Amount || 0)}`,
-      tone: "warning",
     };
   }
 

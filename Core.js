@@ -653,7 +653,7 @@ function getSyncConflictsHtml() {
   }
   return conflicts
     .map((c, i) => {
-      const label = c.data && (c.data.reqId || c.data.cashId || c.data.ticketId || c.data.workOrderId ||
+      const label = c.data && (c.data.reqId || c.data.cashId || c.data.ticketId ||
         c.data.paymentId || c.data.itemId || c.data.tag || c.data.rowId || c.data.logId || c.data.apt || c.action);
       return `
         <div style="border:2px solid #e0b34d; background:#fff8ea; border-radius:10px; padding:10px 12px; margin-top:8px;">
@@ -690,11 +690,8 @@ let cache = {
   staff: [],
   vendors: [],
   utilities: [],
-  workorders: [],
   inventory: [],
   payments: [],
-  expenseRequests: [],
-  cashExpenses: [],
   maintenanceLog: [],
 };
 
@@ -728,14 +725,11 @@ const CACHE_TO_PAYLOAD_KEY_MAP = {
   apts: "apartments",
   assets: "assets",
   tickets: "maintenance",
-  workorders: "workOrders",
   inventory: "inventory",
   staff: "staff",
   vendors: "vendors",
   utilities: "utilities",
   payments: "payments",
-  expenseRequests: "expenseRequests",
-  cashExpenses: "cashExpenses",
   maintenanceLog: "maintenanceLog",
 };
 
@@ -785,13 +779,10 @@ function hydrateCacheFromLocalBackup() {
     apts: "getApartments",
     assets: "getAssets",
     tickets: "getMaintenance",
-    workorders: "getWorkOrders",
     staff: "getStaff",
     vendors: "getVendors",
     utilities: "getUtilities",
     payments: "getPayments",
-    expenseRequests: "getExpenseRequests",
-    cashExpenses: "getCashExpenses",
   };
   let applied = false;
   Object.entries(legacyActionMap).forEach(([cacheKey, action]) => {
@@ -876,15 +867,6 @@ const CSV_EXPORT_COLUMNS = {
         r.isPaid === true || String(r.isPaid || r.IsPaid || "").toUpperCase() === "TRUE" ? "Yes" : "No",
     },
     { label: "Reference", value: (r) => r.reference || r.Reference || "" },
-    { label: "Created By", value: (r) => r.createdBy || r.CreatedBy || "" },
-    { label: "Last Updated", value: (r) => r.updatedAt || r.UpdatedAt || "" },
-  ],
-  expenserequests: [
-    { label: "Request ID", value: (r) => r.reqId || r.ReqId || "" },
-    { label: "Unit", value: (r) => getUnitNumber(r) },
-    { label: "Job", value: (r) => r.job || r.Job || "" },
-    { label: "Cost", value: (r) => r.cost || r.Cost || 0 },
-    { label: "Date", value: (r) => r.date || r.Date || "" },
     { label: "Created By", value: (r) => r.createdBy || r.CreatedBy || "" },
     { label: "Last Updated", value: (r) => r.updatedAt || r.UpdatedAt || "" },
   ],

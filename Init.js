@@ -387,15 +387,8 @@ function renderTotalBalance() {
     }
   });
 
-  // 5. CASH EXPENSES: sum of all Cash Expenses
-  let cashExpenses = 0;
-  (cache.cashExpenses || []).forEach((c) => {
-    if (!c) return;
-    cashExpenses += parseFloat(c.amount || c.Amount || 0);
-  });
-
-  // 6. NET POSITION
-  const netPosition = totalInflow - totalOutflow - cashExpenses;
+  // 5. NET POSITION
+  const netPosition = totalInflow - totalOutflow;
   const netColor = netPosition >= 0 ? "#198754" : "#dc3545";
 
   // ── RENDER ──
@@ -433,13 +426,9 @@ function renderTotalBalance() {
         <span style="${labelStyle}">Total Outflow</span>
         <span style="${amountStyle} color: #dc3545;">₦${formatMoney(totalOutflow)}</span>
       </div>
-      <div style="${rowStyle}">
+      <div style="${rowStyle} border-bottom: none;">
         <span style="${labelStyle}">Total Unpaid</span>
         <span style="${amountStyle} color: #fd7e14;">₦${formatMoney(totalUnpaid)}</span>
-      </div>
-      <div style="${rowStyle} border-bottom: none;">
-        <span style="${labelStyle}">Cash Expenses</span>
-        <span style="${amountStyle} color: #000;">₦${formatMoney(cashExpenses)}</span>
       </div>
       <div style="border-top: 2px solid #adb5bd; margin: 10px 0;"></div>
       <div style="${rowStyle} border-bottom: none; padding-bottom: 0;">
@@ -462,9 +451,6 @@ function updateDashboardCounters() {
   ).length;
   const maintCount = (cache.tickets || []).filter(
     (t) => t && String(t.status || t.Status || "") !== "Resolved",
-  ).length;
-  const woCount = (cache.workorders || []).filter(
-    (w) => w && String(w.status || w.Status || "") === "Pending Approval",
   ).length;
 
   const today = new Date();
@@ -491,7 +477,6 @@ function updateDashboardCounters() {
     ["s-tenancy", tenancyCount],
     ["s-asset", assetCount],
     ["count-maint", maintCount],
-    ["s-wo", woCount],
     ["s-pm-due", pmCombinedSum],
   ];
   idVals.forEach(([id, val]) => {
@@ -531,7 +516,6 @@ function renderDiagnosticsPanel() {
     Apartments: cache.apts.length,
     Assets: cache.assets.length,
     Tickets: cache.tickets.length,
-    "Work Orders": cache.workorders.length,
     Payments: cache.payments.length,
   };
   panel.innerHTML = `
@@ -574,8 +558,6 @@ function showPage(p) {
   const moreChildren = [
     "serviceunits",
     "utilities",
-    "expenserequests",
-    "cashexpenses",
     "payments",
     "staff",
     "vendors",

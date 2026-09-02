@@ -244,16 +244,6 @@
             </div>
             <div
               class="nav-card-small"
-              onclick="showPage('workorders')"
-              role="button"
-              tabindex="0"
-            >
-              <i class="fas fa-file-invoice-dollar"></i>
-              <div id="s-wo" class="count">--</div>
-              <small>Pending Work Orders</small>
-            </div>
-            <div
-              class="nav-card-small"
               onclick="showPage('serviceunits')"
               role="button"
               tabindex="0"
@@ -269,24 +259,6 @@
             >
               <i class="fas fa-bolt"></i>
               <small>Utilities & Plant</small>
-            </div>
-            <div
-              class="nav-card-small"
-              onclick="showPage('expenserequests')"
-              role="button"
-              tabindex="0"
-            >
-              <i class="fas fa-file-signature"></i>
-              <small>Expense Req</small>
-            </div>
-            <div
-              class="nav-card-small"
-              onclick="showPage('cashexpenses')"
-              role="button"
-              tabindex="0"
-            >
-              <i class="fas fa-money-bill-wave"></i>
-              <small>Cash Expenses</small>
             </div>
             <div
               class="nav-card-small"
@@ -520,120 +492,6 @@
           <div id="maint-empty" class="empty-state" style="display: none">
             <i class="fas fa-clipboard-list"></i>
             <p>No maintenance tickets</p>
-          </div>
-        </div>
-
-        <div id="view-workorders" class="page-view">
-          <div class="page-header">
-            <div class="header-group">
-              <button
-                class="home-btn"
-                onclick="showPage('dashboard')"
-                aria-label="Back to dashboard"
-              >
-                <i class="fas fa-home"></i>
-              </button>
-              <h2>Work Orders</h2>
-            </div>
-            <button
-              class="action-btn"
-              style="width: auto; padding: 10px 20px"
-              onclick="openModal('workorder')"
-            >
-              Add
-            </button>
-          </div>
-          <div style="margin-bottom: 15px">
-            <label>FILTER BY STATUS:</label>
-            <select id="wo-status-filter" onchange="refreshData('workorders')">
-              <option value="ALL">-- ALL RECORDS --</option>
-              <option value="Pending Approval">Pending Approval</option>
-              <option value="Approved">Approved</option>
-              <option value="Declined">Declined</option>
-            </select>
-          </div>
-          <div class="search-box">
-            <i class="fas fa-search search-icon"></i>
-            <input
-              type="text"
-              id="wo-search"
-              placeholder="Search work orders..."
-              oninput="filterList('workorders', this.value)"
-            />
-          </div>
-          <div id="wo-list"></div>
-          <div id="wo-empty" class="empty-state" style="display: none">
-            <i class="fas fa-file-invoice-dollar"></i>
-            <p>No work orders found</p>
-          </div>
-        </div>
-
-        <div id="view-expenserequests" class="page-view">
-          <div class="page-header">
-            <div class="header-group">
-              <button
-                class="home-btn"
-                onclick="showPage('dashboard')"
-                aria-label="Back to dashboard"
-              >
-                <i class="fas fa-home"></i>
-              </button>
-              <h2>Expense Requests</h2>
-            </div>
-            <div style="display:flex; gap:8px;">
-              <button
-                class="home-btn"
-                style="background: var(--success)"
-                onclick="exportViewAsCsv('expenserequests', cache.expenseRequests)"
-                aria-label="Export CSV"
-                title="Export CSV"
-              >
-                <i class="fas fa-file-csv"></i>
-              </button>
-              <button
-                class="action-btn"
-                style="width: auto; padding: 10px 20px"
-                onclick="openModal('expenserequest')"
-              >
-                Add
-              </button>
-            </div>
-          </div>
-          <div id="expense-req-list"></div>
-          <div id="expense-req-empty" class="empty-state" style="display: none">
-            <i class="fas fa-file-signature"></i>
-            <p>No expense requests</p>
-          </div>
-        </div>
-
-        <div id="view-cashexpenses" class="page-view">
-          <div class="page-header">
-            <div class="header-group">
-              <button
-                class="home-btn"
-                onclick="showPage('dashboard')"
-                aria-label="Back to dashboard"
-              >
-                <i class="fas fa-home"></i>
-              </button>
-              <h2>Cash Expenses</h2>
-            </div>
-            <button
-              class="action-btn"
-              style="width: auto; padding: 10px 20px"
-              onclick="openModal('cashexpense')"
-            >
-              Add
-            </button>
-          </div>
-          <div id="cash-expense-list"></div>
-          <div
-            id="cash-expense-empty"
-            class="empty-state"
-            style="display: none"
-          >
-            <i class="fas fa-money-bill-wave"></i>
-            <p>No cash expenses</p>
           </div>
         </div>
 

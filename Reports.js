@@ -43,25 +43,19 @@ async function loadReportDataBundle() {
     cache.apts = Array.isArray(bundled.apartments) ? bundled.apartments : [];
     cache.assets = Array.isArray(bundled.assets) ? bundled.assets : [];
     cache.tickets = Array.isArray(bundled.maintenance) ? bundled.maintenance : [];
-    cache.workorders = Array.isArray(bundled.workOrders) ? bundled.workOrders : [];
     cache.inventory = Array.isArray(bundled.inventory) ? bundled.inventory : [];
     cache.staff = Array.isArray(bundled.staff) ? bundled.staff : [];
     cache.vendors = Array.isArray(bundled.vendors) ? bundled.vendors : [];
     cache.utilities = Array.isArray(bundled.utilities) ? bundled.utilities : [];
     cache.payments = Array.isArray(bundled.payments) ? bundled.payments : [];
-    cache.expenseRequests = Array.isArray(bundled.expenseRequests) ? bundled.expenseRequests : [];
-    cache.cashExpenses = Array.isArray(bundled.cashExpenses) ? bundled.cashExpenses : [];
     return;
   }
   await Promise.all([
     callApi("getApartments", {}).then((r) => (cache.apts = Array.isArray(r) ? r : [])),
     callApi("getAssets", {}).then((r) => (cache.assets = Array.isArray(r) ? r : [])),
     callApi("getMaintenance", {}).then((r) => (cache.tickets = Array.isArray(r) ? r : [])),
-    callApi("getWorkOrders", {}).then((r) => (cache.workorders = Array.isArray(r) ? r : [])),
     callApi("getUtilities", {}).then((r) => (cache.utilities = Array.isArray(r) ? r : [])),
     callApi("getPayments", {}).then((r) => (cache.payments = Array.isArray(r) ? r : [])),
-    callApi("getExpenseRequests", {}).then((r) => (cache.expenseRequests = Array.isArray(r) ? r : [])),
-    callApi("getCashExpenses", {}).then((r) => (cache.cashExpenses = Array.isArray(r) ? r : [])),
   ]);
 }
 
@@ -267,7 +261,6 @@ function handleReportProfileSwitch() {
       ["ledger_summary", "Comprehensive Financial Ledger"],
       ["pending_outflow", "Pending Outflow"],
       ["ledger", "Ledger"],
-      ["fin_wo", "Approved Work Orders Ledger"],
       ["sc_overall", "Service Charge — Overall"],
       ["sc_per_apartment", "Service Charge — Per Apartment"],
       ["petty_cash", "Petty Cash Ledger"],
@@ -319,7 +312,6 @@ function handleReportLayoutSwitch() {
       "ledger_summary",
       "generator_log",
       "ticket_report",
-      "fin_wo",
       "pending_outflow",
     ].includes(layout)
   ) {
@@ -360,7 +352,6 @@ function handleReportLayoutSwitch() {
         <option value="">-- Select Ledger Type --</option>
         <option value="inflow_paid_pending">Inflow - Paid & Pending</option>
         <option value="outflow_paid_pending">Outflow - Paid & Pending</option>
-        <option value="cash_expenses">Cash Expenses</option>
       </select>
       <div style="display:flex; gap:10px; margin-top:10px;">
         <div style="flex:1;"><label>START DATE</label><input type="date" id="rep_start_date"></div>
@@ -640,18 +631,6 @@ async function compileReportPreview() {
     out += `<table style="width:100%; border-collapse:collapse; font-size:12px; page-break-inside:auto;"><thead style="display:table-header-group;"><tr style="background:#f4f4f4; -webkit-print-color-adjust:exact;"><th style="padding:8px 6px; border:1px solid #000;">Tag</th><th style="padding:8px 6px; border:1px solid #000;">Type</th><th style="padding:8px 6px; border:1px solid #000;">Location</th><th style="padding:8px 6px; border:1px solid #000;">Last Service</th><th style="padding:8px 6px; border:1px solid #000;">Next Service</th><th style="padding:8px 6px; border:1px solid #000;">PM Status</th></tr></thead><tbody>${rows || `<tr><td colspan="6" style="padding:10px; text-align:center;">No data.</td></tr>`}</tbody></table>`;
   } else if (layout === "ledger_summary") {
     // Handled above
-  } else if (layout === "fin_wo") {
-    out += generateTitleBar("APPROVED WORK ORDERS LEDGER");
-    const rows = (cache.workorders || [])
-      .filter(
-        (w) =>
-          w && String(w.status || w.Status || "").toUpperCase() === "APPROVED",
-      )
-      .map((w) => {
-        return `<tr><td style="padding:6px; border:1px solid #000; font-weight:bold;">${escapeHtml(w.workOrderId || w.WorkOrderId || "N/A")}</td><td style="padding:6px; border:1px solid #000;">${formatDateForDisplay(w.date || w.Date)}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(w.assigned || w.Assigned || "N/A")}</td><td style="padding:6px; border:1px solid #000; text-align:right; font-weight:bold;">N${formatMoney(w.amount || w.Amount || 0)}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(w.description || w.Description || "")}</td></tr>`;
-      })
-      .join("");
-    out += `<table style="width:100%; border-collapse:collapse; font-size:12px; page-break-inside:auto;"><thead style="display:table-header-group;"><tr style="background:#f4f4f4; -webkit-print-color-adjust:exact;"><th style="padding:8px 6px; border:1px solid #000;">WO ID</th><th style="padding:8px 6px; border:1px solid #000;">Date</th><th style="padding:8px 6px; border:1px solid #000;">Assigned</th><th style="padding:8px 6px; border:1px solid #000;">Amount</th><th style="padding:8px 6px; border:1px solid #000;">Description</th></tr></thead><tbody>${rows || `<tr><td colspan="5" style="padding:10px; text-align:center;">No approved work orders.</td></tr>`}</tbody></table>`;
   } else if (layout === "asset_register") {
     out += generateTitleBar("MASTER ASSET REGISTER");
     const rows = (cache.assets || [])
@@ -779,10 +758,6 @@ async function compileReportPreview() {
       const d = new Date(fromSheetDate(t.date || t.Date || "") || 0);
       return d >= targetDate && d < nextDay;
     });
-    const dayWorkOrders = (cache.workorders || []).filter((w) => {
-      const d = new Date(fromSheetDate(w.date || w.Date || "") || 0);
-      return d >= targetDate && d < nextDay;
-    });
     const dayUtilities = (cache.utilities || []).filter((u) => {
       const d = new Date(fromSheetDate(u.date || u.Date || "") || 0);
       return d >= targetDate && d < nextDay;
@@ -792,9 +767,6 @@ async function compileReportPreview() {
 
     out += `<h3 style="font-size:13px; font-weight:900; text-transform:uppercase; margin:15px 0 8px 0; border-bottom:1px solid #000; padding-bottom:4px;">Maintenance Tickets (${dayTickets.length})</h3>`;
     out += `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-bottom:15px;"><thead><tr style="background:#f4f4f4;"><th style="padding:6px; border:1px solid #000;">ID</th><th style="padding:6px; border:1px solid #000;">Unit</th><th style="padding:6px; border:1px solid #000;">Category</th><th style="padding:6px; border:1px solid #000;">Status</th></tr></thead><tbody>${dayTickets.map((t) => `<tr><td style="padding:6px; border:1px solid #ccc;">${escapeHtml(t.ticketId || t.TicketId)}</td><td style="padding:6px; border:1px solid #ccc;">${escapeHtml(getUnitNumber(t) || "N/A")}</td><td style="padding:6px; border:1px solid #ccc;">${escapeHtml(t.category || t.Category || "")}</td><td style="padding:6px; border:1px solid #ccc;">${escapeHtml(t.status || t.Status || "")}</td></tr>`).join("") || `<tr><td colspan="4" style="padding:10px; text-align:center;">No tickets</td></tr>`}</tbody></table>`;
-
-    out += `<h3 style="font-size:13px; font-weight:900; text-transform:uppercase; margin:15px 0 8px 0; border-bottom:1px solid #000; padding-bottom:4px;">Work Orders (${dayWorkOrders.length})</h3>`;
-    out += `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-bottom:15px;"><thead><tr style="background:#f4f4f4;"><th style="padding:6px; border:1px solid #000;">ID</th><th style="padding:6px; border:1px solid #000;">Unit</th><th style="padding:6px; border:1px solid #000;">Assigned</th><th style="padding:6px; border:1px solid #000;">Amount</th></tr></thead><tbody>${dayWorkOrders.map((w) => `<tr><td style="padding:6px; border:1px solid #ccc;">${escapeHtml(w.workOrderId || w.WorkOrderId)}</td><td style="padding:6px; border:1px solid #ccc;">${escapeHtml(getUnitNumber(w) || "N/A")}</td><td style="padding:6px; border:1px solid #ccc;">${escapeHtml(w.assigned || w.Assigned || "N/A")}</td><td style="padding:6px; border:1px solid #ccc; text-align:right;">N${formatMoney(w.amount || w.Amount || 0)}</td></tr>`).join("") || `<tr><td colspan="4" style="padding:10px; text-align:center;">No work orders</td></tr>`}</tbody></table>`;
 
     out += `<h3 style="font-size:13px; font-weight:900; text-transform:uppercase; margin:15px 0 8px 0; border-bottom:1px solid #000; padding-bottom:4px;">Utility Logs (${dayUtilities.length})</h3>`;
     out += `<table style="width:100%; border-collapse:collapse; font-size:12px;"><thead><tr style="background:#f4f4f4;"><th style="padding:6px; border:1px solid #000;">Unit</th><th style="padding:6px; border:1px solid #000;">Type</th><th style="padding:6px; border:1px solid #000;">Reading</th><th style="padding:6px; border:1px solid #000;">Amount</th></tr></thead><tbody>${dayUtilities.map((u) => `<tr><td style="padding:6px; border:1px solid #ccc;">${escapeHtml(getUnitNumber(u) || "N/A")}</td><td style="padding:6px; border:1px solid #ccc;">${escapeHtml(u.type || u.Type || "")}</td><td style="padding:6px; border:1px solid #ccc;">${escapeHtml(u.reading || u.Reading || "N/A")}</td><td style="padding:6px; border:1px solid #ccc; text-align:right;">N${formatMoney(u.amount || u.Amount || 0)}</td></tr>`).join("") || `<tr><td colspan="4" style="padding:10px; text-align:center;">No utility logs</td></tr>`}</tbody></table>`;
@@ -821,39 +793,21 @@ async function compileReportPreview() {
       const d = new Date(fromSheetDate(t.date || t.Date || "") || 0);
       return d >= monthStart && d <= monthEnd;
     });
-    const monthWO = (cache.workorders || []).filter((w) => {
-      const d = new Date(fromSheetDate(w.date || w.Date || "") || 0);
-      return d >= monthStart && d <= monthEnd;
-    });
     const monthPayments = (cache.payments || []).filter((p) => {
       const d = new Date(fromSheetDate(p.date || p.Date || "") || 0);
       return d >= monthStart && d <= monthEnd;
     });
 
-    const totalWOPending = monthWO.filter(
-      (w) =>
-        String(w.status || w.Status || "").toUpperCase() === "PENDING APPROVAL",
-    ).length;
-    const totalWOApproved = monthWO.filter(
-      (w) => String(w.status || w.Status || "").toUpperCase() === "APPROVED",
-    ).length;
     const totalInflow = monthPayments
       .filter((p) => p.direction === "INFLOW")
       .reduce((s, p) => s + parseFloat(p.amount || p.Amount || 0), 0);
     const totalOutflow = monthPayments
       .filter((p) => p.direction === "OUTFLOW")
       .reduce((s, p) => s + parseFloat(p.amount || p.Amount || 0), 0);
-    const cashExp = (cache.cashExpenses || []).filter((c) => {
-      const d = new Date(fromSheetDate(c.date || c.Date || "") || 0);
-      return d >= monthStart && d <= monthEnd;
-    }).reduce((s, c) => s + parseFloat(c.amount || c.Amount || 0), 0);
-    const netPosition = totalInflow - totalOutflow - cashExp;
+    const netPosition = totalInflow - totalOutflow;
 
     out += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:20px;">
       <div style="background:#e8f4fd; border:2px solid #0d6efd; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; color:#0d6efd; text-transform:uppercase;">Tickets Logged</div><div style="font-size:22px; font-weight:900;">${monthTickets.length}</div></div>
-      <div style="background:#e8f5e9; border:2px solid #198754; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; color:#198754; text-transform:uppercase;">Work Orders</div><div style="font-size:22px; font-weight:900;">${monthWO.length}</div></div>
-      <div style="background:#fdecea; border:2px solid #dc3545; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; color:#dc3545; text-transform:uppercase;">Pending WO</div><div style="font-size:22px; font-weight:900;">${totalWOPending}</div></div>
-      <div style="background:#fff8e1; border:2px solid #ffc107; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; color:#856404; text-transform:uppercase;">Approved WO</div><div style="font-size:22px; font-weight:900;">${totalWOApproved}</div></div>
     </div>`;
 
     out += `<div style="background:#f8f9fa; border:2px solid #000; border-radius:12px; padding:16px; margin-bottom:20px; text-align:center;">
@@ -861,15 +815,11 @@ async function compileReportPreview() {
         <div><div style="font-size:11px; font-weight:800; text-transform:uppercase; color:#198754;">Total Inflow</div><div style="font-size:20px; font-weight:900; color:#198754;">N${formatMoney(totalInflow)}</div></div>
         <div><div style="font-size:11px; font-weight:800; text-transform:uppercase; color:#dc3545;">Total Outflow</div><div style="font-size:20px; font-weight:900; color:#dc3545;">N${formatMoney(totalOutflow)}</div></div>
       </div>
-      <div style="font-size:12px; font-weight:800; margin-top:10px;">Cash Expenses Deducted: N${formatMoney(cashExp)}</div>
       <div style="border-top:1px solid #adb5bd; margin-top:10px; padding-top:10px;">
         <div style="font-size:11px; font-weight:800; text-transform:uppercase;">Net Position</div>
         <div style="font-size:24px; font-weight:900; color:${netPosition >= 0 ? "#198754" : "#dc3545"};">${netPosition >= 0 ? "" : "-"}N${formatMoney(Math.abs(netPosition))}</div>
       </div>
     </div>`;
-
-    out += `<h3 style="font-size:13px; font-weight:900; text-transform:uppercase; margin:15px 0 8px 0; border-bottom:1px solid #000; padding-bottom:4px;">Work Orders Detail</h3>`;
-    out += `<table style="width:100%; border-collapse:collapse; font-size:12px;"><thead><tr style="background:#f4f4f4;"><th style="padding:6px; border:1px solid #000;">ID</th><th style="padding:6px; border:1px solid #000;">Date</th><th style="padding:6px; border:1px solid #000;">Unit</th><th style="padding:6px; border:1px solid #000;">Status</th><th style="padding:6px; border:1px solid #000; text-align:right;">Amount</th></tr></thead><tbody>${monthWO.map((w) => `<tr><td style="padding:6px; border:1px solid #ccc;">${escapeHtml(w.workOrderId || w.WorkOrderId)}</td><td style="padding:6px; border:1px solid #ccc;">${formatDateForDisplay(w.date || w.Date)}</td><td style="padding:6px; border:1px solid #ccc;">${escapeHtml(getUnitNumber(w) || "N/A")}</td><td style="padding:6px; border:1px solid #ccc;">${escapeHtml(w.status || w.Status || "")}</td><td style="padding:6px; border:1px solid #ccc; text-align:right; font-weight:700;">N${formatMoney(w.amount || w.Amount || 0)}</td></tr>`).join("") || `<tr><td colspan="5" style="padding:10px; text-align:center;">No work orders</td></tr>`}</tbody></table>`;
   } else if (layout === "kpi_dashboard") {
     out += generateTitleBar("EXECUTIVE KPI DASHBOARD");
     const monthVal = document.getElementById("rep-param-month")?.value;
@@ -909,10 +859,6 @@ async function compileReportPreview() {
     const openTickets = (cache.tickets || []).filter(
       (t) => String(t.status || t.Status || "").toLowerCase() !== "resolved",
     ).length;
-    const pendingWO = (cache.workorders || []).filter(
-      (w) =>
-        String(w.status || w.Status || "").toUpperCase() === "PENDING APPROVAL",
-    ).length;
 
     const allPayments = cache.payments || [];
     const totalInflow = allPayments
@@ -921,10 +867,6 @@ async function compileReportPreview() {
     const totalOutflow = allPayments
       .filter((p) => p.direction === "OUTFLOW")
       .reduce((s, p) => s + parseFloat(p.amount || p.Amount || 0), 0);
-    const cashExp = (cache.cashExpenses || []).reduce(
-      (s, c) => s + parseFloat(c.amount || c.Amount || 0),
-      0,
-    );
 
     out += `<div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-bottom:20px;">
       <div style="background:#e8f4fd; border:2px solid #0d6efd; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; color:#0d6efd; text-transform:uppercase;">Occupancy Rate</div><div style="font-size:28px; font-weight:900;">${occupancyRate}%</div><div style="font-size:12px; color:#666;">${occupiedApts} / ${totalApts} units</div></div>
@@ -932,17 +874,15 @@ async function compileReportPreview() {
       <div style="background:#fff8e1; border:2px solid #ffc107; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; color:#856404; text-transform:uppercase;">Open Tickets</div><div style="font-size:28px; font-weight:900;">${openTickets}</div></div>
     </div>`;
 
-    out += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:20px;">
-      <div style="background:#f8f9fa; border:2px solid #000; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; text-transform:uppercase;">Pending Work Orders</div><div style="font-size:24px; font-weight:900;">${pendingWO}</div></div>
-      <div style="background:#e8f5e9; border:2px solid #198754; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; color:#198754; text-transform:uppercase;">Net Position</div><div style="font-size:24px; font-weight:900; color:${totalInflow - totalOutflow - cashExp >= 0 ? "#198754" : "#dc3545"};">${totalInflow - totalOutflow - cashExp >= 0 ? "" : "-"}N${formatMoney(Math.abs(totalInflow - totalOutflow - cashExp))}</div></div>
+    out += `<div style="display:grid; grid-template-columns:1fr; gap:12px; margin-bottom:20px;">
+      <div style="background:#e8f5e9; border:2px solid #198754; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; color:#198754; text-transform:uppercase;">Net Position</div><div style="font-size:24px; font-weight:900; color:${totalInflow - totalOutflow >= 0 ? "#198754" : "#dc3545"};">${totalInflow - totalOutflow >= 0 ? "" : "-"}N${formatMoney(Math.abs(totalInflow - totalOutflow))}</div></div>
     </div>`;
 
     out += `<div style="background:#fff; border:2px solid #000; border-radius:12px; padding:16px;">
       <h3 style="font-size:13px; font-weight:900; text-transform:uppercase; margin:0 0 10px 0; border-bottom:1px solid #ccc; padding-bottom:4px;">Financial Summary</h3>
       <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #e9ecef;"><span style="font-weight:700;">Total Inflow</span><span style="font-weight:900; color:#198754;">N${formatMoney(totalInflow)}</span></div>
       <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #e9ecef;"><span style="font-weight:700;">Total Outflow</span><span style="font-weight:900; color:#dc3545;">N${formatMoney(totalOutflow)}</span></div>
-      <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #e9ecef;"><span style="font-weight:700;">Cash Expenses</span><span style="font-weight:900;">N${formatMoney(cashExp)}</span></div>
-      <div style="display:flex; justify-content:space-between; padding:8px 0 0 0; margin-top:8px; border-top:2px solid #000;"><span style="font-weight:900; font-size:14px;">NET POSITION</span><span style="font-weight:900; font-size:18px; color:${totalInflow - totalOutflow - cashExp >= 0 ? "#198754" : "#dc3545"};">${totalInflow - totalOutflow - cashExp >= 0 ? "" : "-"}N${formatMoney(Math.abs(totalInflow - totalOutflow - cashExp))}</span></div>
+      <div style="display:flex; justify-content:space-between; padding:8px 0 0 0; margin-top:8px; border-top:2px solid #000;"><span style="font-weight:900; font-size:14px;">NET POSITION</span><span style="font-weight:900; font-size:18px; color:${totalInflow - totalOutflow >= 0 ? "#198754" : "#dc3545"};">${totalInflow - totalOutflow >= 0 ? "" : "-"}N${formatMoney(Math.abs(totalInflow - totalOutflow))}</span></div>
     </div>`;
 
     // [FEATURE] Every category in the financial breakdown above forms
@@ -955,7 +895,6 @@ async function compileReportPreview() {
         [
           { label: "Inflow", value: totalInflow, color: "#198754" },
           { label: "Outflow", value: totalOutflow, color: "#dc3545" },
-          { label: "Cash Expenses", value: cashExp, color: "#ffc107" },
         ],
         { valuePrefix: "N" },
       )}
@@ -1008,14 +947,11 @@ function getTotalRecordCount() {
     cache.apts,
     cache.assets,
     cache.tickets,
-    cache.workorders,
     cache.inventory,
     cache.staff,
     cache.vendors,
     cache.utilities,
     cache.payments,
-    cache.expenseRequests,
-    cache.cashExpenses,
   ].reduce((sum, list) => sum + (Array.isArray(list) ? list.length : 0), 0);
 }
 
@@ -1042,12 +978,6 @@ function buildDataQualityIssues() {
     if (!id) add("Maintenance", getUnitNumber(t), "Missing ticket ID", "High");
     if (!t.date && !t.Date) add("Maintenance", id, "Missing ticket date");
     if (!t.description && !t.Description) add("Maintenance", id, "Missing description");
-  });
-  (cache.workorders || []).forEach((w) => {
-    const id = w.workOrderId || w.WorkOrderId;
-    if (!id) add("Work Orders", getUnitNumber(w), "Missing work order ID", "High");
-    if (!w.assigned && !w.Assigned) add("Work Orders", id, "Missing assignee/vendor");
-    if (!w.amount && !w.Amount) add("Work Orders", id, "Missing negotiated amount");
   });
   (cache.payments || []).forEach((p) => {
     const id = p.paymentId || p.PaymentId;
@@ -1116,8 +1046,7 @@ function generateComprehensiveFinancialLedger() {
   let totalInflow = 0,
     totalOutflow = 0,
     pendingInflow = 0,
-    totalUnpaid = 0,
-    cashExpenses = 0;
+    totalUnpaid = 0;
 
   const inflowPaidRows = [];
   const inflowPendingRows = [];
@@ -1255,23 +1184,7 @@ function generateComprehensiveFinancialLedger() {
     }
   });
 
-  const cashExpenseRows = [];
-  (cache.cashExpenses || []).forEach((c) => {
-    if (!c) return;
-    const d = new Date(fromSheetDate(c.date || c.Date || "") || 0);
-    if (d < startDate || d > endDate) return;
-    const amt = parseFloat(c.amount || c.Amount || 0);
-    cashExpenses += amt;
-    cashExpenseRows.push({
-      id: c.cashId || c.CashId,
-      date: c.date || c.Date,
-      party: c.description || c.Description || "N/A",
-      amount: amt,
-      type: "Cash Expense",
-    });
-  });
-
-  const netPosition = totalInflow - totalOutflow - cashExpenses;
+  const netPosition = totalInflow - totalOutflow;
   const netColor = netPosition >= 0 ? "#198754" : "#dc3545";
 
   let out = `<div style="font-family:'Helvetica','Inter',sans-serif; color:#000; background:#fff; box-sizing:border-box; width:100%; max-width:900px; margin:0 auto; padding:0; line-height:1.4;">`;
@@ -1305,10 +1218,6 @@ function generateComprehensiveFinancialLedger() {
         <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #e9ecef;">
           <span style="font-size:14px; font-weight:800; text-transform:uppercase; color:#000; letter-spacing:0.3px;">Total Unpaid</span>
           <span style="font-size:16px; font-weight:900; font-family:'Inter',sans-serif; color:#fd7e14;">N${formatMoney(totalUnpaid)}</span>
-        </div>
-        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #e9ecef;">
-          <span style="font-size:14px; font-weight:800; text-transform:uppercase; color:#000; letter-spacing:0.3px;">Cash Expenses</span>
-          <span style="font-size:16px; font-weight:900; font-family:'Inter',sans-serif; color:#000;">N${formatMoney(cashExpenses)}</span>
         </div>
         <div style="border-top:2px solid #adb5bd; margin:10px 0;"></div>
         <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0;">
@@ -1358,7 +1267,6 @@ function generateComprehensiveFinancialLedger() {
   out += renderTable("3. Outflow", outflowPendingRows, "#fd7e14", true);
   out += renderTable("4. Inflow", inflowPaidRows, "#198754", false);
   out += renderTable("5. Inflow", inflowPendingRows, "#0d6efd", true);
-  out += renderTable("6. Cash Expenses", cashExpenseRows, "#000", false);
 
   out += `</div>`;
 
@@ -2267,41 +2175,6 @@ function generateLedgerReport(ledgerType) {
 
     out += renderTable("Outflow", paidRows, "#dc3545", false);
     out += renderTable("Outflow", pendingRows, "#fd7e14", true);
-  } else if (ledgerType === "cash_expenses") {
-    const rows = [];
-    let total = 0;
-
-    (cache.cashExpenses || []).forEach((c) => {
-      if (!c) return;
-      const d = new Date(fromSheetDate(c.date || c.Date || "") || 0);
-      if (d < startDate || d > endDate) return;
-      const amt = parseFloat(c.amount || c.Amount || 0);
-      total += amt;
-      rows.push({
-        id: c.cashId || c.CashId,
-        date: c.date || c.Date,
-        party: c.description || c.Description || "N/A",
-        amount: amt,
-        type: "Cash Expense",
-      });
-    });
-
-    out += `
-      <div style="border-bottom:2px solid #000; padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between; align-items:flex-end;">
-        <h2 style="margin:0; font-size:18px; font-weight:900; text-transform:uppercase;">CASH EXPENSES LEDGER</h2>
-        <div style="text-align:right; font-size:12px;">
-          <p style="margin:0; color:#555;">PERIOD:</p>
-          <p style="margin:2px 0 0 0; font-weight:bold;">${startDate.toLocaleDateString("en-GB")} &mdash; ${endDate.toLocaleDateString("en-GB")}</p>
-        </div>
-      </div>`;
-
-    out += `
-      <div style="background:#f8f9fa; border:2px solid #000; border-radius:12px; padding:14px; margin-bottom:20px; text-align:center;">
-        <div style="font-size:11px; font-weight:800; color:#000; text-transform:uppercase;">Total Cash Expenses</div>
-        <div style="font-size:22px; font-weight:900; color:#000;">N${formatMoney(total)}</div>
-      </div>`;
-
-    out += renderTable("Cash Expenses", rows, "#000", false);
   }
 
   out += `</div>`;
@@ -2310,7 +2183,6 @@ function generateLedgerReport(ledgerType) {
   const titleMap = {
     inflow_paid_pending: "Inflow Ledger",
     outflow_paid_pending: "Outflow Ledger",
-    cash_expenses: "Cash Expenses Ledger",
   };
   const wrapped = wrapReportContent(out, titleMap[ledgerType], ref, false);
   viewport.innerHTML = wrapped;
