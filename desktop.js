@@ -362,15 +362,17 @@ function renderDesktop() {
   const plantLogBtn = document.getElementById("new-plant-log-btn");
   if (plantLogBtn) plantLogBtn.style.display = desktopState.view === "utilities" ? "inline-flex" : "none";
 
-  // [FEATURE] Apartments/Assets counts now only show while actually
-  // viewing the Apartments dashboard, not persistently on every
-  // section — Open Tickets/Pending Work Orders are unaffected, since
-  // only these two were flagged as appearing "everywhere."
+  // [FEATURE] Apartments/Assets counts only show while viewing the
+  // Apartments dashboard; Open Tickets only shows while viewing
+  // Tickets itself — none of these persist across every section
+  // anymore.
   const isApartmentsView = desktopState.view === "apartments";
   const metricApartmentsBtn = document.getElementById("metric-apartments-btn");
   if (metricApartmentsBtn) metricApartmentsBtn.style.display = isApartmentsView ? "" : "none";
   const metricAssetsBtn = document.getElementById("metric-assets-btn");
   if (metricAssetsBtn) metricAssetsBtn.style.display = isApartmentsView ? "" : "none";
+  const metricTicketsBtn = document.getElementById("metric-tickets-btn");
+  if (metricTicketsBtn) metricTicketsBtn.style.display = desktopState.view === "tickets" ? "" : "none";
 
   if (desktopState.view === "reports") return renderReportShortcuts();
   if (desktopState.view === "settings") return renderSettingsShortcuts();
