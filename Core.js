@@ -786,7 +786,6 @@ function hydrateCacheFromLocalBackup() {
     assets: "getAssets",
     tickets: "getMaintenance",
     workorders: "getWorkOrders",
-    inventory: "getInventory",
     staff: "getStaff",
     vendors: "getVendors",
     utilities: "getUtilities",

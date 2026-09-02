@@ -460,9 +460,6 @@ function updateDashboardCounters() {
       String(a.status || a.Status || "") !== "Archived" &&
       String(a.archived || a.Archived || "") !== "Yes",
   ).length;
-  const invCount = (cache.inventory || []).filter(
-    (i) => i && String(i.archived || i.Archived || "") !== "Yes",
-  ).length;
   const maintCount = (cache.tickets || []).filter(
     (t) => t && String(t.status || t.Status || "") !== "Resolved",
   ).length;
@@ -493,7 +490,6 @@ function updateDashboardCounters() {
   const idVals = [
     ["s-tenancy", tenancyCount],
     ["s-asset", assetCount],
-    ["s-inv", invCount],
     ["count-maint", maintCount],
     ["s-wo", woCount],
     ["s-pm-due", pmCombinedSum],
@@ -537,7 +533,6 @@ function renderDiagnosticsPanel() {
     Tickets: cache.tickets.length,
     "Work Orders": cache.workorders.length,
     Payments: cache.payments.length,
-    Inventory: cache.inventory.length,
   };
   panel.innerHTML = `
     <div style="border:2px solid var(--border); border-radius:8px; padding:12px; background:#fff;">
@@ -605,6 +600,8 @@ function showPage(p) {
     refreshServiceChargeSection();
   } else if (p === "pettycash") {
     refreshPettyCashSection();
+  } else if (p === "inventory") {
+    refreshInventorySection();
   }
   else if (p === "help") renderMobileHelpContent();
   else if (p === "utilities") {

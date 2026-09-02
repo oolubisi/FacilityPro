@@ -1325,48 +1325,330 @@ async function openModal(type, editData = null) {
     };
   }
 
-  // ── INVENTORY ──
-  else if (type === "inventory") {
-    const uniqueItem = isEdit
-      ? editData.itemId || editData.ItemId
-      : await generateNextRecordId("INV", "Inventory", "itemId", cache.inventory);
-    title.innerText = isEdit
-      ? "Edit Stock Ledger Item"
-      : "Register New Inventory Item";
+  // ── INVENTORY: ITEM MASTER (create/edit) ──
+  else if (type === "inventoryitem") {
+    title.innerText = isEdit ? "Edit Inventory Item" : "New Inventory Item";
+    const itemType = isEdit ? editData.itemType || "consumable" : "consumable";
     body.innerHTML = `
-      <label ${lbl}>Item Code</label><input id="i_id" value="${escapeHtml(uniqueItem)}" disabled ${ls}>
-      <label ${lbl}>Item / Resource Name</label><input id="i_name" value="${isEdit ? escapeHtml(editData.name || editData.Name) : ""}" placeholder="e.g. Led Bulb 18W" ${ls}>
-      <label ${lbl}>Stock Quantity</label><input id="i_qty" type="number" value="${isEdit ? escapeHtml(editData.qty || editData.Qty) : "0"}" ${ls}>
-      <label ${lbl}>Category</label><input id="i_category" value="${isEdit ? escapeHtml(editData.category || editData.Category) : ""}" placeholder="e.g. Electrical" ${ls}>
-      <label ${lbl}>Restock Alert Threshold</label><input id="i_min" type="number" value="${isEdit ? escapeHtml(editData.minAlert || editData.MinAlert) : "5"}" ${ls}>
-      <label ${lbl}>Location Notes</label><textarea id="i_notes" rows="2" ${ls}>${isEdit ? escapeHtml(editData.notes || editData.Notes) : ""}</textarea>
-      <label ${lbl}>Archive State</label>
-      <select id="i_archived" ${ls}>
-        <option value="No" ${isEdit && String(editData.archived || editData.Archived) === "Yes" ? "" : "selected"}>Active</option>
-        <option value="Yes" ${isEdit && String(editData.archived || editData.Archived) === "Yes" ? "selected" : ""}>Archived</option>
-      </select>`;
+      ${isEdit ? `<div class="form-field span-3"><label ${lbl}>Item Code</label><input value="${escapeHtml(editData.itemCode)}" disabled ${ls}></div>` : ""}
+      <div class="form-field span-3"><label ${lbl}>Item Type</label>
+        <select id="ii_type" ${ls} onchange="document.getElementById('ii_tool_fields').style.display = this.value === 'tool' ? 'contents' : 'none';" ${isEdit ? "disabled" : ""}>
+          <option value="consumable" ${itemType === "consumable" ? "selected" : ""}>Consumable (tracked stock, used up & reordered)</option>
+          <option value="tool" ${itemType === "tool" ? "selected" : ""}>Tool / Equipment (durable, assigned to a custodian)</option>
+        </select>
+      </div>
+      <div class="form-field"><label ${lbl}>Name</label><input id="ii_name" value="${isEdit ? escapeHtml(editData.name || "") : ""}" placeholder="e.g. PTFE Tape" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Category</label><input id="ii_category" value="${isEdit ? escapeHtml(editData.category || "") : ""}" placeholder="e.g. Plumbing" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Sub-category</label><input id="ii_subcategory" value="${isEdit ? escapeHtml(editData.subCategory || "") : ""}" placeholder="e.g. Consumables" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Unit</label><input id="ii_unit" value="${isEdit ? escapeHtml(editData.unit || "") : ""}" placeholder="e.g. Roll, Pcs, Litre" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Minimum Qty</label><input id="ii_minqty" type="number" min="0" value="${isEdit ? escapeHtml(editData.minQty || 0) : "0"}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Reorder Level</label><input id="ii_reorderlevel" type="number" min="0" value="${isEdit ? escapeHtml(editData.reorderLevel || 0) : "0"}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Reorder Qty</label><input id="ii_reorderqty" type="number" min="0" value="${isEdit ? escapeHtml(editData.reorderQty || 0) : "0"}" ${ls}></div>
+      ${!isEdit ? `<div class="form-field"><label ${lbl}>Starting Unit Cost (₦)</label><input id="ii_unitcost" type="number" min="0" step="0.01" value="0" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Starting Qty</label><input id="ii_startqty" type="number" min="0" value="0" ${ls}></div>` : ""}
+      <div class="form-field"><label ${lbl}>Preferred Supplier</label><input id="ii_supplier" value="${isEdit ? escapeHtml(editData.preferredSupplier || "") : ""}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Lead Time (days)</label><input id="ii_leadtime" type="number" min="0" value="${isEdit ? escapeHtml(editData.leadTimeDays || 0) : "0"}" ${ls}></div>
+      <div class="form-field span-3"><label ${lbl}>Specification</label><input id="ii_spec" value="${isEdit ? escapeHtml(editData.specification || "") : ""}" placeholder='e.g. ½" × 10 m' ${ls}></div>
+      <div id="ii_tool_fields" style="display:${itemType === "tool" ? "contents" : "none"};">
+        <div class="form-field"><label ${lbl}>Asset Number</label><input id="ii_assetnumber" value="${isEdit ? escapeHtml(editData.assetNumber || "") : ""}" ${ls}></div>
+        <div class="form-field"><label ${lbl}>Location</label><input id="ii_location" value="${isEdit ? escapeHtml(editData.location || "") : ""}" ${ls}></div>
+        <div class="form-field"><label ${lbl}>Custodian</label><input id="ii_custodian" value="${isEdit ? escapeHtml(editData.custodian || "") : ""}" ${ls}></div>
+        <div class="form-field"><label ${lbl}>Condition</label><input id="ii_condition" value="${isEdit ? escapeHtml(editData.condition || "") : ""}" placeholder="e.g. Good, Needs Service" ${ls}></div>
+        <div class="form-field"><label ${lbl}>Purchase Date</label><input id="ii_purchasedate" type="date" value="${isEdit && editData.purchaseDate ? String(editData.purchaseDate).slice(0, 10) : ""}" ${ls}></div>
+        <div class="form-field"><label ${lbl}>Calibration Due (optional)</label><input id="ii_calibrationdue" type="date" value="${isEdit && editData.calibrationDue ? String(editData.calibrationDue).slice(0, 10) : ""}" ${ls}></div>
+      </div>
+      <div class="form-field span-3"><label ${lbl}>Status</label>
+        <select id="ii_status" ${ls}>
+          <option value="Active" ${!isEdit || editData.status === "Active" ? "selected" : ""}>Active</option>
+          <option value="Inactive" ${isEdit && editData.status === "Inactive" ? "selected" : ""}>Inactive</option>
+        </select>
+      </div>
+    `;
+
     submit.onclick = () => {
+      const name = sanitizeInput(document.getElementById("ii_name").value);
+      if (!name) {
+        showToast("Enter an item name.", "error");
+        return;
+      }
+      const payload = {
+        name,
+        category: sanitizeInput(document.getElementById("ii_category").value),
+        subCategory: sanitizeInput(document.getElementById("ii_subcategory").value),
+        unit: sanitizeInput(document.getElementById("ii_unit").value),
+        minQty: document.getElementById("ii_minqty").value,
+        reorderLevel: document.getElementById("ii_reorderlevel").value,
+        reorderQty: document.getElementById("ii_reorderqty").value,
+        preferredSupplier: sanitizeInput(document.getElementById("ii_supplier").value),
+        leadTimeDays: document.getElementById("ii_leadtime").value,
+        specification: sanitizeInput(document.getElementById("ii_spec").value),
+        itemType: document.getElementById("ii_type").value,
+        assetNumber: sanitizeInput(document.getElementById("ii_assetnumber").value),
+        location: sanitizeInput(document.getElementById("ii_location").value),
+        custodian: sanitizeInput(document.getElementById("ii_custodian").value),
+        condition: sanitizeInput(document.getElementById("ii_condition").value),
+        purchaseDate: document.getElementById("ii_purchasedate").value,
+        calibrationDue: document.getElementById("ii_calibrationdue").value,
+        status: document.getElementById("ii_status").value,
+      };
+      if (!isEdit) {
+        payload.unitCost = document.getElementById("ii_unitcost").value;
+        payload.currentQty = document.getElementById("ii_startqty").value;
+      } else {
+        payload.itemCode = editData.itemCode;
+      }
       submit.disabled = true;
       submit.classList.add("loading");
-      submitModalRecord(isEdit ? "updateInventory" : "saveInventory", {
-        itemId: uniqueItem,
-        name: sanitizeInput(document.getElementById("i_name").value),
-        qty: document.getElementById("i_qty").value,
-        category: sanitizeInput(document.getElementById("i_category").value),
-        minAlert: document.getElementById("i_min").value,
-        notes: sanitizeInput(document.getElementById("i_notes").value),
-        archived: document.getElementById("i_archived").value,
-      }, editData, "inventory")
-        .then(() => {
+      callApi(isEdit ? "updateInventoryItem" : "saveInventoryItem", payload)
+        .then((result) => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+          if (!result || result.status !== "success") {
+            showToast((result && result.message) || "Failed to save item.", "error");
+            return;
+          }
           closeModal();
-          refreshData("inventory");
-          showToast(isEdit ? "Item updated" : "Item registered", "success");
+          showToast(isEdit ? "Item updated." : `Item ${result.itemCode} created.`, "success");
+          if (typeof refreshInventorySection === "function") refreshInventorySection();
         })
         .catch(() => {
           submit.disabled = false;
           submit.classList.remove("loading");
         });
     };
+  }
+
+  // ── INVENTORY: RECEIVE STOCK ──
+  else if (type === "receivestock") {
+    title.innerText = "Receive Stock";
+    body.innerHTML = `
+      <div class="form-field span-3"><label ${lbl}>Item</label><select id="rs_item" ${ls}></select></div>
+      <div class="form-field"><label ${lbl}>Quantity</label><input id="rs_qty" type="number" min="0" step="0.01" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Unit Cost (₦)</label><input id="rs_cost" type="number" min="0" step="0.01" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Date</label><input id="rs_date" type="date" value="${getLocalDateString()}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Delivery Note</label><input id="rs_delivery" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Invoice Ref</label><input id="rs_invoice" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Person Receiving</label><input id="rs_recipient" ${ls}></div>
+    `;
+    populateInventoryItemDropdown("rs_item");
+
+    submit.onclick = () => {
+      const itemCode = document.getElementById("rs_item").value;
+      const qty = document.getElementById("rs_qty").value;
+      if (!itemCode || !qty || Number(qty) <= 0) {
+        showToast("Select an item and enter a positive quantity.", "error");
+        return;
+      }
+      submit.disabled = true;
+      submit.classList.add("loading");
+      callApi("receiveStock", {
+        itemCode,
+        quantity: qty,
+        unitCost: document.getElementById("rs_cost").value,
+        date: document.getElementById("rs_date").value,
+        deliveryNote: sanitizeInput(document.getElementById("rs_delivery").value),
+        invoiceRef: sanitizeInput(document.getElementById("rs_invoice").value),
+        personReceiving: sanitizeInput(document.getElementById("rs_recipient").value),
+      })
+        .then((result) => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+          if (!result || result.status !== "success") {
+            showToast((result && result.message) || "Failed to receive stock.", "error");
+            return;
+          }
+          closeModal();
+          showToast("Stock received.", "success");
+          if (typeof refreshInventorySection === "function") refreshInventorySection();
+        })
+        .catch(() => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+        });
+    };
+  }
+
+  // ── INVENTORY: ISSUE STOCK ──
+  else if (type === "issuestock") {
+    title.innerText = "Issue Stock";
+    body.innerHTML = `
+      <div class="form-field span-3" style="background:#f0f4ff; border:2px solid #c7d2fe; border-radius:10px; padding:10px 14px; margin-bottom:4px;">
+        <small style="font-weight:700; color:#4f46e5;"><i class="fas fa-diagram-project"></i> This item's cost is automatically moved into Service Charge — debited to the chosen apartment, or split by weight across occupied units if issued to Shared.</small>
+      </div>
+      <div class="form-field span-3"><label ${lbl}>Item</label><select id="is_item" ${ls}></select></div>
+      <div class="form-field"><label ${lbl}>Quantity</label><input id="is_qty" type="number" min="0" step="0.01" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Apartment</label><select id="is_apt" ${ls}></select></div>
+      <div class="form-field"><label ${lbl}>Date</label><input id="is_date" type="date" value="${getLocalDateString()}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Department</label><input id="is_department" placeholder="e.g. Maintenance" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Recipient</label><input id="is_recipient" placeholder="Who is taking this" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Maintenance Ticket (optional)</label><input id="is_ticket" ${ls}></div>
+      <div class="form-field span-3"><label ${lbl}>Purpose</label><input id="is_purpose" ${ls}></div>
+    `;
+    populateInventoryItemDropdown("is_item");
+    populateUnitDropdown("is_apt");
+    const isAptSelect = document.getElementById("is_apt");
+    if (isAptSelect && isAptSelect.options.length > 0) {
+      isAptSelect.options[0].value = "Shared";
+      isAptSelect.options[0].textContent = "Shared / Common Area";
+    }
+
+    submit.onclick = () => {
+      const itemCode = document.getElementById("is_item").value;
+      const qty = document.getElementById("is_qty").value;
+      const apt = document.getElementById("is_apt").value;
+      if (!itemCode || !qty || Number(qty) <= 0) {
+        showToast("Select an item and enter a positive quantity.", "error");
+        return;
+      }
+      if (!apt) {
+        showToast("Select an apartment (or Shared).", "error");
+        return;
+      }
+      submit.disabled = true;
+      submit.classList.add("loading");
+      callApi("issueStock", {
+        itemCode,
+        quantity: qty,
+        apt,
+        date: document.getElementById("is_date").value,
+        department: sanitizeInput(document.getElementById("is_department").value),
+        recipient: sanitizeInput(document.getElementById("is_recipient").value),
+        maintenanceTicket: sanitizeInput(document.getElementById("is_ticket").value),
+        purpose: sanitizeInput(document.getElementById("is_purpose").value),
+      })
+        .then((result) => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+          if (!result || result.status !== "success") {
+            showToast((result && result.message) || "Failed to issue stock.", "error");
+            return;
+          }
+          closeModal();
+          showToast(
+            result.serviceChargeLinked
+              ? "Stock issued and cost recorded to Service Charge."
+              : "Stock issued. (No Service Charge entry — item has no cost value.)",
+            "success",
+          );
+          if (result.serviceChargeWarning) {
+            showToast("Note: " + result.serviceChargeWarning, "warning");
+          }
+          if (typeof refreshInventorySection === "function") refreshInventorySection();
+        })
+        .catch(() => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+        });
+    };
+  }
+
+  // ── INVENTORY: STOCK ADJUSTMENT ──
+  else if (type === "adjuststock") {
+    title.innerText = "Stock Adjustment";
+    body.innerHTML = `
+      <div class="form-field span-3"><label ${lbl}>Item</label><select id="as_item" ${ls}></select></div>
+      <div class="form-field"><label ${lbl}>Quantity Adjustment</label><input id="as_delta" type="number" step="0.01" placeholder="e.g. -2 or 5" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Date</label><input id="as_date" type="date" value="${getLocalDateString()}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Reason</label>
+        <select id="as_reason" ${ls}>
+          <option value="Damaged">Damaged</option>
+          <option value="Expired">Expired</option>
+          <option value="Missing">Missing</option>
+          <option value="Counting Error">Counting Error</option>
+          <option value="Return">Return</option>
+          <option value="Correction">Correction</option>
+        </select>
+      </div>
+      <p style="font-size:12px; color:var(--muted); grid-column:span 3; margin:0;">Use a negative number for a reduction (damaged, expired, missing) and a positive number for an increase (return, correction).</p>
+    `;
+    populateInventoryItemDropdown("as_item");
+
+    submit.onclick = () => {
+      const itemCode = document.getElementById("as_item").value;
+      const delta = document.getElementById("as_delta").value;
+      if (!itemCode || !delta || Number(delta) === 0) {
+        showToast("Select an item and enter a non-zero adjustment.", "error");
+        return;
+      }
+      submit.disabled = true;
+      submit.classList.add("loading");
+      callApi("adjustStock", {
+        itemCode,
+        quantityDelta: delta,
+        date: document.getElementById("as_date").value,
+        reason: document.getElementById("as_reason").value,
+      })
+        .then((result) => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+          if (!result || result.status !== "success") {
+            showToast((result && result.message) || "Failed to adjust stock.", "error");
+            return;
+          }
+          closeModal();
+          showToast("Stock adjusted.", "success");
+          if (typeof refreshInventorySection === "function") refreshInventorySection();
+        })
+        .catch(() => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+        });
+    };
+  }
+
+  // ── INVENTORY: ITEM TIMELINE (view-only) ──
+  // "The most important screen" per the original spec — every
+  // receive/issue/adjustment for one item, chronological, with a
+  // running quantity balance after each event.
+  else if (type === "inventorytimeline") {
+    submit.style.display = "none";
+    title.innerText = `${editData.name || ""} — ${editData.itemCode || ""}`;
+
+    const movements = (lastFetchedInventoryMovements || [])
+      .filter((m) => m && String(m.itemCode) === String(editData.itemCode))
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    let running = 0;
+    const withBalance = movements.map((m) => {
+      running += Number(m.quantity) || 0;
+      return { ...m, runningQty: running };
+    });
+    const displayRows = [...withBalance].reverse();
+
+    const typeLabels = { receive: "Receive", issue: "Issue", adjustment: "Adjustment" };
+    const typeColors = { receive: "#198754", issue: "#dc3545", adjustment: "#fd7e14" };
+    const isTool = (editData.itemType || "consumable") === "tool";
+
+    const rowsHtml = displayRows.length
+      ? displayRows
+          .map((m) => {
+            const qtyDisplay = `${Number(m.quantity) >= 0 ? "+" : ""}${m.quantity} ${editData.unit || ""}`;
+            let detail = "";
+            if (m.movementType === "issue") detail = `${escapeHtml(m.apt || "")}${m.purpose ? " — " + escapeHtml(m.purpose) : ""}`;
+            else if (m.movementType === "receive") detail = `${escapeHtml(m.deliveryNote || "")}${m.invoiceRef ? " / " + escapeHtml(m.invoiceRef) : ""}`;
+            else if (m.movementType === "adjustment") detail = escapeHtml(m.reason || "");
+            return `<div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #eee;">
+              <div>
+                <span style="background:${typeColors[m.movementType] || "#666"}22; color:${typeColors[m.movementType] || "#666"}; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:800;">${typeLabels[m.movementType] || m.movementType}</span>
+                <span style="margin-left:8px; font-size:12px; color:#666;">${escapeHtml(formatDateForDisplay(m.date))}</span>
+                ${detail ? `<div style="font-size:12px; color:#666; margin-top:2px;">${detail}</div>` : ""}
+              </div>
+              <div style="text-align:right;">
+                <div style="font-weight:800; color:${Number(m.quantity) >= 0 ? "#198754" : "#dc3545"};">${qtyDisplay}</div>
+                <div style="font-size:11px; color:#666;">Balance: ${m.runningQty} ${escapeHtml(editData.unit || "")}</div>
+              </div>
+            </div>`;
+          })
+          .join("")
+      : `<p style="color:var(--muted); font-size:13px;">No movements recorded yet.</p>`;
+
+    body.innerHTML = `
+      <div class="form-field span-3" style="background:#f9f9f9; border-radius:8px; padding:12px;">
+        <strong>Current ${isTool ? "status" : "stock"}: ${isTool ? escapeHtml(editData.condition || "—") : (editData.currentQty || 0) + " " + escapeHtml(editData.unit || "")}</strong><br>
+        ${!isTool ? `<span style="font-size:12px; color:#666;">Weighted-avg unit cost: ₦${formatMoney(editData.unitCost || 0)}</span>` : `<span style="font-size:12px; color:#666;">Custodian: ${escapeHtml(editData.custodian || "—")} | Location: ${escapeHtml(editData.location || "—")}</span>`}
+      </div>
+      <div class="form-field span-3">${rowsHtml}</div>
+    `;
   }
 
   // ── UTILITY ──

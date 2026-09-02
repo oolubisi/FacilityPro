@@ -450,6 +450,173 @@ function deletePettyCashLedgerEntry(entryId) {
 }
 
 // ─────────────────────────────────────────────
+// § INVENTORY (manager+ only — see checkBusinessPermission in
+// Code.gs). Full replacement of the old basic Inventory feature —
+// deliberately not part of the cache/getAllData system, same
+// reasoning as Service Charge/Petty Cash: staff/viewer must never
+// receive this data at all. Issuing stock always automatically
+// creates a linked Service Charge entry server-side — nothing to wire
+// up client-side for that beyond the issue-stock form itself.
+// ─────────────────────────────────────────────
+let lastFetchedInventoryItems = [];
+let lastFetchedInventoryMovements = [];
+
+async function refreshInventorySection() {
+  const containerId = isDesktopShell() ? "desktop-inv-list" : "mobile-inv-list";
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  container.innerHTML = `<p style="color:var(--muted); font-size:13px;">Loading inventory...</p>`;
+  const [items, movements] = await Promise.all([
+    callApi("getInventoryItems", {}),
+    callApi("getInventoryMovements", {}),
+  ]);
+
+  if (!items || !Array.isArray(items)) {
+    container.innerHTML = `<p style="color:var(--danger); font-size:13px; font-weight:700;">${escapeHtml((items && items.message) || "Couldn't load inventory.")}</p>`;
+    return;
+  }
+
+  lastFetchedInventoryItems = items;
+  lastFetchedInventoryMovements = Array.isArray(movements) ? movements : [];
+  renderInventoryDashboard();
+  renderInventoryItemList(container, items);
+}
+
+function renderInventoryDashboard() {
+  const summaryId = isDesktopShell() ? "desktop-inv-summary" : "mobile-inv-summary";
+  const el = document.getElementById(summaryId);
+  if (!el) return;
+
+  // Dashboard metrics are scoped to consumables — tools don't have a
+  // stock quantity/reorder concept, so counting them toward "low
+  // stock"/"out of stock" etc wouldn't mean anything.
+  const items = lastFetchedInventoryItems || [];
+  const consumables = items.filter((i) => i && (i.itemType || "consumable") === "consumable");
+  const totalItems = items.length;
+  const inStock = consumables.filter((i) => Number(i.currentQty) > 0).length;
+  const lowStock = consumables.filter((i) => {
+    const qty = Number(i.currentQty) || 0;
+    const min = Number(i.minQty) || 0;
+    return qty > 0 && qty <= min;
+  }).length;
+  const outOfStock = consumables.filter((i) => (Number(i.currentQty) || 0) <= 0).length;
+  // "Awaiting purchase" is a DISTINCT, earlier threshold than "low
+  // stock" — reorderLevel is meant to trigger a purchase before
+  // minQty is actually reached, giving lead time to restock.
+  const awaitingPurchase = consumables.filter((i) => {
+    const qty = Number(i.currentQty) || 0;
+    const level = Number(i.reorderLevel) || 0;
+    return level > 0 && qty <= level;
+  }).length;
+  const stockValue = consumables.reduce(
+    (sum, i) => sum + (Number(i.currentQty) || 0) * (Number(i.unitCost) || 0),
+    0,
+  );
+
+  el.innerHTML = `
+    <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:16px;">
+      <div style="background:#fff; border:2px solid #000; border-radius:12px; padding:12px;">
+        <div style="font-size:10px; font-weight:900; text-transform:uppercase; color:var(--muted);">Total Items</div>
+        <div style="font-size:20px; font-weight:900;">${totalItems}</div>
+      </div>
+      <div style="background:#fff; border:2px solid #000; border-radius:12px; padding:12px;">
+        <div style="font-size:10px; font-weight:900; text-transform:uppercase; color:var(--muted);">In Stock</div>
+        <div style="font-size:20px; font-weight:900; color:#198754;">${inStock}</div>
+      </div>
+      <div style="background:#fff; border:2px solid #000; border-radius:12px; padding:12px;">
+        <div style="font-size:10px; font-weight:900; text-transform:uppercase; color:var(--muted);">Low Stock</div>
+        <div style="font-size:20px; font-weight:900; color:#fd7e14;">${lowStock}</div>
+      </div>
+      <div style="background:#fff; border:2px solid #000; border-radius:12px; padding:12px;">
+        <div style="font-size:10px; font-weight:900; text-transform:uppercase; color:var(--muted);">Out of Stock</div>
+        <div style="font-size:20px; font-weight:900; color:#dc3545;">${outOfStock}</div>
+      </div>
+      <div style="background:#fff; border:2px solid #000; border-radius:12px; padding:12px;">
+        <div style="font-size:10px; font-weight:900; text-transform:uppercase; color:var(--muted);">Awaiting Purchase</div>
+        <div style="font-size:20px; font-weight:900; color:#dc3545;">${awaitingPurchase}</div>
+      </div>
+      <div style="background:#fff; border:2px solid #000; border-radius:12px; padding:12px;">
+        <div style="font-size:10px; font-weight:900; text-transform:uppercase; color:var(--muted);">Stock Value</div>
+        <div style="font-size:15px; font-weight:900;">₦${formatMoney(stockValue)}</div>
+      </div>
+    </div>
+  `;
+}
+
+function populateInventoryItemDropdown(selectId, currentValue) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  sel.innerHTML = '<option value="">-- Choose Item --</option>';
+  (lastFetchedInventoryItems || [])
+    .filter((i) => i && (i.itemType || "consumable") === "consumable")
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")))
+    .forEach((item) => {
+      const opt = document.createElement("option");
+      opt.value = item.itemCode;
+      opt.textContent = `${item.name} (${item.itemCode}) — ${item.currentQty || 0} ${item.unit || ""} in stock`;
+      if (currentValue && String(item.itemCode) === String(currentValue)) opt.selected = true;
+      sel.appendChild(opt);
+    });
+}
+
+function renderInventoryItemList(container, items) {
+  const sorted = [...items].sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+
+  if (sorted.length === 0) {
+    container.innerHTML = `<p style="color:var(--muted); font-size:13px;">No items yet.</p>`;
+    return;
+  }
+
+  container.innerHTML = `<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:13px;">
+    <thead><tr style="border-bottom:2px solid #000; text-align:left;">
+      <th style="padding:8px 6px;">Code</th>
+      <th style="padding:8px 6px;">Item</th>
+      <th style="padding:8px 6px;">Category</th>
+      <th style="padding:8px 6px; text-align:right;">Qty</th>
+      <th style="padding:8px 6px; text-align:right;">Unit Cost</th>
+      <th style="padding:8px 6px;">Status</th>
+      <th style="padding:8px 6px;"></th>
+    </tr></thead>
+    <tbody>
+      ${sorted
+        .map((item) => {
+          const qty = Number(item.currentQty) || 0;
+          const min = Number(item.minQty) || 0;
+          const level = Number(item.reorderLevel) || 0;
+          const isTool = (item.itemType || "consumable") === "tool";
+          let stockBadge = "";
+          if (!isTool) {
+            if (qty <= 0) stockBadge = `<span style="color:#dc3545; font-weight:800; font-size:11px;">OUT OF STOCK</span>`;
+            else if (qty <= min) stockBadge = `<span style="color:#fd7e14; font-weight:800; font-size:11px;">LOW</span>`;
+            else if (level > 0 && qty <= level) stockBadge = `<span style="color:#dc3545; font-weight:800; font-size:11px;">REORDER</span>`;
+            else stockBadge = `<span style="color:#198754; font-weight:800; font-size:11px;">OK</span>`;
+          }
+          return `<tr style="border-bottom:1px solid #eee; cursor:pointer;" data-modal-action="view-inventory-item-timeline" data-id="${escapeHtml(item.itemCode)}">
+            <td style="padding:6px; font-weight:800;">${escapeHtml(item.itemCode)}</td>
+            <td style="padding:6px;">${escapeHtml(item.name || "")}${isTool ? ` <span style="color:var(--muted); font-size:11px;">(Tool)</span>` : ""}</td>
+            <td style="padding:6px;">${escapeHtml(item.category || "")}</td>
+            <td style="padding:6px; text-align:right; font-weight:700;">${isTool ? "—" : qty + " " + escapeHtml(item.unit || "")}</td>
+            <td style="padding:6px; text-align:right;">${isTool ? "—" : "₦" + formatMoney(item.unitCost || 0)}</td>
+            <td style="padding:6px;">${stockBadge}</td>
+            <td style="padding:6px; text-align:right;"><i class="fas fa-chevron-right" style="color:var(--muted);"></i></td>
+          </tr>`;
+        })
+        .join("")}
+    </tbody>
+  </table></div>`;
+}
+
+function viewInventoryItemTimeline(itemCode) {
+  const item = (lastFetchedInventoryItems || []).find((i) => String(i.itemCode) === String(itemCode));
+  if (!item) {
+    showToast("Item not found.", "error");
+    return;
+  }
+  openModal("inventorytimeline", item);
+}
+
+// ─────────────────────────────────────────────
 // § DELEGATED CLICK HANDLING (modal body)
 // #modalBody markup (here and in Modals-forms.js) uses data-modal-action
 // attributes instead of inline onclick="..." strings, matching the
@@ -504,6 +671,9 @@ function handleModalContentClick(event) {
       break;
     case "delete-petty-cash-entry":
       deletePettyCashLedgerEntry(actionEl.dataset.id);
+      break;
+    case "view-inventory-item-timeline":
+      viewInventoryItemTimeline(actionEl.dataset.id);
       break;
   }
 }

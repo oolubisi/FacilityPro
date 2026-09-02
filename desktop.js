@@ -43,11 +43,9 @@ const viewMeta = {
   },
   inventory: {
     title: "Inventory",
-    kicker: "Stores and materials",
-    key: "inventory",
-    action: "getInventory",
-    newType: "inventory",
-    empty: "No inventory items found.",
+    kicker: "Stock, tools & valuation — managers only",
+    key: "inventory", // not a real cache key — renderDesktop() special-cases this view
+    empty: "",
   },
   vendors: {
     title: "Vendors",
@@ -412,6 +410,7 @@ function renderDesktop() {
   if (desktopState.view === "archived") return renderArchivedShortcuts();
   if (desktopState.view === "servicecharge") return renderServiceChargeShortcuts();
   if (desktopState.view === "pettycash") return renderPettyCashShortcuts();
+  if (desktopState.view === "inventory") return renderInventoryShortcuts();
 
   const records = sortRecords(desktopState.view, filterRecords(cache[meta.key] || []));
   desktopState.lastRecords = records;
@@ -877,15 +876,6 @@ function getCardModel(view, item) {
     };
   }
 
-  if (view === "inventory") {
-    return {
-      title: item.name || item.Name || item.item || item.Item || "Inventory Item",
-      subtitle: item.category || item.Category || "Stores",
-      meta: `ID: ${item.itemId || item.ItemId || "N/A"} | Qty: ${item.qty || item.Qty || 0}`,
-      tone: Number(item.qty || item.Qty || 0) <= 0 ? "warning" : "",
-    };
-  }
-
   if (view === "vendors") {
     return {
       title: item.company || item.Company || item.name || item.Name || "Vendor",
@@ -1103,7 +1093,6 @@ function renderArchivedShortcuts() {
       <select id="archive-segment-filter">
         <option value="ALL">-- ALL ARCHIVED RECORDS --</option>
         <option value="assets">Assets</option>
-        <option value="inventory">Inventory</option>
         <option value="staff">Staff</option>
         <option value="vendors">Vendors</option>
       </select>
@@ -1162,6 +1151,27 @@ function renderPettyCashShortcuts() {
     </div>
   `;
   refreshPettyCashSection();
+}
+
+function renderInventoryShortcuts() {
+  document.getElementById("record-count").textContent = "";
+  document.getElementById("card-grid").innerHTML = `
+    <div id="desktop-inv-summary" style="grid-column:1/-1;"></div>
+    <div class="desktop-form-card" style="grid-column:1/-1;">
+      <h3 style="margin:0 0 12px; font-size:15px;">Actions</h3>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="action-btn" style="width:auto; background:var(--blue);" onclick="openModal('inventoryitem')"><i class="fas fa-plus"></i> New Item</button>
+        <button class="action-btn" style="width:auto; background:var(--green);" onclick="openModal('receivestock')"><i class="fas fa-arrow-down"></i> Receive Stock</button>
+        <button class="action-btn" style="width:auto; background:var(--red);" onclick="openModal('issuestock')"><i class="fas fa-arrow-up"></i> Issue Stock</button>
+        <button class="action-btn" style="width:auto; background:#fd7e14;" onclick="openModal('adjuststock')"><i class="fas fa-sliders"></i> Stock Adjustment</button>
+      </div>
+    </div>
+    <div class="desktop-form-card" style="grid-column:1/-1;">
+      <h3 style="margin:0 0 12px; font-size:15px;">Items</h3>
+      <div id="desktop-inv-list"></div>
+    </div>
+  `;
+  refreshInventorySection();
 }
 
 function renderHelpView() {

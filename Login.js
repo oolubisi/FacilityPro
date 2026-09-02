@@ -80,6 +80,10 @@ function applyRoleBasedUIVisibility() {
     if (desktopPcNav) desktopPcNav.style.display = "none";
     const dashboardPcTile = document.getElementById("dashboard-pettycash-tile");
     if (dashboardPcTile) dashboardPcTile.style.display = "none";
+    const desktopInvNav = document.getElementById("desktop-inventory-nav");
+    if (desktopInvNav) desktopInvNav.style.display = "none";
+    const dashboardInvTile = document.getElementById("dashboard-inventory-tile");
+    if (dashboardInvTile) dashboardInvTile.style.display = "none";
   }
 }
 

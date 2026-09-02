@@ -157,13 +157,13 @@
             </div>
             <div
               class="nav-card"
+              id="dashboard-inventory-tile"
               onclick="showPage('inventory')"
               role="button"
               tabindex="0"
               aria-label="Inventory"
             >
               <i class="fas fa-boxes"></i>
-              <div id="s-inv" class="count">--</div>
               <small>Inventory</small>
             </div>
             <div
@@ -649,27 +649,63 @@
               </button>
               <h2>Inventory</h2>
             </div>
+          </div>
+
+          <div id="mobile-inv-summary"></div>
+
+          <div class="card">
+            <h4
+              style="
+                font-weight: 800;
+                text-transform: uppercase;
+                margin-bottom: 10px;
+                color: var(--primary);
+              "
+            >
+              Actions
+            </h4>
             <button
               class="action-btn"
-              style="width: auto; padding: 10px 20px"
-              onclick="openModal('inventory')"
+              style="background: var(--primary); margin-bottom: 8px"
+              onclick="openModal('inventoryitem')"
             >
-              Add
+              <i class="fas fa-plus"></i> New Item
+            </button>
+            <button
+              class="action-btn"
+              style="background: var(--success); margin-bottom: 8px"
+              onclick="openModal('receivestock')"
+            >
+              <i class="fas fa-arrow-down"></i> Receive Stock
+            </button>
+            <button
+              class="action-btn"
+              style="background: var(--danger); margin-bottom: 8px"
+              onclick="openModal('issuestock')"
+            >
+              <i class="fas fa-arrow-up"></i> Issue Stock
+            </button>
+            <button
+              class="action-btn"
+              style="background: #fd7e14"
+              onclick="openModal('adjuststock')"
+            >
+              <i class="fas fa-sliders"></i> Stock Adjustment
             </button>
           </div>
-          <div class="search-box">
-            <i class="fas fa-search search-icon"></i>
-            <input
-              type="text"
-              id="inventory-search"
-              placeholder="Search inventory..."
-              oninput="filterList('inventory', this.value)"
-            />
-          </div>
-          <div id="inventory-list"></div>
-          <div id="inventory-empty" class="empty-state" style="display: none">
-            <i class="fas fa-boxes"></i>
-            <p>No inventory items</p>
+
+          <div class="card" style="margin-top: 15px">
+            <h4
+              style="
+                font-weight: 800;
+                text-transform: uppercase;
+                margin-bottom: 10px;
+                color: var(--primary);
+              "
+            >
+              Items
+            </h4>
+            <div id="mobile-inv-list"></div>
           </div>
         </div>
 

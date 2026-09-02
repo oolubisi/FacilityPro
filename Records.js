@@ -192,8 +192,6 @@ function openRecordRow(type, lookupId) {
         cache.workorders,
         (i) => i.workOrderId || i.WorkOrderId || i.WORKORDERID,
       ),
-    inventory: () =>
-      find(cache.inventory, (i) => i.itemId || i.ItemId || i.ITEMID),
     payment: () => find(cache.payments, (i) => i.paymentId || i.PaymentId),
     expenserequest: () => find(cache.expenseRequests, (i) => i.reqId),
     cashexpense: () => find(cache.cashExpenses, (i) => i.cashId),
@@ -297,8 +295,7 @@ function refreshData(p) {
     const hasArchiveCache =
       (cache.assets && cache.assets.length) ||
       (cache.staff && cache.staff.length) ||
-      (cache.vendors && cache.vendors.length) ||
-      (cache.inventory && cache.inventory.length);
+      (cache.vendors && cache.vendors.length);
 
     const renderArchived = () => {
       renderArchiveBinDashboardView(listEl);
@@ -316,9 +313,6 @@ function refreshData(p) {
           ) ||
           (cache.vendors || []).some(
             (v) => v && String(v.archived || v.Archived || "") === "Yes",
-          ) ||
-          (cache.inventory || []).some(
-            (i) => i && String(i.archived || i.Archived || "") === "Yes",
           );
         emptyEl.style.display = hasAny ? "none" : "block";
       }
@@ -337,13 +331,11 @@ function refreshData(p) {
       callApi("getAssets", {}),
       callApi("getStaff", {}),
       callApi("getVendors", {}),
-      callApi("getInventory", {}),
     ])
-      .then(([assets, staff, vendors, inventory]) => {
+      .then(([assets, staff, vendors]) => {
         if (Array.isArray(assets)) cache.assets = assets;
         if (Array.isArray(staff)) cache.staff = staff;
         if (Array.isArray(vendors)) cache.vendors = vendors;
-        if (Array.isArray(inventory)) cache.inventory = inventory;
         renderArchived();
         updateDashboardCounters();
         evalPreventiveMaintenanceAlerts();
@@ -362,7 +354,6 @@ function refreshData(p) {
     staff: "getStaff",
     utilities: "getUtilities",
     workorders: "getWorkOrders",
-    inventory: "getInventory",
     payments: "getPayments",
     expenserequests: "getExpenseRequests",
     cashexpenses: "getCashExpenses",
@@ -460,13 +451,6 @@ function refreshData(p) {
       } else {
         renderTotalBalance();
       }
-    }
-    if (p === "inventory") {
-      cache.inventory = displayData;
-      displayData = displayData.filter(
-        (item) =>
-          item && String(item.archived || item.Archived || "") !== "Yes",
-      );
     }
 
     // Apply local filters
@@ -779,13 +763,6 @@ function renderArchiveBinDashboardView(targetContainerElement) {
       )
       .forEach((a) => {
         html += `<div class="card" style="border-left:5px solid var(--danger)"><strong>[ASSET] ${escapeHtml(a.type || "Asset")}</strong><br><small>Tag: ${escapeHtml(a.tag || a.Tag)} | Unit ${escapeHtml(getUnitNumber(a))}</small></div>`;
-      });
-  }
-  if (selectedFilter === "ALL" || selectedFilter === "inventory") {
-    (cache.inventory || [])
-      .filter((i) => i && String(i.archived || i.Archived || "") === "Yes")
-      .forEach((i) => {
-        html += `<div class="card" style="border-left:5px solid #ffc107"><strong>[INVENTORY] ${escapeHtml(i.name || i.Name || "")}</strong><br><small>Category: ${escapeHtml(i.category || i.Category)} | Qty: ${escapeHtml(i.qty || i.Qty)}</small></div>`;
       });
   }
   if (selectedFilter === "ALL" || selectedFilter === "staff") {
