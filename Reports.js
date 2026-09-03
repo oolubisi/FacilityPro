@@ -1481,13 +1481,14 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
   const activityTable = sortedRows.length
     ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; table-layout:fixed;">
         <colgroup>
-          <col style="width:9%;">
-          <col style="width:14%;">
+          <col style="width:8%;">
           <col style="width:11%;">
-          <col style="width:13%;">
-          <col style="width:25%;">
-          <col style="width:14%;">
-          <col style="width:14%;">
+          <col style="width:9%;">
+          <col style="width:11%;">
+          <col style="width:17%;">
+          <col style="width:20%;">
+          <col style="width:12%;">
+          <col style="width:12%;">
         </colgroup>
         <thead><tr style="border-bottom:2px solid #000; text-align:left;">
           <th style="padding:6px 4px;">Entry #</th>
@@ -1495,6 +1496,7 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
           <th style="padding:6px 4px;">Apt</th>
           <th style="padding:6px 4px;">Type</th>
           <th style="padding:6px 4px;">Category</th>
+          <th style="padding:6px 4px;">Notes</th>
           <th style="padding:6px 2px; text-align:right;">Amount</th>
           <th style="padding:6px 4px; text-align:right;">Balance</th>
         </tr></thead>
@@ -1509,6 +1511,7 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
                 <td style="padding:5px 4px; font-weight:700;">${row.fullUnitCount > 1 ? `${row.fullUnitCount} apts` : escapeHtml(row.apts[0] || "")}</td>
                 <td style="padding:5px 4px;">${typeLabels[row.type] || row.type}</td>
                 <td style="padding:5px 4px; word-break:break-word; overflow-wrap:break-word; white-space:normal;">${escapeHtml(row.category || "")}</td>
+                <td style="padding:5px 4px; word-break:break-word; overflow-wrap:break-word; white-space:normal; color:#555;">${escapeHtml(row.description || "")}</td>
                 <td style="padding:5px 2px; text-align:right; font-weight:700; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}</td>
                 <td style="padding:5px 4px; text-align:right; font-weight:700; color:${balance >= 0 ? "#000" : "#dc3545"};">₦${formatMoney(balance)}</td>
               </tr>`;
@@ -1681,10 +1684,11 @@ function buildServiceChargeApartmentSectionHtml(unitId, ledger, occupancyLog, st
   const activityTable = sortedRows.length
     ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; table-layout:fixed;">
         <colgroup>
-          <col style="width:11%;">
+          <col style="width:9%;">
+          <col style="width:12%;">
+          <col style="width:15%;">
           <col style="width:16%;">
-          <col style="width:19%;">
-          <col style="width:26%;">
+          <col style="width:20%;">
           <col style="width:14%;">
           <col style="width:14%;">
         </colgroup>
@@ -1693,6 +1697,7 @@ function buildServiceChargeApartmentSectionHtml(unitId, ledger, occupancyLog, st
           <th style="padding:6px 4px;">Date</th>
           <th style="padding:6px 4px;">Type</th>
           <th style="padding:6px 4px;">Category</th>
+          <th style="padding:6px 4px;">Notes</th>
           <th style="padding:6px 2px; text-align:right;">Amount</th>
           <th style="padding:6px 4px; text-align:right;">Balance</th>
         </tr></thead>
@@ -1704,6 +1709,7 @@ function buildServiceChargeApartmentSectionHtml(unitId, ledger, occupancyLog, st
             <td style="padding:5px 4px; white-space:nowrap;">${escapeHtml(formatDateForDisplay(row.date))}</td>
             <td style="padding:5px 4px;">${escapeHtml(getTypeLabel(row))}</td>
             <td style="padding:5px 4px; word-break:break-word; overflow-wrap:break-word; white-space:normal;">${escapeHtml(row.category || "")}</td>
+            <td style="padding:5px 4px; word-break:break-word; overflow-wrap:break-word; white-space:normal; color:#555;">${escapeHtml(row.description || "")}</td>
             <td style="padding:5px 2px; text-align:right; font-weight:700; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}</td>
             <td style="padding:5px 4px; text-align:right; font-weight:700; color:${balanceAfterEntryId[row.entryId] >= 0 ? "#000" : "#dc3545"};">₦${formatMoney(balanceAfterEntryId[row.entryId])}</td>
           </tr>`,
@@ -1815,11 +1821,20 @@ async function generatePettyCashReport(startDateStr, endDateStr) {
   });
 
   const activityTable = periodRows.length
-    ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px;">
+    ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; table-layout:fixed;">
+        <colgroup>
+          <col style="width:12%;">
+          <col style="width:10%;">
+          <col style="width:18%;">
+          <col style="width:28%;">
+          <col style="width:16%;">
+          <col style="width:16%;">
+        </colgroup>
         <thead><tr style="border-bottom:2px solid #000; text-align:left;">
           <th style="padding:6px 4px;">Date</th>
           <th style="padding:6px 4px;">Apt</th>
           <th style="padding:6px 4px;">Category</th>
+          <th style="padding:6px 4px;">Notes</th>
           <th style="padding:6px 4px; text-align:right;">Amount</th>
           <th style="padding:6px 4px; text-align:right;">Balance</th>
         </tr></thead>
@@ -1831,6 +1846,7 @@ async function generatePettyCashReport(startDateStr, endDateStr) {
                 <td style="padding:5px 4px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
                 <td style="padding:5px 4px; font-weight:700;">${escapeHtml(row.apt || "")}</td>
                 <td style="padding:5px 4px;">${escapeHtml(row.category || "")}${row.linkedServiceChargeEntry ? ` <span style="color:#666; font-size:11px;">(SC ${escapeHtml(row.linkedServiceChargeEntry)})</span>` : ""}</td>
+                <td style="padding:5px 4px; word-break:break-word; overflow-wrap:break-word; white-space:normal; color:#555;">${escapeHtml(row.description || "")}</td>
                 <td style="padding:5px 4px; text-align:right; font-weight:700; color:${isInflow ? "#198754" : "#dc3545"};">${isInflow ? "+" : "-"}₦${formatMoney(row.amount)}</td>
                 <td style="padding:5px 4px; text-align:right; font-weight:700; color:${row.runningBalance >= 0 ? "#000" : "#dc3545"};">₦${formatMoney(row.runningBalance)}</td>
               </tr>`;
