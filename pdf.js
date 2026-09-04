@@ -170,6 +170,7 @@ async function compileAndDownloadUnifiedPDF(
   reportTitle = "Facility Report",
   reportRef = "",
   showTitleLine = true,
+  orientation = "portrait",
 ) {
   const normalizedSource = normalizeReportSource(sourceElement);
   if (!normalizedSource || typeof normalizedSource.cloneNode !== "function") {
@@ -228,7 +229,7 @@ async function compileAndDownloadUnifiedPDF(
 
     const cleanHTML = `<!DOCTYPE html><html><head><meta charset="UTF-8">
       <style>
-        @page { size: A4 portrait; margin: 12mm 10mm 12mm 10mm; }
+        @page { size: A4 ${orientation === "landscape" ? "landscape" : "portrait"}; margin: 12mm 10mm 12mm 10mm; }
         body { font-family: Arial, sans-serif; color: #333; background: #fff; padding: 0; margin: 0; font-size: 11px; line-height: 1.4; }
         * { box-sizing: border-box; }
 

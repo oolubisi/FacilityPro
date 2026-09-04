@@ -548,6 +548,12 @@ async function compileReportPreview() {
   const viewport = document.getElementById("report-preview-viewport");
   if (!layout) return;
 
+  // [BUG FIX] Reset here, not per-report — otherwise a report that
+  // doesn't explicitly set this (i.e. every one except Service Charge
+  // Overall) would silently inherit "landscape" left over from a
+  // previous report generated earlier in the same session.
+  window.currentReportOrientation = "portrait";
+
   if (layout === "apt_custom_print") {
     generateApartmentManifestReport();
     return;
@@ -1606,6 +1612,7 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
   window.currentReportAttachmentManifest = [];
   window.currentReportTitle = "Service Charge — Overall";
   window.currentReportShowTitleLine = true;
+  window.currentReportOrientation = "landscape";
   window.currentReportRef = ref;
   window.currentReportRawContent = out;
   setOnscreenPreviewCardDisplay("block");
@@ -2675,8 +2682,30 @@ async function downloadCurrentReportPDF() {
     // re-wraps the content separately from the preview. Now reads the
     // same flag each report function sets alongside currentReportTitle.
     window.currentReportShowTitleLine !== false,
+    window.currentReportOrientation || "portrait",
   );
   });
+}
+
+// [FEATURE] The static @media print rule in styles.css hardcodes A4
+// portrait, since @page rules apply document-wide and can't be scoped
+// to an element/class the way normal CSS can. To let specific reports
+// (e.g. Service Charge Overall) print landscape instead, this
+// injects/updates a single override <style> tag whose @page rule wins
+// by simply appearing later in the document than the static one —
+// cleared back to portrait for every other report.
+function applyReportPrintOrientation(orientation) {
+  const styleId = "dynamic-print-orientation";
+  let styleEl = document.getElementById(styleId);
+  if (!styleEl) {
+    styleEl = document.createElement("style");
+    styleEl.id = styleId;
+    document.head.appendChild(styleEl);
+  }
+  styleEl.textContent =
+    orientation === "landscape"
+      ? "@media print { @page { size: A4 landscape; margin: 10mm 10mm 12mm 10mm; } }"
+      : "";
 }
 
 async function printCurrentReport() {
@@ -2688,6 +2717,7 @@ async function printCurrentReport() {
   }
   const originalTitle = document.title;
   document.title = window.currentReportFilename || "Facility_Report";
+  applyReportPrintOrientation(window.currentReportOrientation || "portrait");
   window.print();
   await new Promise((resolve) => {
     setTimeout(() => {
