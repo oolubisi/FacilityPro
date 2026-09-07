@@ -267,6 +267,7 @@ function handleReportProfileSwitch() {
       ["sc_per_apartment", "Service Charge — Per Apartment"],
       ["sc_budget_variance", "Service Charge — Budget vs Actual"],
       ["petty_cash", "Petty Cash Ledger"],
+      ["energy_ledger", "Energy Ledger"],
     ],
     executive: [
       ["", "-- Select Report --"],
@@ -285,7 +286,7 @@ function handleReportProfileSwitch() {
     // even see these exist).
     .filter(
       ([val]) =>
-        (val.indexOf("sc_") !== 0 && val !== "petty_cash" && val.indexOf("inventory_") !== 0) ||
+        (val.indexOf("sc_") !== 0 && val !== "petty_cash" && val !== "energy_ledger" && val.indexOf("inventory_") !== 0) ||
         currentUserMeetsRole("manager"),
     )
     .forEach(([val, label]) => {
@@ -327,6 +328,7 @@ function handleReportLayoutSwitch() {
     layout === "sc_overall" ||
     layout === "sc_per_apartment" ||
     layout === "petty_cash" ||
+    layout === "energy_ledger" ||
     layout === "inventory_consumption" ||
     layout === "inventory_valuation" ||
     layout === "sc_budget_variance"
@@ -607,6 +609,15 @@ async function compileReportPreview() {
       return;
     }
     await generatePettyCashReport(startDate, endDate);
+    return;
+  }
+  if (layout === "energy_ledger") {
+    const { start: startDate, end: endDate } = resolveServiceChargeReportPeriod();
+    if (!startDate || !endDate) {
+      showToast("Please select a start and end date.", "warning");
+      return;
+    }
+    await generateEnergyLedgerReport(startDate, endDate);
     return;
   }
   if (layout === "inventory_consumption") {
@@ -1880,6 +1891,116 @@ async function generatePettyCashReport(startDateStr, endDateStr) {
   window.currentReportFilename = "Petty_Cash_Ledger_" + Date.now();
   window.currentReportAttachmentManifest = [];
   window.currentReportTitle = "Petty Cash Ledger";
+  window.currentReportShowTitleLine = true;
+  window.currentReportRef = ref;
+  window.currentReportRawContent = out;
+  setOnscreenPreviewCardDisplay("block");
+}
+
+// =========================================================
+// § ENERGY LEDGER REPORT
+// Mirrors generatePettyCashReport exactly — same opening/closing
+// balance logic, same running-balance-then-filter-to-period approach
+// — reading from the Energy Ledger instead. Portrait by default (no
+// window.currentReportOrientation override needed), per how this
+// report was requested.
+// =========================================================
+async function generateEnergyLedgerReport(startDateStr, endDateStr) {
+  const viewport = document.getElementById("report-preview-viewport");
+  if (!viewport) return;
+
+  viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading Energy ledger...</p>`;
+
+  const ledger = await callApi("getEnergyLedger", {});
+  if (!ledger || !Array.isArray(ledger)) {
+    viewport.innerHTML = `<p style="padding:20px; color:#dc3545; font-weight:700;">${escapeHtml((ledger && ledger.message) || "Couldn't load the Energy ledger.")}</p>`;
+    return;
+  }
+
+  const startDate = new Date(startDateStr);
+  const endDate = new Date(endDateStr);
+  endDate.setHours(23, 59, 59, 999);
+  const dayBeforeStart = new Date(startDate.getTime() - 1);
+
+  const openingBalance = computeEnergyBalanceAsOf(ledger, dayBeforeStart);
+  const closingBalance = computeEnergyBalanceAsOf(ledger, endDate);
+
+  let running = 0;
+  const withBalance = [...ledger]
+    .sort((a, b) => new Date(a.date) - new Date(b.date))
+    .map((row) => {
+      const amt = Number(row.amount) || 0;
+      running += String(row.direction).toLowerCase() === "inflow" ? amt : -amt;
+      return { ...row, runningBalance: running };
+    });
+  const periodRows = withBalance.filter((row) => {
+    const d = new Date(row.date);
+    return !isNaN(d.getTime()) && d >= startDate && d <= endDate;
+  });
+
+  let totalInflow = 0,
+    totalOutflow = 0,
+    dieselTotal = 0,
+    ekedcTotal = 0;
+  periodRows.forEach((row) => {
+    const amt = Number(row.amount) || 0;
+    if (String(row.direction).toLowerCase() === "inflow") totalInflow += amt;
+    else totalOutflow += amt;
+    if (row.type === "Diesel Purchase") dieselTotal += amt;
+    if (row.type === "EKEDC Payments") ekedcTotal += amt;
+  });
+
+  const activityTable = periodRows.length
+    ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; table-layout:fixed;">
+        <colgroup>
+          <col style="width:12%;">
+          <col style="width:20%;">
+          <col style="width:32%;">
+          <col style="width:18%;">
+          <col style="width:18%;">
+        </colgroup>
+        <thead><tr style="border-bottom:2px solid #000; text-align:left;">
+          <th style="padding:6px 4px;">Date</th>
+          <th style="padding:6px 4px;">Type</th>
+          <th style="padding:6px 4px;">Notes</th>
+          <th style="padding:6px 4px; text-align:right;">Amount</th>
+          <th style="padding:6px 4px; text-align:right;">Balance</th>
+        </tr></thead>
+        <tbody>
+          ${periodRows
+            .map((row) => {
+              const isInflow = String(row.direction).toLowerCase() === "inflow";
+              return `<tr style="border-bottom:1px solid #eee;">
+                <td style="padding:5px 4px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
+                <td style="padding:5px 4px; font-weight:700;">${escapeHtml(row.type || "")}</td>
+                <td style="padding:5px 4px; word-break:break-word; overflow-wrap:break-word; white-space:normal; color:#555;">${escapeHtml(row.description || "")}</td>
+                <td style="padding:5px 4px; text-align:right; font-weight:700; color:${isInflow ? "#198754" : "#dc3545"};">${isInflow ? "+" : "-"}₦${formatMoney(row.amount)}</td>
+                <td style="padding:5px 4px; text-align:right; font-weight:700; color:${row.runningBalance >= 0 ? "#000" : "#dc3545"};">₦${formatMoney(row.runningBalance)}</td>
+              </tr>`;
+            })
+            .join("")}
+        </tbody>
+      </table>`
+    : `<p style="color:#666; font-size:13px; margin-top:8px;">No activity in this period.</p>`;
+
+  const out = `<div style="font-size:13px;">
+    <table style="width:100%; border-collapse:collapse; border:2px solid #000; font-size:14px; font-weight:bold; margin-bottom:20px;">
+      <tr><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Opening Balance</td><td style="border:1px solid #000; padding:6px; width:25%; color:${openingBalance >= 0 ? "#000" : "#dc3545"};">₦${formatMoney(openingBalance)}</td><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Closing Balance</td><td style="border:1px solid #000; padding:6px; width:25%; color:${closingBalance >= 0 ? "#000" : "#dc3545"};">₦${formatMoney(closingBalance)}</td></tr>
+      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Total Remittance (Inflow)</td><td style="border:1px solid #000; padding:6px; color:#198754;">₦${formatMoney(totalInflow)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Total Outflow</td><td style="border:1px solid #000; padding:6px; color:#dc3545;">₦${formatMoney(totalOutflow)}</td></tr>
+      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Diesel Purchases</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(dieselTotal)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">EKEDC Payments</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(ekedcTotal)}</td></tr>
+    </table>
+    <h3 style="font-size:14px; font-weight:900; text-transform:uppercase; margin:0 0 6px 0; text-decoration:underline;">Activity (${escapeHtml(formatDateForDisplay(startDateStr))} &mdash; ${escapeHtml(formatDateForDisplay(endDateStr))})</h3>
+    ${activityTable}
+  </div>`;
+
+  const ref = generateReportRef("RPT");
+  const wrapped = wrapReportContent(out, "Energy Ledger", ref);
+  viewport.innerHTML = wrapped;
+  const printContainer = document.getElementById("report-print-container");
+  if (printContainer) printContainer.innerHTML = wrapped;
+  window.currentReportFilename = "Energy_Ledger_" + Date.now();
+  window.currentReportAttachmentManifest = [];
+  window.currentReportTitle = "Energy Ledger";
   window.currentReportShowTitleLine = true;
   window.currentReportRef = ref;
   window.currentReportRawContent = out;

@@ -582,6 +582,8 @@ function showPage(p) {
     refreshServiceChargeSection();
   } else if (p === "pettycash") {
     refreshPettyCashSection();
+  } else if (p === "energy") {
+    refreshEnergySection();
   } else if (p === "inventory") {
     refreshInventorySection();
   }

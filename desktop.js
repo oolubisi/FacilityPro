@@ -81,6 +81,12 @@ const viewMeta = {
     key: "pettycash", // not a real cache key — renderDesktop() special-cases this view
     empty: "",
   },
+  energy: {
+    title: "Energy",
+    kicker: "Diesel, EKEDC & remittances — managers only",
+    key: "energy", // not a real cache key — renderDesktop() special-cases this view
+    empty: "",
+  },
   reports: {
     title: "Reports",
     kicker: "Desktop shortcuts",
@@ -380,6 +386,7 @@ function renderDesktop() {
   if (desktopState.view === "archived") return renderArchivedShortcuts();
   if (desktopState.view === "servicecharge") return renderServiceChargeShortcuts();
   if (desktopState.view === "pettycash") return renderPettyCashShortcuts();
+  if (desktopState.view === "energy") return renderEnergyShortcuts();
   if (desktopState.view === "inventory") return renderInventoryShortcuts();
 
   const records = sortRecords(desktopState.view, filterRecords(cache[meta.key] || []));
@@ -1072,6 +1079,22 @@ function renderPettyCashShortcuts() {
     </div>
   `;
   refreshPettyCashSection();
+}
+
+function renderEnergyShortcuts() {
+  document.getElementById("record-count").textContent = "";
+  document.getElementById("card-grid").innerHTML = `
+    <div id="desktop-energy-summary" style="grid-column:1/-1;"></div>
+    <div class="desktop-form-card" style="grid-column:1/-1;">
+      <h3 style="margin:0 0 12px; font-size:15px;">Log an Entry</h3>
+      <button class="action-btn" style="width:auto; background:var(--blue);" onclick="openModal('energytransaction')"><i class="fas fa-plus"></i> Add Transaction</button>
+    </div>
+    <div class="desktop-form-card" style="grid-column:1/-1;">
+      <h3 style="margin:0 0 12px; font-size:15px;">Ledger</h3>
+      <div id="desktop-energy-ledger"></div>
+    </div>
+  `;
+  refreshEnergySection();
 }
 
 function renderInventoryShortcuts() {

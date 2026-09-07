@@ -626,6 +626,137 @@ function deletePettyCashLedgerEntry(entryId) {
 }
 
 // ─────────────────────────────────────────────
+// § ENERGY LEDGER (manager+ only — see checkBusinessPermission in
+// Code.gs). Standalone running-balance ledger for diesel purchases,
+// EKEDC payments, and energy remittances — no relationship to Petty
+// Cash or Service Charge, unlike some other ledgers in this app.
+// ─────────────────────────────────────────────
+let lastFetchedEnergyLedger = [];
+
+async function refreshEnergySection() {
+  const containerId = isDesktopShell() ? "desktop-energy-ledger" : "mobile-energy-ledger";
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  container.innerHTML = `<p style="color:var(--muted); font-size:13px;">Loading ledger...</p>`;
+  const result = await callApi("getEnergyLedger", {});
+
+  if (!result || !Array.isArray(result)) {
+    container.innerHTML = `<p style="color:var(--danger); font-size:13px; font-weight:700;">${escapeHtml((result && result.message) || "Couldn't load the ledger.")}</p>`;
+    return;
+  }
+
+  lastFetchedEnergyLedger = result;
+  renderEnergySummary();
+  renderEnergyLedgerTable(container, result);
+}
+
+function renderEnergySummary() {
+  const summaryId = isDesktopShell() ? "desktop-energy-summary" : "mobile-energy-summary";
+  const el = document.getElementById(summaryId);
+  if (!el) return;
+
+  const balance = computeEnergyBalanceAsOf(lastFetchedEnergyLedger, null);
+
+  el.innerHTML = `
+    <div style="background:#fff; border:2px solid #000; border-radius:12px; padding:14px; margin-bottom:16px;">
+      <div style="font-size:11px; font-weight:900; text-transform:uppercase; color:var(--muted);">Energy Balance (now)</div>
+      <div style="font-size:22px; font-weight:900; margin-top:4px; color:${balance >= 0 ? "inherit" : "#dc3545"};">₦${formatMoney(balance)}</div>
+    </div>
+  `;
+}
+
+// Balance as of a date = sum of every entry dated on or before it,
+// Energy Remittance adding and Diesel Purchase/EKEDC Payments
+// subtracting. asOfDate === null means "as of right now." Starts from
+// ₦0, same reasoning as Petty Cash — no meaningful opening figure to
+// seed it with.
+function computeEnergyBalanceAsOf(ledger, asOfDate) {
+  const cutoff = asOfDate ? new Date(asOfDate).getTime() : null;
+  let balance = 0;
+  [...(ledger || [])]
+    .sort((a, b) => new Date(a.date) - new Date(b.date))
+    .forEach((row) => {
+      if (!row) return;
+      const rowTime = new Date(row.date).getTime();
+      if (cutoff !== null && (isNaN(rowTime) || rowTime > cutoff)) return;
+      const amt = Number(row.amount) || 0;
+      balance += String(row.direction).toLowerCase() === "inflow" ? amt : -amt;
+    });
+  return balance;
+}
+
+function renderEnergyLedgerTable(container, ledger) {
+  const sorted = [...ledger].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  if (sorted.length === 0) {
+    container.innerHTML = `<p style="color:var(--muted); font-size:13px;">No entries yet.</p>`;
+    return;
+  }
+
+  let running = 0;
+  const withBalance = sorted.map((row) => {
+    const amt = Number(row.amount) || 0;
+    running += String(row.direction).toLowerCase() === "inflow" ? amt : -amt;
+    return { ...row, runningBalance: running };
+  });
+  const displayRows = [...withBalance].reverse();
+
+  container.innerHTML = `<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:13px;">
+    <thead><tr style="border-bottom:2px solid #000; text-align:left;">
+      <th style="padding:8px 6px;">Date</th>
+      <th style="padding:8px 6px;">Type</th>
+      <th style="padding:8px 6px;">Notes</th>
+      <th style="padding:8px 6px; text-align:right;">Amount</th>
+      <th style="padding:8px 6px; text-align:right;">Balance</th>
+      <th style="padding:8px 6px;"></th>
+    </tr></thead>
+    <tbody>
+      ${displayRows
+        .map((row) => {
+          const canEdit = isEntrySameCalendarDay(row.createdAt);
+          const isInflow = String(row.direction).toLowerCase() === "inflow";
+          const amountDisplay = `${isInflow ? "+" : "-"}₦${formatMoney(row.amount)}`;
+          return `<tr style="border-bottom:1px solid #eee;">
+            <td style="padding:6px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
+            <td style="padding:6px; font-weight:800;">${escapeHtml(row.type || "")}</td>
+            <td style="padding:6px; color:#555;">${escapeHtml(row.description || "")}</td>
+            <td style="padding:6px; text-align:right; font-weight:800; color:${isInflow ? "#198754" : "#dc3545"};">${amountDisplay}</td>
+            <td style="padding:6px; text-align:right; font-weight:800; color:${row.runningBalance >= 0 ? "inherit" : "#dc3545"};">₦${formatMoney(row.runningBalance)}</td>
+            <td style="padding:6px; text-align:right; white-space:nowrap;">
+              ${canEdit
+                ? `<button type="button" data-modal-action="edit-energy-entry" data-id="${escapeHtml(row.entryId)}" style="background:var(--text); color:#fff; border:0; border-radius:6px; padding:4px 8px; font-size:11px; font-weight:700; cursor:pointer;">Edit</button> <button type="button" data-modal-action="delete-energy-entry" data-id="${escapeHtml(row.entryId)}" style="background:#fdecea; color:#dc3545; border:0; border-radius:6px; padding:4px 8px; font-size:11px; font-weight:700; cursor:pointer;">Delete</button>`
+                : `<span style="color:var(--muted); font-size:11px;">Locked</span>`}
+            </td>
+          </tr>`;
+        })
+        .join("")}
+    </tbody>
+  </table></div>`;
+}
+
+function editEnergyLedgerEntry(entryId) {
+  const entry = (lastFetchedEnergyLedger || []).find((r) => String(r.entryId) === String(entryId));
+  if (!entry) {
+    showToast("Entry not found.", "error");
+    return;
+  }
+  openModal("energytransaction", entry);
+}
+
+function deleteEnergyLedgerEntry(entryId) {
+  if (!window.confirm("Delete this entry? This can't be undone.")) return;
+  callApi("deleteEnergyEntry", { entryId }).then((result) => {
+    if (result && result.status === "success") {
+      showToast("Entry deleted.", "success");
+      refreshEnergySection();
+    } else {
+      showToast((result && result.message) || "Failed to delete entry.", "error");
+    }
+  });
+}
+
+// ─────────────────────────────────────────────
 // § INVENTORY (manager+ only — see checkBusinessPermission in
 // Code.gs). Full replacement of the old basic Inventory feature —
 // deliberately not part of the cache/getAllData system, same
@@ -870,6 +1001,12 @@ function handleModalContentClick(event) {
       break;
     case "delete-petty-cash-entry":
       deletePettyCashLedgerEntry(actionEl.dataset.id);
+      break;
+    case "edit-energy-entry":
+      editEnergyLedgerEntry(actionEl.dataset.id);
+      break;
+    case "delete-energy-entry":
+      deleteEnergyLedgerEntry(actionEl.dataset.id);
       break;
     case "view-inventory-item-timeline":
       viewInventoryItemTimeline(actionEl.dataset.id);

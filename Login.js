@@ -84,6 +84,10 @@ function applyRoleBasedUIVisibility() {
     if (desktopInvNav) desktopInvNav.style.display = "none";
     const dashboardInvTile = document.getElementById("dashboard-inventory-tile");
     if (dashboardInvTile) dashboardInvTile.style.display = "none";
+    const desktopEnergyNav = document.getElementById("desktop-energy-nav");
+    if (desktopEnergyNav) desktopEnergyNav.style.display = "none";
+    const dashboardEnergyTile = document.getElementById("dashboard-energy-tile");
+    if (dashboardEnergyTile) dashboardEnergyTile.style.display = "none";
   }
 }
 

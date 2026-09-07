@@ -771,6 +771,58 @@ async function openModal(type, editData = null) {
     };
   }
 
+  // ── ENERGY LEDGER ──
+  // Direction (inflow/outflow) is derived from the transaction type
+  // server-side, not sent from here — the dropdown only ever offers
+  // valid type values, so there's nothing to get inconsistent.
+  else if (type === "energytransaction") {
+    title.innerText = isEdit ? "Edit Energy Transaction" : "Log Energy Transaction";
+    const types = ["Energy Remittance", "Diesel Purchase", "EKEDC Payments"];
+    body.innerHTML = `
+      <div class="form-field span-3"><label ${lbl}>Transaction Type</label>
+        <select id="en_type" ${ls}>
+          ${types.map((t) => `<option value="${escapeHtml(t)}" ${isEdit && editData.type === t ? "selected" : ""}>${escapeHtml(t)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="en_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" value="${isEdit ? Number(editData.amount || 0).toLocaleString("en-US") : ""}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Date</label><input id="en_date" type="date" value="${isEdit && editData.date ? String(editData.date).slice(0, 10) : getLocalDateString()}" ${ls}></div>
+      <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="en_description" value="${isEdit ? escapeHtml(editData.description || "") : ""}" ${ls}></div>
+    `;
+
+    submit.onclick = () => {
+      const amount = document.getElementById("en_amount").value.replace(/,/g, "");
+      if (!amount || Number(amount) <= 0) {
+        showToast("Enter a positive amount.", "error");
+        return;
+      }
+      const payload = {
+        type: document.getElementById("en_type").value,
+        amount,
+        date: document.getElementById("en_date").value,
+        description: sanitizeInput(document.getElementById("en_description").value),
+      };
+      if (isEdit) payload.entryId = editData.entryId;
+      submit.disabled = true;
+      submit.classList.add("loading");
+      callApi(isEdit ? "updateEnergyEntry" : "logEnergyTransaction", payload)
+        .then((result) => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+          if (!result || result.status !== "success") {
+            showToast((result && result.message) || "Failed to save entry.", "error");
+            return;
+          }
+          closeModal();
+          showToast(isEdit ? "Entry updated." : "Transaction logged.", "success");
+          if (typeof refreshEnergySection === "function") refreshEnergySection();
+        })
+        .catch(() => {
+          submit.disabled = false;
+          submit.classList.remove("loading");
+        });
+    };
+  }
+
   // ── ASSET ──
   else if (type === "asset") {
     const uniqueTag = isEdit
