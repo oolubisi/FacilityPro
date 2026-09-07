@@ -354,8 +354,9 @@ function handleReportLayoutSwitch() {
       ${unitPickerHtml}
       <label ${unitPickerHtml ? 'style="margin-top:10px; display:block;"' : ""}>REPORT PERIOD</label>
       <select id="rep_sc_period" class="form-control">
-        <option value="current_month" selected>Current Month</option>
+        <option value="current_month" ${layout === "energy_ledger" ? "" : "selected"}>Current Month</option>
         <option value="previous_month">Previous Month</option>
+        <option value="current_year" ${layout === "energy_ledger" ? "selected" : ""}>Current Year</option>
         <option value="custom">Custom Range</option>
       </select>
       <div id="rep_sc_custom_dates" style="display:none; margin-top:10px;">
@@ -497,6 +498,13 @@ function resolveServiceChargeReportPeriod() {
     const firstOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const lastOfThisMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
     return { start: toDateInputValue(firstOfThisMonth), end: toDateInputValue(lastOfThisMonth) };
+  }
+
+  if (period === "current_year") {
+    const now = new Date();
+    const firstOfThisYear = new Date(now.getFullYear(), 0, 1);
+    const lastOfThisYear = new Date(now.getFullYear(), 11, 31);
+    return { start: toDateInputValue(firstOfThisYear), end: toDateInputValue(lastOfThisYear) };
   }
 
   return {
