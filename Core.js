@@ -120,6 +120,24 @@ function formatMoney(amount) {
   });
 }
 
+// [FEATURE] Live currency mask for text inputs — treats the last two
+// typed digits as cents as you go, so the field always reads as a
+// proper amount (e.g. typing "150000" progressively shows "1.50",
+// "15.00", "150.00", "1,500.00") rather than a bare integer with no
+// decimal place at all. Call via oninput="maskCurrencyInput(this)".
+function maskCurrencyInput(inputEl) {
+  let digits = inputEl.value.replace(/[^0-9]/g, "");
+  if (!digits) {
+    inputEl.value = "";
+    return;
+  }
+  digits = digits.replace(/^0+(?=\d)/, "");
+  while (digits.length < 3) digits = "0" + digits;
+  const cents = digits.slice(-2);
+  const whole = digits.slice(0, -2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  inputEl.value = `${whole}.${cents}`;
+}
+
 function convertAmountToWords(amount) {
   const val = parseFloat(amount);
   if (isNaN(val) || val === 0) return "Zero Naira Only";

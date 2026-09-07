@@ -320,8 +320,8 @@ async function openModal(type, editData = null) {
       <div class="form-grid-3">
         <div class="form-field"><label ${lbl}>Tenant Name</label><input id="f_tenant" value="${escapeHtml(editData.tenant || editData.Tenant || "")}" ${ls}></div>
         <div class="form-field"><label ${lbl}>Apartment Type</label><input id="f_type" value="${escapeHtml(editData.type || editData.Type || "Standard")}" disabled ${ls}></div>
-        <div class="form-field"><label ${lbl}>Current Rent (₦)</label><input id="f_rent" type="text" inputmode="numeric" placeholder="Annual rent amount" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\B(?=(\d{3})+(?!\d))/g,',')" value="${(editData.rent || editData.Rent) ? Number(editData.rent || editData.Rent).toLocaleString("en-US") : ""}" ${ls}></div>
-        <div class="form-field"><label ${lbl}>Service Charge Deposit (₦)</label><input id="f_deposit" type="text" inputmode="numeric" placeholder="Service charge deposit amount" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\B(?=(\d{3})+(?!\d))/g,',')" value="${(editData.serviceChargeDeposit || editData.ServiceChargeDeposit) ? Number(editData.serviceChargeDeposit || editData.ServiceChargeDeposit).toLocaleString("en-US") : ""}" ${ls}></div>
+        <div class="form-field"><label ${lbl}>Current Rent (₦)</label><input id="f_rent" type="text" inputmode="numeric" placeholder="Annual rent amount" oninput="maskCurrencyInput(this)" value="${(editData.rent || editData.Rent) ? formatMoney(editData.rent || editData.Rent) : ""}" ${ls}></div>
+        <div class="form-field"><label ${lbl}>Service Charge Deposit (₦)</label><input id="f_deposit" type="text" inputmode="numeric" placeholder="Service charge deposit amount" oninput="maskCurrencyInput(this)" value="${(editData.serviceChargeDeposit || editData.ServiceChargeDeposit) ? formatMoney(editData.serviceChargeDeposit || editData.ServiceChargeDeposit) : ""}" ${ls}></div>
         <div class="form-field"><label ${lbl}>Meter No</label><input id="f_meter" value="${escapeHtml(suggestedMeterNo)}" disabled ${ls}></div>
         <div class="form-field"><label ${lbl}>Service Charge Weight <span style="font-weight:600; color:var(--muted);">(Studio 1 : 1-Bed 1.25 : 2-Bed 1.5, edited on the backend)</span></label><input id="f_weight" type="number" min="0" step="0.1" value="${escapeHtml(String(suggestedWeight))}" disabled ${ls}></div>
         <div class="form-field">
@@ -392,7 +392,7 @@ async function openModal(type, editData = null) {
     title.innerText = "Log Contribution";
     body.innerHTML = `
       <div class="form-field span-3"><label ${lbl}>Apartment</label><select id="sc_apt" ${ls}></select></div>
-      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="sc_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="sc_amount" type="text" inputmode="numeric" oninput="maskCurrencyInput(this)" ${ls}></div>
       <div class="form-field"><label ${lbl}>Date</label><input id="sc_date" type="date" value="${getLocalDateString()}" ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="sc_description" ${ls}></div>
     `;
@@ -437,7 +437,7 @@ async function openModal(type, editData = null) {
     body.innerHTML = `
       <div class="form-field span-3"><label ${lbl}>Apartment</label><select id="sc_ae_apt" ${ls}></select></div>
       <div class="form-field"><label ${lbl}>Category</label><input id="sc_ae_category" placeholder="e.g. Plumbing Repair" ${ls}></div>
-      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="sc_ae_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="sc_ae_amount" type="text" inputmode="numeric" oninput="maskCurrencyInput(this)" ${ls}></div>
       <div class="form-field"><label ${lbl}>Date</label><input id="sc_ae_date" type="date" value="${getLocalDateString()}" ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="sc_ae_description" ${ls}></div>
       <div class="form-field span-3"><label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer;"><input type="checkbox" id="sc_ae_from_petty_cash" style="width:auto;"> Pay from Petty Cash</label></div>
@@ -492,7 +492,7 @@ async function openModal(type, editData = null) {
         <small style="font-weight:700; color:#4f46e5;"><i class="fas fa-diagram-project"></i> This amount is automatically split across every currently-occupied apartment, by that unit's Service Charge Weight.</small>
       </div>
       <div class="form-field span-3"><label ${lbl}>Category</label><select id="sc_se_category" ${ls}>${buildServiceChargeCategoryOptionsHtml("")}</select></div>
-      <div class="form-field"><label ${lbl}>Total Amount (₦)</label><input id="sc_se_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Total Amount (₦)</label><input id="sc_se_amount" type="text" inputmode="numeric" oninput="maskCurrencyInput(this)" ${ls}></div>
       <div class="form-field"><label ${lbl}>Date</label><input id="sc_se_date" type="date" value="${getLocalDateString()}" ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="sc_se_description" ${ls}></div>
       <div class="form-field span-3"><label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer;"><input type="checkbox" id="sc_se_from_petty_cash" style="width:auto;"> Pay from Petty Cash</label></div>
@@ -540,7 +540,7 @@ async function openModal(type, editData = null) {
     title.innerText = "Set Category Budget";
     body.innerHTML = `
       <div class="form-field span-3"><label ${lbl}>Category</label><select id="scb_category" ${ls}>${buildServiceChargeCategoryOptionsHtml("")}</select></div>
-      <div class="form-field"><label ${lbl}>Monthly Budget (₦)</label><input id="scb_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Monthly Budget (₦)</label><input id="scb_amount" type="text" inputmode="numeric" oninput="maskCurrencyInput(this)" ${ls}></div>
       <div class="form-field"><label ${lbl}>Effective From</label><input id="scb_effective" type="date" value="${getLocalDateString()}" ${ls}></div>
       <p style="font-size:12px; color:var(--muted); grid-column:span 3; margin:0;">This applies as this category's standing monthly budget going forward — it doesn't need to be re-entered every month.</p>
     `;
@@ -583,7 +583,7 @@ async function openModal(type, editData = null) {
     body.innerHTML = `
       <div class="form-field span-3"><label ${lbl}>Category</label><select id="rxt_category" ${ls}>${buildServiceChargeCategoryOptionsHtml(isEdit ? editData.category : "")}</select></div>
       <div class="form-field span-3"><label ${lbl}>Description</label><input id="rxt_description" value="${isEdit ? escapeHtml(editData.description || "") : ""}" placeholder="e.g. Monthly generator diesel" ${ls}></div>
-      <div class="form-field"><label ${lbl}>Default Amount (₦)</label><input id="rxt_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" value="${isEdit ? Number(editData.defaultAmount || 0).toLocaleString("en-US") : ""}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Default Amount (₦)</label><input id="rxt_amount" type="text" inputmode="numeric" oninput="maskCurrencyInput(this)" value="${isEdit ? formatMoney(editData.defaultAmount || 0) : ""}" ${ls}></div>
       <div class="form-field"><label ${lbl}>Day of Month Due</label><input id="rxt_day" type="number" min="1" max="28" value="${isEdit ? escapeHtml(editData.dayOfMonth || 1) : "1"}" ${ls}></div>
       <p style="font-size:12px; color:var(--muted); grid-column:span 3; margin:0;">This won't log anything by itself — it'll show up as "due" on the Service Charge section each month until you confirm it, and you can still adjust the amount at confirmation time.</p>
     `;
@@ -630,7 +630,7 @@ async function openModal(type, editData = null) {
     body.innerHTML = `
       <div class="form-field span-3"><label ${lbl}>Category</label><input value="${escapeHtml(editData.category)}" disabled ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Description</label><input id="cr_description" value="${escapeHtml(editData.description || "")}" ${ls}></div>
-      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="cr_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" value="${Number(editData.defaultAmount || 0).toLocaleString("en-US")}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="cr_amount" type="text" inputmode="numeric" oninput="maskCurrencyInput(this)" value="${formatMoney(editData.defaultAmount || 0)}" ${ls}></div>
       <div class="form-field"><label ${lbl}>Date</label><input id="cr_date" type="date" value="${getLocalDateString()}" ${ls}></div>
       <div class="form-field span-3"><label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer;"><input type="checkbox" id="cr_from_petty_cash" style="width:auto;"> Pay from Petty Cash</label></div>
       <p style="font-size:12px; color:var(--muted); grid-column:span 3; margin:0;">Confirming logs this as a normal Shared Expense — split by weight across occupied units, same as logging it manually.</p>
@@ -674,7 +674,7 @@ async function openModal(type, editData = null) {
   else if (type === "pettycashinflow") {
     title.innerText = "Log Petty Cash Inflow";
     body.innerHTML = `
-      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="pc_in_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="pc_in_amount" type="text" inputmode="numeric" oninput="maskCurrencyInput(this)" ${ls}></div>
       <div class="form-field"><label ${lbl}>Date</label><input id="pc_in_date" type="date" value="${getLocalDateString()}" ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Category</label><input id="pc_in_category" placeholder="e.g. Top-up from Estate Account" ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="pc_in_description" ${ls}></div>
@@ -716,7 +716,7 @@ async function openModal(type, editData = null) {
   else if (type === "pettycashoutflow") {
     title.innerText = "Log Petty Cash Outflow";
     body.innerHTML = `
-      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="pc_out_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="pc_out_amount" type="text" inputmode="numeric" oninput="maskCurrencyInput(this)" ${ls}></div>
       <div class="form-field"><label ${lbl}>Date</label><input id="pc_out_date" type="date" value="${getLocalDateString()}" ${ls}></div>
       <div class="form-field"><label ${lbl}>Category</label><input id="pc_out_category" placeholder="e.g. Office Supplies" ${ls}></div>
       <div class="form-field"><label ${lbl}>Apartment</label><select id="pc_out_apt" ${ls}></select></div>
@@ -784,7 +784,7 @@ async function openModal(type, editData = null) {
           ${types.map((t) => `<option value="${escapeHtml(t)}" ${isEdit && editData.type === t ? "selected" : ""}>${escapeHtml(t)}</option>`).join("")}
         </select>
       </div>
-      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="en_amount" type="text" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,',')" value="${isEdit ? Number(editData.amount || 0).toLocaleString("en-US") : ""}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="en_amount" type="text" inputmode="numeric" oninput="maskCurrencyInput(this)" value="${isEdit ? formatMoney(editData.amount || 0) : ""}" ${ls}></div>
       <div class="form-field"><label ${lbl}>Date</label><input id="en_date" type="date" value="${isEdit && editData.date ? String(editData.date).slice(0, 10) : getLocalDateString()}" ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="en_description" value="${isEdit ? escapeHtml(editData.description || "") : ""}" ${ls}></div>
     `;
