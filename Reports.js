@@ -194,13 +194,15 @@ function generateMonthlyReportPack() {
 
   capture("Monthly FM Report", () => {
     setReportSelection("executive", "monthly_fm", {
-      "rep-param-month": range.month,
+      "rep-param-month-from": range.month,
+      "rep-param-month-to": range.month,
     });
     compileReportPreview();
   });
   capture("Executive KPI Dashboard", () => {
     setReportSelection("executive", "kpi_dashboard", {
-      "rep-param-month": range.month,
+      "rep-param-month-from": range.month,
+      "rep-param-month-to": range.month,
     });
     compileReportPreview();
   });
@@ -286,7 +288,7 @@ function handleReportProfileSwitch() {
     // even see these exist).
     .filter(
       ([val]) =>
-        (val.indexOf("sc_") !== 0 && val !== "petty_cash" && val !== "energy_ledger" && val.indexOf("inventory_") !== 0) ||
+        (val.indexOf("sc_") !== 0 && val !== "petty_cash" && val !== "energy_ledger" && val !== "kpi_dashboard" && val.indexOf("inventory_") !== 0) ||
         currentUserMeetsRole("manager"),
     )
     .forEach(([val, label]) => {
@@ -391,7 +393,35 @@ function handleReportLayoutSwitch() {
   } else if (layout === "daily_operations") {
     paramsFrame.innerHTML = `<label>REPORT DATE</label><input type="date" id="rep-param-date" value="${new Date().toISOString().split("T")[0]}">`;
   } else if (layout === "monthly_fm" || layout === "kpi_dashboard") {
-    paramsFrame.innerHTML = `<label>SELECT MONTH</label><input type="month" id="rep-param-month" value="${new Date().toISOString().slice(0, 7)}">`;
+    const now = new Date();
+    const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const prevMonthStr = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, "0")}`;
+    paramsFrame.innerHTML = `
+      <label>FROM MONTH</label>
+      <input type="month" id="rep-param-month-from" value="${prevMonthStr}">
+      <label style="margin-top:10px; display:block;">TO MONTH</label>
+      <input type="month" id="rep-param-month-to" value="${prevMonthStr}">
+      <div id="rep-param-month-range" style="margin-top:6px; font-size:12px; color:#666;"></div>
+    `;
+    const updateMonthRangeLabel = () => {
+      const fromVal = document.getElementById("rep-param-month-from")?.value;
+      const toVal = document.getElementById("rep-param-month-to")?.value;
+      const rangeEl = document.getElementById("rep-param-month-range");
+      if (!fromVal || !toVal || !rangeEl) return;
+      const [fy, fm] = fromVal.split("-").map(Number);
+      const [ty, tm] = toVal.split("-").map(Number);
+      const first = new Date(fy, fm - 1, 1);
+      const last = new Date(ty, tm, 0);
+      const fmt = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+      if (last < first) {
+        rangeEl.textContent = "⚠ 'To' month is before 'From' month.";
+      } else {
+        rangeEl.textContent = `Covers ${fmt(first)} – ${fmt(last)}`;
+      }
+    };
+    updateMonthRangeLabel();
+    document.getElementById("rep-param-month-from").addEventListener("change", updateMonthRangeLabel);
+    document.getElementById("rep-param-month-to").addEventListener("change", updateMonthRangeLabel);
   }
 }
 
@@ -853,22 +883,28 @@ async function compileReportPreview() {
     out += `<table style="width:100%; border-collapse:collapse; font-size:12px;"><thead><tr style="background:#f4f4f4;"><th style="padding:6px; border:1px solid #000;">Unit</th><th style="padding:6px; border:1px solid #000;">Type</th><th style="padding:6px; border:1px solid #000;">Reading</th><th style="padding:6px; border:1px solid #000;">Amount</th></tr></thead><tbody>${dayUtilities.map((u) => `<tr><td style="padding:6px; border:1px solid #ccc;">${escapeHtml(getUnitNumber(u) || "N/A")}</td><td style="padding:6px; border:1px solid #ccc;">${escapeHtml(u.type || u.Type || "")}</td><td style="padding:6px; border:1px solid #ccc;">${escapeHtml(u.reading || u.Reading || "N/A")}</td><td style="padding:6px; border:1px solid #ccc; text-align:right;">N${formatMoney(u.amount || u.Amount || 0)}</td></tr>`).join("") || `<tr><td colspan="4" style="padding:10px; text-align:center;">No utility logs</td></tr>`}</tbody></table>`;
   } else if (layout === "monthly_fm") {
     out += generateTitleBar("MONTHLY FM REPORT");
-    const monthVal = document.getElementById("rep-param-month")?.value;
-    if (!monthVal) {
-      showToast("Please select a month.", "warning");
+    const fromVal = document.getElementById("rep-param-month-from")?.value;
+    const toVal = document.getElementById("rep-param-month-to")?.value;
+    if (!fromVal || !toVal) {
+      showToast("Please select a From and To month.", "warning");
       return;
     }
-    const [year, month] = monthVal.split("-");
-    const monthStart = new Date(parseInt(year), parseInt(month) - 1, 1);
+    const [fromYear, fromMonth] = fromVal.split("-");
+    const [toYear, toMonth] = toVal.split("-");
+    const monthStart = new Date(parseInt(fromYear), parseInt(fromMonth) - 1, 1);
     const monthEnd = new Date(
-      parseInt(year),
-      parseInt(month),
+      parseInt(toYear),
+      parseInt(toMonth),
       0,
       23,
       59,
       59,
       999,
     );
+    if (monthEnd < monthStart) {
+      showToast("'To' month can't be before 'From' month.", "warning");
+      return;
+    }
 
     const monthTickets = (cache.tickets || []).filter((t) => {
       const d = new Date(fromSheetDate(t.date || t.Date || "") || 0);
@@ -903,82 +939,211 @@ async function compileReportPreview() {
     </div>`;
   } else if (layout === "kpi_dashboard") {
     out += generateTitleBar("EXECUTIVE KPI DASHBOARD");
-    const monthVal = document.getElementById("rep-param-month")?.value;
-    if (!monthVal) {
-      showToast("Please select a month.", "warning");
+
+    const fromVal = document.getElementById("rep-param-month-from")?.value;
+    const toVal = document.getElementById("rep-param-month-to")?.value;
+    if (!fromVal || !toVal) {
+      showToast("Please select a From and To month.", "warning");
       return;
     }
-    const [year, month] = monthVal.split("-");
-    const monthStart = new Date(parseInt(year), parseInt(month) - 1, 1);
-    const monthEnd = new Date(
-      parseInt(year),
-      parseInt(month),
-      0,
-      23,
-      59,
-      59,
-      999,
+    const [fromYear, fromMonth] = fromVal.split("-").map(Number);
+    const [toYear, toMonth] = toVal.split("-").map(Number);
+    const monthStart = new Date(fromYear, fromMonth - 1, 1);
+    const monthEnd = new Date(toYear, toMonth, 0, 23, 59, 59, 999);
+    if (monthEnd < monthStart) {
+      showToast("'To' month can't be before 'From' month.", "warning");
+      return;
+    }
+    const dayBeforeStart = new Date(monthStart.getTime() - 1);
+
+    // [FEATURE] Service Charge/Petty Cash/Energy are manager+-only
+    // sections — fetched here (not from cache, since none of the
+    // three participate in getAllData). This whole report is now
+    // filtered out of the picker for non-managers (see the dropdown
+    // population above), so reaching this point already implies the
+    // role check passed. OccupancyLog is the same history Service
+    // Charge uses to determine who was occupying a unit on a given
+    // date — reused here to work out occupancy AS OF a specific date,
+    // not just its live status right now.
+    const [scLedger, pettyCashLedger, energyLedger, occupancyLog] = await Promise.all([
+      callApi("getServiceChargeLedger", {}),
+      callApi("getPettyCashLedger", {}),
+      callApi("getEnergyLedger", {}),
+      callApi("getOccupancyLog", {}),
+    ]);
+
+    // [BUG FIX] The headline cards and Net Position now reflect the
+    // END of the selected period, not "right now" — with a range
+    // picker in place, showing today's live numbers while the user
+    // has a past period selected was confusing and inconsistent with
+    // the breakdown table below, which was already period-anchored.
+    // Selecting the current month naturally converges on today's
+    // actual figures anyway, since nothing is dated in the future.
+    function ledgerBalanceAsOf(ledger, asOfDate, positiveDirection) {
+      const cutoff = asOfDate ? new Date(asOfDate).getTime() : null;
+      let balance = 0;
+      (ledger || []).forEach((r) => {
+        if (!r) return;
+        const rowTime = new Date(r.date).getTime();
+        if (cutoff !== null && (isNaN(rowTime) || rowTime > cutoff)) return;
+        const amt = Number(r.amount) || 0;
+        balance += String(r.direction).toLowerCase() === positiveDirection ? amt : -amt;
+      });
+      return balance;
+    }
+    function monthActivityByDirection(ledger, positiveDirection) {
+      let credit = 0;
+      let debit = 0;
+      (ledger || []).forEach((r) => {
+        if (!r) return;
+        const d = new Date(r.date);
+        if (isNaN(d.getTime()) || d < monthStart || d > monthEnd) return;
+        const amt = Math.abs(Number(r.amount) || 0);
+        if (String(r.direction).toLowerCase() === positiveDirection) credit += amt;
+        else debit += amt;
+      });
+      return { credit, debit };
+    }
+
+    const occupancyLogSafe = Array.isArray(occupancyLog) ? occupancyLog : [];
+    const realApts = (cache.apts || []).filter(
+      (a) => a && String(a.type || a.Type || "").toLowerCase() !== "services",
     );
+    function occupiedCountAsOf(cutoffDate) {
+      return realApts.filter((a) =>
+        wasApartmentOccupiedDuringPeriod(getUnitNumber(a), occupancyLogSafe, cutoffDate, cutoffDate, a),
+      ).length;
+    }
+    function occupancyRateAsOf(cutoffDate) {
+      return realApts.length > 0 ? (occupiedCountAsOf(cutoffDate) / realApts.length) * 100 : 0;
+    }
 
-    const totalApts = (cache.apts || []).filter(
-      (a) => String(a.type || a.Type || "").toLowerCase() !== "services",
-    ).length;
-    const occupiedApts = (cache.apts || []).filter(
-      (a) => String(a.status || a.Status || "").toLowerCase() === "occupied",
-    ).length;
-    const occupancyRate =
-      totalApts > 0 ? ((occupiedApts / totalApts) * 100).toFixed(1) : 0;
+    const totalApts = realApts.length;
+    const openingOccupancyRate = occupancyRateAsOf(monthStart);
+    const closingOccupancyRate = occupancyRateAsOf(monthEnd);
+    const closingOccupiedCount = occupiedCountAsOf(monthEnd);
 
-    const totalAssets = (cache.assets || []).length;
-    const overdueAssets = (cache.assets || []).filter((a) => {
-      const nextDate = parseToLocalDateObject(
-        a.nextService || a.NextService || "",
-      );
-      return nextDate && nextDate <= new Date().setHours(0, 0, 0, 0);
-    }).length;
+    const scBalance = Array.isArray(scLedger) ? ledgerBalanceAsOf(scLedger, monthEnd, "credit") : null;
+    const pettyCashBalance = Array.isArray(pettyCashLedger) ? ledgerBalanceAsOf(pettyCashLedger, monthEnd, "inflow") : null;
+    const energyBalance = Array.isArray(energyLedger) ? ledgerBalanceAsOf(energyLedger, monthEnd, "inflow") : null;
 
-    const openTickets = (cache.tickets || []).filter(
-      (t) => String(t.status || t.Status || "").toLowerCase() !== "resolved",
-    ).length;
+    // Net Position only sums whichever of the three actually loaded —
+    // one failed fetch (e.g. a transient error) shouldn't make the
+    // other two balances look wrong by folding a silent zero into the
+    // total; it's excluded from the sum entirely, same as it shows
+    // "Unavailable" rather than "N0.00" in its own card.
+    const balances = [scBalance, pettyCashBalance, energyBalance];
+    const netPosition = balances.some((v) => v !== null)
+      ? balances.reduce((s, v) => s + (v || 0), 0)
+      : null;
 
-    const allPayments = cache.payments || [];
-    const totalInflow = allPayments
-      .filter((p) => p.direction === "INFLOW")
-      .reduce((s, p) => s + parseFloat(p.amount || p.Amount || 0), 0);
-    const totalOutflow = allPayments
-      .filter((p) => p.direction === "OUTFLOW")
-      .reduce((s, p) => s + parseFloat(p.amount || p.Amount || 0), 0);
+    const balanceCard = (label, value, color) =>
+      `<div style="background:#fff; border:2px solid #000; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;">
+        <div style="font-size:11px; font-weight:800; text-transform:uppercase; color:var(--muted, #666);">${escapeHtml(label)}</div>
+        <div style="font-size:20px; font-weight:900; color:${value === null ? "#999" : value >= 0 ? color : "#dc3545"};">${value === null ? "Unavailable" : `${value >= 0 ? "" : "-"}N${formatMoney(Math.abs(value))}`}</div>
+      </div>`;
 
-    out += `<div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-bottom:20px;">
-      <div style="background:#e8f4fd; border:2px solid #0d6efd; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; color:#0d6efd; text-transform:uppercase;">Occupancy Rate</div><div style="font-size:28px; font-weight:900;">${occupancyRate}%</div><div style="font-size:12px; color:#666;">${occupiedApts} / ${totalApts} units</div></div>
-      <div style="background:#fdecea; border:2px solid #dc3545; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; color:#dc3545; text-transform:uppercase;">PM Overdue</div><div style="font-size:28px; font-weight:900;">${overdueAssets}</div><div style="font-size:12px; color:#666;">of ${totalAssets} assets</div></div>
-      <div style="background:#fff8e1; border:2px solid #ffc107; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; color:#856404; text-transform:uppercase;">Open Tickets</div><div style="font-size:28px; font-weight:900;">${openTickets}</div></div>
+    const asOfLabel = monthEnd.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+
+    out += `<div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:12px; margin-bottom:20px;">
+      <div style="background:#e8f4fd; border:2px solid #0d6efd; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; color:#0d6efd; text-transform:uppercase;">Occupancy Rate</div><div style="font-size:28px; font-weight:900;">${closingOccupancyRate.toFixed(1)}%</div><div style="font-size:12px; color:#666;">${closingOccupiedCount} / ${totalApts} units as of ${escapeHtml(asOfLabel)}</div></div>
+      ${balanceCard("Service Charge Pool", scBalance, "#198754")}
+      ${balanceCard("Petty Cash", pettyCashBalance, "#198754")}
+      ${balanceCard("Energy", energyBalance, "#198754")}
     </div>`;
 
     out += `<div style="display:grid; grid-template-columns:1fr; gap:12px; margin-bottom:20px;">
-      <div style="background:#e8f5e9; border:2px solid #198754; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; color:#198754; text-transform:uppercase;">Net Position</div><div style="font-size:24px; font-weight:900; color:${totalInflow - totalOutflow >= 0 ? "#198754" : "#dc3545"};">${totalInflow - totalOutflow >= 0 ? "" : "-"}N${formatMoney(Math.abs(totalInflow - totalOutflow))}</div></div>
+      <div style="background:#e8f5e9; border:2px solid #198754; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; color:#198754; text-transform:uppercase;">Net Position as of ${escapeHtml(asOfLabel)} (Service Charge + Petty Cash + Energy)</div><div style="font-size:24px; font-weight:900; color:${netPosition === null ? "#999" : netPosition >= 0 ? "#198754" : "#dc3545"};">${netPosition === null ? "Unavailable" : `${netPosition >= 0 ? "" : "-"}N${formatMoney(Math.abs(netPosition))}`}</div></div>
     </div>`;
 
-    out += `<div style="background:#fff; border:2px solid #000; border-radius:12px; padding:16px;">
-      <h3 style="font-size:13px; font-weight:900; text-transform:uppercase; margin:0 0 10px 0; border-bottom:1px solid #ccc; padding-bottom:4px;">Financial Summary</h3>
-      <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #e9ecef;"><span style="font-weight:700;">Total Inflow</span><span style="font-weight:900; color:#198754;">N${formatMoney(totalInflow)}</span></div>
-      <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #e9ecef;"><span style="font-weight:700;">Total Outflow</span><span style="font-weight:900; color:#dc3545;">N${formatMoney(totalOutflow)}</span></div>
-      <div style="display:flex; justify-content:space-between; padding:8px 0 0 0; margin-top:8px; border-top:2px solid #000;"><span style="font-weight:900; font-size:14px;">NET POSITION</span><span style="font-weight:900; font-size:18px; color:${totalInflow - totalOutflow >= 0 ? "#198754" : "#dc3545"};">${totalInflow - totalOutflow >= 0 ? "" : "-"}N${formatMoney(Math.abs(totalInflow - totalOutflow))}</span></div>
-    </div>`;
+    // [FEATURE] Period breakdown — Opening (balance/rate at the start
+    // of the selected From month), Period Activity (total unsigned
+    // activity for the ledgers across the whole range; percentage
+    // change for occupancy), and Closing (same period-end figures
+    // already computed above for the headline cards — reused here
+    // rather than recalculated). A single month is just a range where
+    // From and To are the same — no special-casing needed.
+    const openingScBalance = Array.isArray(scLedger) ? ledgerBalanceAsOf(scLedger, dayBeforeStart, "credit") : null;
+    const openingPettyCashBalance = Array.isArray(pettyCashLedger) ? ledgerBalanceAsOf(pettyCashLedger, dayBeforeStart, "inflow") : null;
+    const openingEnergyBalance = Array.isArray(energyLedger) ? ledgerBalanceAsOf(energyLedger, dayBeforeStart, "inflow") : null;
 
-    // [FEATURE] Every category in the financial breakdown above forms
-    // one pie slice and one legend row below — see
-    // buildPieChartWithLegend() for why nothing can appear in one
-    // without the other.
+    const breakdownRow = (label, opening, credit, debit, closing, isPercent) => {
+      const fmt = (v) => {
+        if (v === null) return "Unavailable";
+        if (isPercent) return `${v.toFixed(1)}%`;
+        return `${v >= 0 ? "" : "-"}N${formatMoney(Math.abs(v))}`;
+      };
+      const fmtSigned = (v) => {
+        if (v === null) return "Unavailable";
+        if (isPercent) return `${v > 0 ? "+" : ""}${v.toFixed(1)}%`;
+        return v > 0 ? `N${formatMoney(v)}` : "—";
+      };
+      return `<tr style="border-bottom:1px solid #eee;">
+        <td style="padding:8px 6px; font-weight:700;">${escapeHtml(label)}</td>
+        <td style="padding:8px 6px; text-align:right;">${fmt(opening)}</td>
+        <td style="padding:8px 6px; text-align:right; color:#198754;">${fmtSigned(credit)}</td>
+        <td style="padding:8px 6px; text-align:right; color:#dc3545;">${fmtSigned(debit)}</td>
+        <td style="padding:8px 6px; text-align:right; font-weight:700;">${fmt(closing)}</td>
+      </tr>`;
+    };
+
     out += `<div style="background:#fff; border:2px solid #000; border-radius:12px; padding:16px; margin-top:12px;">
-      <h3 style="font-size:13px; font-weight:900; text-transform:uppercase; margin:0 0 12px 0; border-bottom:1px solid #ccc; padding-bottom:4px;">Financial Breakdown</h3>
-      ${buildPieChartWithLegend(
-        [
-          { label: "Inflow", value: totalInflow, color: "#198754" },
-          { label: "Outflow", value: totalOutflow, color: "#dc3545" },
-        ],
-        { valuePrefix: "N" },
-      )}
+      <h3 style="font-size:13px; font-weight:900; text-transform:uppercase; margin:0 0 12px 0; border-bottom:1px solid #ccc; padding-bottom:4px;">Period Breakdown — ${escapeHtml(monthStart.toLocaleString("en-US", { month: "short", year: "numeric" }))}${monthStart.getFullYear() === monthEnd.getFullYear() && monthStart.getMonth() === monthEnd.getMonth() ? "" : ` – ${escapeHtml(monthEnd.toLocaleString("en-US", { month: "short", year: "numeric" }))}`}</h3>
+      <table style="width:100%; border-collapse:collapse; font-size:13px;">
+        <thead><tr style="border-bottom:2px solid #000; text-align:left;">
+          <th style="padding:8px 6px;">Item</th>
+          <th style="padding:8px 6px; text-align:right;">Opening Balance</th>
+          <th style="padding:8px 6px; text-align:right;">Credit</th>
+          <th style="padding:8px 6px; text-align:right;">Debit</th>
+          <th style="padding:8px 6px; text-align:right;">Closing Balance</th>
+        </tr></thead>
+        <tbody>
+          ${(() => {
+            const occDelta = closingOccupancyRate - openingOccupancyRate;
+            return breakdownRow(
+              "Occupancy Rate",
+              openingOccupancyRate,
+              occDelta > 0 ? occDelta : 0,
+              occDelta < 0 ? Math.abs(occDelta) : 0,
+              closingOccupancyRate,
+              true,
+            );
+          })()}
+          ${(() => {
+            const activity = Array.isArray(scLedger) ? monthActivityByDirection(scLedger, "credit") : null;
+            return breakdownRow(
+              "Service Charge Pool",
+              openingScBalance,
+              activity ? activity.credit : null,
+              activity ? activity.debit : null,
+              scBalance,
+              false,
+            );
+          })()}
+          ${(() => {
+            const activity = Array.isArray(pettyCashLedger) ? monthActivityByDirection(pettyCashLedger, "inflow") : null;
+            return breakdownRow(
+              "Petty Cash",
+              openingPettyCashBalance,
+              activity ? activity.credit : null,
+              activity ? activity.debit : null,
+              pettyCashBalance,
+              false,
+            );
+          })()}
+          ${(() => {
+            const activity = Array.isArray(energyLedger) ? monthActivityByDirection(energyLedger, "inflow") : null;
+            return breakdownRow(
+              "Energy",
+              openingEnergyBalance,
+              activity ? activity.credit : null,
+              activity ? activity.debit : null,
+              energyBalance,
+              false,
+            );
+          })()}
+        </tbody>
+      </table>
     </div>`;
   } else if (layout === "data_quality") {
     out += generateTitleBar("DATA QUALITY AUDIT");
