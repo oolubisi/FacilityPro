@@ -175,7 +175,30 @@ function getCurrentMonthRange() {
   };
 }
 
-function generateMonthlyReportPack() {
+// [FEATURE] Made configurable so the sections included in the pack
+// aren't hardcoded — see the "monthlypackoptions" modal in
+// Modals-forms.js, which reads this same list to build its checklist.
+// key must match the "layout" value each capture() call below uses.
+const MONTHLY_PACK_SECTIONS = [
+  { key: "monthly_fm", label: "Monthly FM Report" },
+  { key: "kpi_dashboard", label: "Executive KPI Dashboard" },
+  { key: "ledger_summary", label: "Comprehensive Financial Ledger" },
+  { key: "pm_schedule", label: "Preventive Maintenance Schedule" },
+];
+const MONTHLY_PACK_SECTIONS_STORAGE_KEY = "monthlyPackSelectedSections";
+
+function getMonthlyPackSelectedSections() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(MONTHLY_PACK_SECTIONS_STORAGE_KEY));
+    if (Array.isArray(saved) && saved.length > 0) return saved;
+  } catch (e) {
+    // fall through to default
+  }
+  return MONTHLY_PACK_SECTIONS.map((s) => s.key);
+}
+
+function generateMonthlyReportPack(selectedKeys) {
+  const keys = Array.isArray(selectedKeys) && selectedKeys.length > 0 ? selectedKeys : getMonthlyPackSelectedSections();
   const viewport = document.getElementById("report-preview-viewport");
   if (!viewport) return;
   const range = getCurrentMonthRange();
@@ -192,31 +215,44 @@ function generateMonthlyReportPack() {
     }
   };
 
-  capture("Monthly FM Report", () => {
-    setReportSelection("executive", "monthly_fm", {
-      "rep-param-month-from": range.month,
-      "rep-param-month-to": range.month,
+  if (keys.includes("monthly_fm")) {
+    capture("Monthly FM Report", () => {
+      setReportSelection("executive", "monthly_fm", {
+        "rep-param-month-from": range.month,
+        "rep-param-month-to": range.month,
+      });
+      compileReportPreview();
     });
-    compileReportPreview();
-  });
-  capture("Executive KPI Dashboard", () => {
-    setReportSelection("executive", "kpi_dashboard", {
-      "rep-param-month-from": range.month,
-      "rep-param-month-to": range.month,
+  }
+  if (keys.includes("kpi_dashboard")) {
+    capture("Executive KPI Dashboard", () => {
+      setReportSelection("executive", "kpi_dashboard", {
+        "rep-param-month-from": range.month,
+        "rep-param-month-to": range.month,
+      });
+      compileReportPreview();
     });
-    compileReportPreview();
-  });
-  capture("Comprehensive Financial Ledger", () => {
-    setReportSelection("financials", "ledger_summary", {
-      rep_start_date: range.start,
-      rep_end_date: range.end,
+  }
+  if (keys.includes("ledger_summary")) {
+    capture("Comprehensive Financial Ledger", () => {
+      setReportSelection("financials", "ledger_summary", {
+        rep_start_date: range.start,
+        rep_end_date: range.end,
+      });
+      generateComprehensiveFinancialLedger();
     });
-    generateComprehensiveFinancialLedger();
-  });
-  capture("Preventive Maintenance Schedule", () => {
-    setReportSelection("equipment", "pm_schedule");
-    compileReportPreview();
-  });
+  }
+  if (keys.includes("pm_schedule")) {
+    capture("Preventive Maintenance Schedule", () => {
+      setReportSelection("equipment", "pm_schedule");
+      compileReportPreview();
+    });
+  }
+
+  if (sections.length === 0) {
+    showToast("Select at least one section to include.", "warning");
+    return;
+  }
 
   const packHtml = `<div style="font-family:'Helvetica','Inter',sans-serif; color:#000; background:#fff; box-sizing:border-box; width:100%; max-width:900px; margin:0 auto; padding:0; line-height:1.4;">
     ${sections.join("")}

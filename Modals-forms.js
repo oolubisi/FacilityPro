@@ -670,6 +670,38 @@ async function openModal(type, editData = null) {
     };
   }
 
+  // ── MONTHLY REPORT PACK: SECTION SELECTION ──
+  // Reads the same MONTHLY_PACK_SECTIONS list generateMonthlyReportPack()
+  // uses in Reports.js, so adding a section there automatically shows
+  // up here too — nothing to keep in sync by hand.
+  else if (type === "monthlypackoptions") {
+    title.innerText = "Monthly Report Pack — Sections";
+    const selected = getMonthlyPackSelectedSections();
+    body.innerHTML = `
+      <div class="form-field span-3">
+        ${MONTHLY_PACK_SECTIONS.map(
+          (s) => `<label style="display:flex; align-items:center; gap:8px; font-weight:700; padding:8px 0; border-bottom:1px solid #eee; cursor:pointer;">
+            <input type="checkbox" class="monthly-pack-section-cb" value="${escapeHtml(s.key)}" ${selected.includes(s.key) ? "checked" : ""} style="width:auto;">
+            ${escapeHtml(s.label)}
+          </label>`,
+        ).join("")}
+      </div>
+      <p style="font-size:12px; color:var(--muted); grid-column:span 3; margin:8px 0 0 0;">Your selection is remembered for next time.</p>
+    `;
+    submit.innerText = "Generate";
+
+    submit.onclick = () => {
+      const checked = Array.from(document.querySelectorAll(".monthly-pack-section-cb:checked")).map((el) => el.value);
+      if (checked.length === 0) {
+        showToast("Select at least one section to include.", "error");
+        return;
+      }
+      localStorage.setItem(MONTHLY_PACK_SECTIONS_STORAGE_KEY, JSON.stringify(checked));
+      closeModal();
+      generateMonthlyReportPack(checked);
+    };
+  }
+
   // ── PETTY CASH: INFLOW ──
   else if (type === "pettycashinflow") {
     title.innerText = "Log Petty Cash Inflow";

@@ -938,7 +938,7 @@ function renderReportShortcuts() {
   document.getElementById("rep-profile-selector").addEventListener("change", handleReportProfileSwitch);
   document.getElementById("rep-layout-selector").addEventListener("change", handleReportLayoutSwitch);
   document.getElementById("desktop-preview-report").addEventListener("click", compileReportPreview);
-  document.getElementById("desktop-monthly-report").addEventListener("click", generateMonthlyReportPack);
+  document.getElementById("desktop-monthly-report").addEventListener("click", () => openModal("monthlypackoptions"));
   document.getElementById("desktop-pdf-report").addEventListener("click", downloadCurrentReportPDF);
   document.getElementById("desktop-print-report").addEventListener("click", printCurrentReport);
   document.getElementById("desktop-csv-report").addEventListener("click", downloadCurrentReportCSV);
