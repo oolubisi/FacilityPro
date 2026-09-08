@@ -912,9 +912,6 @@ function renderReportShortcuts() {
         <button class="action-btn" id="desktop-preview-report">
           <i class="fas fa-eye"></i> Generate Preview
         </button>
-        <button class="action-btn success" id="desktop-monthly-report">
-          <i class="fas fa-layer-group"></i> Monthly Pack
-        </button>
       </div>
 
       <div id="report-onscreen-preview-card" class="desktop-report-preview">
@@ -933,15 +930,23 @@ function renderReportShortcuts() {
         </div>
       </div>
     </div>
+    <div class="desktop-form-card">
+      <h3 style="margin:0 0 12px; font-size:15px;">Report Groups</h3>
+      <button class="action-btn success" id="desktop-new-report-group" style="margin-bottom:12px;">
+        <i class="fas fa-plus"></i> New Report Group
+      </button>
+      <div id="desktop-report-groups-list"></div>
+    </div>
   `;
 
   document.getElementById("rep-profile-selector").addEventListener("change", handleReportProfileSwitch);
   document.getElementById("rep-layout-selector").addEventListener("change", handleReportLayoutSwitch);
   document.getElementById("desktop-preview-report").addEventListener("click", compileReportPreview);
-  document.getElementById("desktop-monthly-report").addEventListener("click", () => openModal("monthlypackoptions"));
+  document.getElementById("desktop-new-report-group").addEventListener("click", () => openModal("reportgroupeditor"));
   document.getElementById("desktop-pdf-report").addEventListener("click", downloadCurrentReportPDF);
   document.getElementById("desktop-print-report").addEventListener("click", printCurrentReport);
   document.getElementById("desktop-csv-report").addEventListener("click", downloadCurrentReportCSV);
+  renderReportGroupsList();
 }
 
 function renderSettingsShortcuts() {

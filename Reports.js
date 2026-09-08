@@ -31,6 +31,7 @@ function initReportsEngine() {
         "<option value=''>-- Choose Configurations --</option>";
       document.getElementById("rep-dynamic-parameters-frame").innerHTML = "";
       refreshReportPresetSelector();
+      renderReportGroupsList();
       setOnscreenPreviewCardDisplay("none");
       setGlobalLoading(false);
     })
@@ -175,34 +176,104 @@ function getCurrentMonthRange() {
   };
 }
 
-// [FEATURE] Made configurable so the sections included in the pack
-// aren't hardcoded — see the "monthlypackoptions" modal in
-// Modals-forms.js, which reads this same list to build its checklist.
-// key must match the "layout" value each capture() call below uses.
-const MONTHLY_PACK_SECTIONS = [
-  { key: "monthly_fm", label: "Monthly FM Report" },
-  { key: "kpi_dashboard", label: "Executive KPI Dashboard" },
-  { key: "ledger_summary", label: "Comprehensive Financial Ledger" },
-  { key: "pm_schedule", label: "Preventive Maintenance Schedule" },
-];
-const MONTHLY_PACK_SECTIONS_STORAGE_KEY = "monthlyPackSelectedSections";
+// [FEATURE] Report Groups — user-defined, named collections of any
+// reports in the app (see ALL_REPORTS_FLAT below), generated together
+// as one bundled PDF. Stored in localStorage, same as Report Presets
+// above — per-device, not shared across staff accounts. Seeded once
+// with a default "Monthly Report Pack" group so existing habits carry
+// over; after that the user owns the list entirely (rename, edit
+// membership, delete, add new groups) via the "reportgroupeditor"
+// modal in Modals-forms.js.
+const REPORT_GROUPS_STORAGE_KEY = "facility_pro_report_groups";
+const REPORT_GROUPS_SEEDED_KEY = "facility_pro_report_groups_seeded";
 
-function getMonthlyPackSelectedSections() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(MONTHLY_PACK_SECTIONS_STORAGE_KEY));
-    if (Array.isArray(saved) && saved.length > 0) return saved;
-  } catch (e) {
-    // fall through to default
+function getReportGroups() {
+  if (!localStorage.getItem(REPORT_GROUPS_SEEDED_KEY)) {
+    const defaultGroup = {
+      id: "default-monthly-pack",
+      name: "Monthly Report Pack",
+      reportKeys: ["monthly_fm", "kpi_dashboard", "ledger_summary", "pm_schedule"],
+    };
+    localStorage.setItem(REPORT_GROUPS_STORAGE_KEY, JSON.stringify([defaultGroup]));
+    localStorage.setItem(REPORT_GROUPS_SEEDED_KEY, "true");
   }
-  return MONTHLY_PACK_SECTIONS.map((s) => s.key);
+  try {
+    const groups = JSON.parse(localStorage.getItem(REPORT_GROUPS_STORAGE_KEY));
+    return Array.isArray(groups) ? groups : [];
+  } catch (e) {
+    return [];
+  }
 }
 
-function generateMonthlyReportPack(selectedKeys) {
-  const keys = Array.isArray(selectedKeys) && selectedKeys.length > 0 ? selectedKeys : getMonthlyPackSelectedSections();
+function saveReportGroups(groups) {
+  localStorage.setItem(REPORT_GROUPS_STORAGE_KEY, JSON.stringify(groups));
+}
+
+function saveReportGroup(group) {
+  const groups = getReportGroups();
+  const existingIndex = groups.findIndex((g) => g.id === group.id);
+  if (existingIndex === -1) {
+    groups.push(group);
+  } else {
+    groups[existingIndex] = group;
+  }
+  saveReportGroups(groups);
+}
+
+function deleteReportGroup(groupId) {
+  saveReportGroups(getReportGroups().filter((g) => g.id !== groupId));
+}
+
+// [FEATURE] Runs each report in the group through the exact same
+// compileReportPreview() dispatch a manually-run report uses — it
+// already knows how to build every layout, so nothing here duplicates
+// that logic. What this adds is auto-filling whichever parameters
+// that report happens to need with a sensible current-period default
+// (current month, today, etc.), since there's no one manually sitting
+// at the params form for each one. A report that has no safe default
+// (which single apartment?) is skipped rather than guessed — see
+// REPORTS_REQUIRING_MANUAL_UNIT — and named in the summary toast so
+// nothing silently goes missing from the pack.
+function autoFillReportParameters(key) {
+  const range = getCurrentMonthRange();
+  const today = new Date().toISOString().split("T")[0];
+
+  const monthFrom = document.getElementById("rep-param-month-from");
+  const monthTo = document.getElementById("rep-param-month-to");
+  if (monthFrom && monthTo) {
+    monthFrom.value = range.month;
+    monthTo.value = range.month;
+  }
+  const dateField = document.getElementById("rep-param-date");
+  if (dateField) dateField.value = today;
+
+  const startDate = document.getElementById("rep_start_date");
+  const endDate = document.getElementById("rep_end_date");
+  if (startDate && endDate) {
+    startDate.value = range.start;
+    endDate.value = range.end;
+  }
+
+  // "Ledger" report's type selector has no meaningful default of its
+  // own (its first option is a blank placeholder) — Inflow is as
+  // reasonable a choice as any for an unattended run.
+  if (key === "ledger") {
+    const ledgerType = document.getElementById("rep-ledger-type");
+    if (ledgerType && !ledgerType.value) ledgerType.value = "inflow_paid_pending";
+  }
+}
+
+function generateReportGroupPack(groupId) {
+  const group = getReportGroups().find((g) => g.id === groupId);
+  if (!group) {
+    showToast("Report group not found.", "error");
+    return;
+  }
   const viewport = document.getElementById("report-preview-viewport");
   if (!viewport) return;
-  const range = getCurrentMonthRange();
+
   const sections = [];
+  const skipped = [];
 
   const capture = (title, renderFn) => {
     renderFn();
@@ -215,42 +286,22 @@ function generateMonthlyReportPack(selectedKeys) {
     }
   };
 
-  if (keys.includes("monthly_fm")) {
-    capture("Monthly FM Report", () => {
-      setReportSelection("executive", "monthly_fm", {
-        "rep-param-month-from": range.month,
-        "rep-param-month-to": range.month,
-      });
+  group.reportKeys.forEach((key) => {
+    const entry = ALL_REPORTS_FLAT.find((r) => r.key === key);
+    if (!entry) return; // report has since been removed from the app
+    if (REPORTS_REQUIRING_MANUAL_UNIT.includes(key)) {
+      skipped.push(entry.label);
+      return;
+    }
+    capture(entry.label, () => {
+      setReportSelection(entry.profile, key, {});
+      autoFillReportParameters(key);
       compileReportPreview();
     });
-  }
-  if (keys.includes("kpi_dashboard")) {
-    capture("Executive KPI Dashboard", () => {
-      setReportSelection("executive", "kpi_dashboard", {
-        "rep-param-month-from": range.month,
-        "rep-param-month-to": range.month,
-      });
-      compileReportPreview();
-    });
-  }
-  if (keys.includes("ledger_summary")) {
-    capture("Comprehensive Financial Ledger", () => {
-      setReportSelection("financials", "ledger_summary", {
-        rep_start_date: range.start,
-        rep_end_date: range.end,
-      });
-      generateComprehensiveFinancialLedger();
-    });
-  }
-  if (keys.includes("pm_schedule")) {
-    capture("Preventive Maintenance Schedule", () => {
-      setReportSelection("equipment", "pm_schedule");
-      compileReportPreview();
-    });
-  }
+  });
 
   if (sections.length === 0) {
-    showToast("Select at least one section to include.", "warning");
+    showToast("None of this group's reports could be generated automatically.", "warning");
     return;
   }
 
@@ -258,19 +309,120 @@ function generateMonthlyReportPack(selectedKeys) {
     ${sections.join("")}
   </div>`;
   const ref = generateReportRef("PACK");
-  const wrapped = wrapReportContent(packHtml, "Monthly Report Pack", ref, false);
+  const wrapped = wrapReportContent(packHtml, group.name, ref, false);
   viewport.innerHTML = wrapped;
   const printContainer = document.getElementById("report-print-container");
   if (printContainer) printContainer.innerHTML = wrapped;
-  window.currentReportFilename = "Monthly_Report_Pack_" + range.month;
+  window.currentReportFilename = group.name.replace(/\s+/g, "_") + "_" + Date.now();
   window.currentReportAttachmentManifest = [];
-  window.currentReportTitle = "Monthly Report Pack";
+  window.currentReportTitle = group.name;
   window.currentReportShowTitleLine = false;
   window.currentReportRef = ref;
   window.currentReportRawContent = packHtml;
   setOnscreenPreviewCardDisplay("block");
-  showToast("Monthly report pack generated", "success");
+  showToast(
+    skipped.length > 0
+      ? `Generated "${group.name}". Skipped (needs a specific apartment, run manually): ${skipped.join(", ")}.`
+      : `Generated "${group.name}".`,
+    skipped.length > 0 ? "warning" : "success",
+  );
 }
+
+function renderReportGroupsList() {
+  const listId = isDesktopShell() ? "desktop-report-groups-list" : "mobile-report-groups-list";
+  const el = document.getElementById(listId);
+  if (!el) return;
+
+  const groups = getReportGroups();
+  if (groups.length === 0) {
+    el.innerHTML = `<p style="color:#666; font-size:13px;">No report groups yet — create one to bundle several reports into a single generate.</p>`;
+    return;
+  }
+
+  el.innerHTML = groups
+    .map(
+      (g) => `<div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid #eee; gap:10px;">
+        <div>
+          <strong style="font-size:13px;">${escapeHtml(g.name)}</strong>
+          <div style="font-size:12px; color:#666;">${g.reportKeys.length} report${g.reportKeys.length === 1 ? "" : "s"}</div>
+        </div>
+        <div style="display:flex; gap:6px; flex-shrink:0;">
+          <button type="button" onclick="generateReportGroupPack('${escapeHtml(g.id)}')" style="background:var(--primary, #0d6efd); color:#fff; border:0; border-radius:6px; padding:6px 12px; font-size:12px; font-weight:700; cursor:pointer;">Generate</button>
+          <button type="button" onclick="editReportGroup('${escapeHtml(g.id)}')" style="background:var(--text, #333); color:#fff; border:0; border-radius:6px; padding:6px 10px; font-size:12px; font-weight:700; cursor:pointer;">Edit</button>
+          <button type="button" onclick="deleteReportGroupConfirm('${escapeHtml(g.id)}')" style="background:#fdecea; color:#dc3545; border:0; border-radius:6px; padding:6px 10px; font-size:12px; font-weight:700; cursor:pointer;">Delete</button>
+        </div>
+      </div>`,
+    )
+    .join("");
+}
+
+function editReportGroup(groupId) {
+  const group = getReportGroups().find((g) => g.id === groupId);
+  if (!group) {
+    showToast("Report group not found.", "error");
+    return;
+  }
+  openModal("reportgroupeditor", group);
+}
+
+function deleteReportGroupConfirm(groupId) {
+  if (!window.confirm("Delete this report group? This can't be undone.")) return;
+  deleteReportGroup(groupId);
+  renderReportGroupsList();
+  showToast("Group deleted.", "success");
+}
+
+// Single source of truth for every real report in the app, keyed by
+// profile — shared between the report picker (below) and the Report
+// Groups feature, so a report only needs to be listed once for both
+// to know about it. The "" placeholder rows are filtered out wherever
+// this is consumed as a flat list (see ALL_REPORTS_FLAT).
+const REPORT_LAYOUT_OPTIONS_BY_PROFILE = {
+  apartments: [
+    ["", "-- Select Report --"],
+    ["occupancy_report", "Apartment Occupancy Report"],
+    ["apt_custom_print", "Apartments Manifest"],
+    ["detailed_profile", "Detailed Apartment Profile"],
+  ],
+  equipment: [
+    ["", "-- Select Report --"],
+    ["generator_log", "Generator & Diesel Log"],
+    ["pm_schedule", "PM Schedule"],
+    ["asset_register", "Master Asset Register"],
+    ["ticket_report", "Maintenance Tickets"],
+    ["inventory_consumption", "Inventory Consumption"],
+    ["inventory_valuation", "Inventory Stock Valuation"],
+  ],
+  financials: [
+    ["", "-- Select Report --"],
+    ["ledger_summary", "Comprehensive Financial Ledger"],
+    ["pending_outflow", "Pending Outflow"],
+    ["ledger", "Ledger"],
+    ["sc_overall", "Service Charge — Overall"],
+    ["sc_per_apartment", "Service Charge — Per Apartment"],
+    ["sc_budget_variance", "Service Charge — Budget vs Actual"],
+    ["petty_cash", "Petty Cash Ledger"],
+    ["energy_ledger", "Energy Ledger"],
+  ],
+  executive: [
+    ["", "-- Select Report --"],
+    ["daily_operations", "Daily Operations Report"],
+    ["monthly_fm", "Monthly FM Report"],
+    ["kpi_dashboard", "Executive KPI Dashboard"],
+    ["data_quality", "Data Quality Audit"],
+  ],
+};
+
+// Reports that need one specific, meaningful-only-per-run choice with
+// no safe universal default (which single apartment?) — Report Groups
+// skips these rather than guessing, and says so when it does.
+const REPORTS_REQUIRING_MANUAL_UNIT = ["occupancy_report", "detailed_profile", "sc_per_apartment"];
+
+// Flattened for anything that just needs "every real report,
+// regardless of profile" — e.g. the Report Groups checklist.
+const ALL_REPORTS_FLAT = Object.entries(REPORT_LAYOUT_OPTIONS_BY_PROFILE).flatMap(([profile, rows]) =>
+  rows.filter(([key]) => key !== "").map(([key, label]) => ({ profile, key, label })),
+);
 
 function handleReportProfileSwitch() {
   const profile = document.getElementById("rep-profile-selector").value;
@@ -280,41 +432,7 @@ function handleReportProfileSwitch() {
   paramsFrame.innerHTML = "";
   setOnscreenPreviewCardDisplay("none");
 
-  const options = {
-    apartments: [
-      ["", "-- Select Report --"],
-      ["occupancy_report", "Apartment Occupancy Report"],
-      ["apt_custom_print", "Apartments Manifest"],
-      ["detailed_profile", "Detailed Apartment Profile"],
-    ],
-    equipment: [
-      ["", "-- Select Report --"],
-      ["generator_log", "Generator & Diesel Log"],
-      ["pm_schedule", "PM Schedule"],
-      ["asset_register", "Master Asset Register"],
-      ["ticket_report", "Maintenance Tickets"],
-      ["inventory_consumption", "Inventory Consumption"],
-      ["inventory_valuation", "Inventory Stock Valuation"],
-    ],
-    financials: [
-      ["", "-- Select Report --"],
-      ["ledger_summary", "Comprehensive Financial Ledger"],
-      ["pending_outflow", "Pending Outflow"],
-      ["ledger", "Ledger"],
-      ["sc_overall", "Service Charge — Overall"],
-      ["sc_per_apartment", "Service Charge — Per Apartment"],
-      ["sc_budget_variance", "Service Charge — Budget vs Actual"],
-      ["petty_cash", "Petty Cash Ledger"],
-      ["energy_ledger", "Energy Ledger"],
-    ],
-    executive: [
-      ["", "-- Select Report --"],
-      ["daily_operations", "Daily Operations Report"],
-      ["monthly_fm", "Monthly FM Report"],
-      ["kpi_dashboard", "Executive KPI Dashboard"],
-      ["data_quality", "Data Quality Audit"],
-    ],
-  };
+  const options = REPORT_LAYOUT_OPTIONS_BY_PROFILE;
   (options[profile] || [])
     // [FEATURE] Service Charge, Petty Cash, AND Inventory reports are
     // manager+ only, same as their whole sections — filtered out of

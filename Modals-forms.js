@@ -670,35 +670,60 @@ async function openModal(type, editData = null) {
     };
   }
 
-  // ── MONTHLY REPORT PACK: SECTION SELECTION ──
-  // Reads the same MONTHLY_PACK_SECTIONS list generateMonthlyReportPack()
-  // uses in Reports.js, so adding a section there automatically shows
-  // up here too — nothing to keep in sync by hand.
-  else if (type === "monthlypackoptions") {
-    title.innerText = "Monthly Report Pack — Sections";
-    const selected = getMonthlyPackSelectedSections();
+  // ── REPORT GROUPS: CREATE / EDIT ──
+  // Reads ALL_REPORTS_FLAT (Reports.js) so every real report in the
+  // app is offered here automatically — nothing to keep in sync by
+  // hand when a new report type gets added later.
+  else if (type === "reportgroupeditor") {
+    title.innerText = isEdit ? "Edit Report Group" : "New Report Group";
+    const selectedKeys = isEdit ? editData.reportKeys || [] : [];
+    const profileLabels = { apartments: "Apartments", equipment: "Equipment", financials: "Financials", executive: "Executive" };
+    const byProfile = {};
+    ALL_REPORTS_FLAT.forEach((r) => {
+      if (!byProfile[r.profile]) byProfile[r.profile] = [];
+      byProfile[r.profile].push(r);
+    });
+
     body.innerHTML = `
+      <div class="form-field span-3"><label ${lbl}>Group Name</label><input id="rg_name" value="${isEdit ? escapeHtml(editData.name || "") : ""}" placeholder="e.g. Board Meeting Pack" ${ls}></div>
       <div class="form-field span-3">
-        ${MONTHLY_PACK_SECTIONS.map(
-          (s) => `<label style="display:flex; align-items:center; gap:8px; font-weight:700; padding:8px 0; border-bottom:1px solid #eee; cursor:pointer;">
-            <input type="checkbox" class="monthly-pack-section-cb" value="${escapeHtml(s.key)}" ${selected.includes(s.key) ? "checked" : ""} style="width:auto;">
-            ${escapeHtml(s.label)}
-          </label>`,
-        ).join("")}
+        ${Object.entries(byProfile)
+          .map(
+            ([profile, reports]) => `
+          <div style="margin-top:10px; font-weight:900; font-size:11px; text-transform:uppercase; color:var(--muted); border-bottom:1px solid #eee; padding-bottom:4px;">${escapeHtml(profileLabels[profile] || profile)}</div>
+          ${reports
+            .map(
+              (r) => `<label style="display:flex; align-items:center; gap:8px; font-weight:700; padding:6px 0; cursor:pointer;">
+                <input type="checkbox" class="report-group-cb" value="${escapeHtml(r.key)}" ${selectedKeys.includes(r.key) ? "checked" : ""} style="width:auto;">
+                ${escapeHtml(r.label)}${REPORTS_REQUIRING_MANUAL_UNIT.includes(r.key) ? ` <span style="color:var(--muted); font-weight:400; font-size:11px;">(needs a specific apartment — always run manually, even in a group)</span>` : ""}
+              </label>`,
+            )
+            .join("")}
+        `,
+          )
+          .join("")}
       </div>
-      <p style="font-size:12px; color:var(--muted); grid-column:span 3; margin:8px 0 0 0;">Your selection is remembered for next time.</p>
     `;
-    submit.innerText = "Generate";
 
     submit.onclick = () => {
-      const checked = Array.from(document.querySelectorAll(".monthly-pack-section-cb:checked")).map((el) => el.value);
-      if (checked.length === 0) {
-        showToast("Select at least one section to include.", "error");
+      const name = sanitizeInput(document.getElementById("rg_name").value);
+      const checked = Array.from(document.querySelectorAll(".report-group-cb:checked")).map((el) => el.value);
+      if (!name) {
+        showToast("Enter a group name.", "error");
         return;
       }
-      localStorage.setItem(MONTHLY_PACK_SECTIONS_STORAGE_KEY, JSON.stringify(checked));
+      if (checked.length === 0) {
+        showToast("Select at least one report.", "error");
+        return;
+      }
+      saveReportGroup({
+        id: isEdit ? editData.id : "group-" + Date.now(),
+        name,
+        reportKeys: checked,
+      });
       closeModal();
-      generateMonthlyReportPack(checked);
+      showToast(isEdit ? "Group updated." : "Group created.", "success");
+      if (typeof renderReportGroupsList === "function") renderReportGroupsList();
     };
   }
 
