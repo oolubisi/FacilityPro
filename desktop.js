@@ -963,6 +963,11 @@ function renderSettingsShortcuts() {
       <input type="text" id="cfg-fm-address" />
       <label>COMPANY LOGO URL</label>
       <input type="text" id="cfg-logo-url" />
+      <small style="display: block; color: #888; margin-top: -8px; margin-bottom: 12px;">
+        If using a Google Drive link, the file's sharing setting must be
+        "Anyone with the link" (Viewer) — otherwise the logo will fail to
+        load with a 401 error.
+      </small>
       <label>MAIN GOOGLE DRIVE FOLDER NAME</label>
       <input type="text" id="cfg-main-folder" />
       <button class="action-btn success" id="desktop-save-settings">
