@@ -303,6 +303,7 @@ function renderServiceChargeLedgerTable(container, ledger) {
       <th style="padding:8px 6px;">Apt</th>
       <th style="padding:8px 6px;">Type</th>
       <th style="padding:8px 6px;">Category</th>
+      <th style="padding:8px 6px;">Notes</th>
       <th style="padding:8px 6px; text-align:right;">Amount</th>
       <th style="padding:8px 6px;"></th>
     </tr></thead>
@@ -317,6 +318,7 @@ function renderServiceChargeLedgerTable(container, ledger) {
             <td style="padding:6px; font-weight:800;">${escapeHtml(row.apt || "")}</td>
             <td style="padding:6px;"><span style="background:${typeColors[row.type] || "#666"}22; color:${typeColors[row.type] || "#666"}; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:800;">${typeLabels[row.type] || row.type}</span></td>
             <td style="padding:6px;">${escapeHtml(row.category || "")}</td>
+            <td style="padding:6px; color:#555;">${escapeHtml(row.description || "")}</td>
             <td style="padding:6px; text-align:right; font-weight:800; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${amountDisplay}</td>
             <td style="padding:6px; text-align:right; white-space:nowrap;">
               ${canDelete ? `<button type="button" data-modal-action="delete-service-charge-entry" data-id="${escapeHtml(row.entryId)}" style="background:#fdecea; color:#dc3545; border:0; border-radius:6px; padding:4px 8px; font-size:11px; font-weight:700; cursor:pointer;">Delete</button>` : `<span style="color:var(--muted); font-size:11px;">Locked</span>`}
@@ -622,6 +624,7 @@ function renderPettyCashLedgerTable(container, ledger) {
       <th style="padding:8px 6px;">Date</th>
       <th style="padding:8px 6px;">Apt</th>
       <th style="padding:8px 6px;">Category</th>
+      <th style="padding:8px 6px;">Notes</th>
       <th style="padding:8px 6px; text-align:right;">Amount</th>
       <th style="padding:8px 6px; text-align:right;">Balance</th>
       <th style="padding:8px 6px;"></th>
@@ -636,6 +639,7 @@ function renderPettyCashLedgerTable(container, ledger) {
             <td style="padding:6px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
             <td style="padding:6px; font-weight:800;">${escapeHtml(row.apt || "")}</td>
             <td style="padding:6px;">${escapeHtml(row.category || "")}${row.linkedServiceChargeEntry ? ` <span style="color:var(--muted); font-size:11px;">(SC ${escapeHtml(row.linkedServiceChargeEntry)})</span>` : ""}</td>
+            <td style="padding:6px; color:#555;">${escapeHtml(row.description || "")}</td>
             <td style="padding:6px; text-align:right; font-weight:800; color:${isInflow ? "#198754" : "#dc3545"};">${amountDisplay}</td>
             <td style="padding:6px; text-align:right; font-weight:800; color:${row.runningBalance >= 0 ? "inherit" : "#dc3545"};">₦${formatMoney(row.runningBalance)}</td>
             <td style="padding:6px; text-align:right; white-space:nowrap;">
