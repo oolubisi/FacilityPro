@@ -254,6 +254,10 @@ async function logoutCurrentUser() {
     // device even if we're offline.
   }
   clearStoredSession();
+  // A different manager logging in next shouldn't briefly see this
+  // one's cached financial data flash on screen before the real fetch
+  // overwrites it — same reasoning as clearing the session itself.
+  clearAllLedgerCaches();
   // Full reload rather than just re-showing the login screen: the app
   // has a lot of in-memory state (cache, appSettings, desktopState,
   // paymentStages, etc.) that isn't safe to assume is clean for a new

@@ -153,21 +153,45 @@ async function refreshServiceChargeSection() {
   const container = document.getElementById(containerId);
   if (!container) return;
 
-  container.innerHTML = `<p style="color:var(--muted); font-size:13px;">Loading ledger...</p>`;
+  const cached = getLedgerCache("servicecharge");
+  if (cached) {
+    lastFetchedServiceChargeLedger = cached.result || [];
+    lastFetchedServiceChargeBudgets = cached.budgets || [];
+    lastFetchedRecurringTemplates = cached.templates || [];
+    renderServiceChargeSummary();
+    renderServiceChargeLedgerTable(container, lastFetchedServiceChargeLedger);
+    renderRecurringExpensesDue();
+    renderServiceChargeBudgetsList();
+    renderRecurringTemplatesList();
+    showSyncBadge(containerId, true);
+  } else {
+    container.innerHTML = `<p style="color:var(--muted); font-size:13px;">Loading ledger...</p>`;
+  }
+
   const [result, budgets, templates] = await Promise.all([
     callApi("getServiceChargeLedger", {}),
     callApi("getServiceChargeBudgets", {}),
     callApi("getRecurringExpenseTemplates", {}),
   ]);
+  showSyncBadge(containerId, false);
 
   if (!result || !Array.isArray(result)) {
-    container.innerHTML = `<p style="color:var(--danger); font-size:13px; font-weight:700;">${escapeHtml((result && result.message) || "Couldn't load the ledger.")}</p>`;
+    // A cached view already rendered is still a working view — a
+    // transient fetch failure shouldn't blow it away.
+    if (!cached) {
+      container.innerHTML = `<p style="color:var(--danger); font-size:13px; font-weight:700;">${escapeHtml((result && result.message) || "Couldn't load the ledger.")}</p>`;
+    }
     return;
   }
 
   lastFetchedServiceChargeLedger = result;
   lastFetchedServiceChargeBudgets = Array.isArray(budgets) ? budgets : [];
   lastFetchedRecurringTemplates = Array.isArray(templates) ? templates : [];
+  setLedgerCache("servicecharge", {
+    result: lastFetchedServiceChargeLedger,
+    budgets: lastFetchedServiceChargeBudgets,
+    templates: lastFetchedRecurringTemplates,
+  });
   renderServiceChargeSummary();
   renderServiceChargeLedgerTable(container, result);
   renderRecurringExpensesDue();
@@ -513,15 +537,28 @@ async function refreshPettyCashSection() {
   const container = document.getElementById(containerId);
   if (!container) return;
 
-  container.innerHTML = `<p style="color:var(--muted); font-size:13px;">Loading ledger...</p>`;
+  const cached = getLedgerCache("pettycash");
+  if (cached) {
+    lastFetchedPettyCashLedger = cached.result || [];
+    renderPettyCashSummary();
+    renderPettyCashLedgerTable(container, lastFetchedPettyCashLedger);
+    showSyncBadge(containerId, true);
+  } else {
+    container.innerHTML = `<p style="color:var(--muted); font-size:13px;">Loading ledger...</p>`;
+  }
+
   const result = await callApi("getPettyCashLedger", {});
+  showSyncBadge(containerId, false);
 
   if (!result || !Array.isArray(result)) {
-    container.innerHTML = `<p style="color:var(--danger); font-size:13px; font-weight:700;">${escapeHtml((result && result.message) || "Couldn't load the ledger.")}</p>`;
+    if (!cached) {
+      container.innerHTML = `<p style="color:var(--danger); font-size:13px; font-weight:700;">${escapeHtml((result && result.message) || "Couldn't load the ledger.")}</p>`;
+    }
     return;
   }
 
   lastFetchedPettyCashLedger = result;
+  setLedgerCache("pettycash", { result });
   renderPettyCashSummary();
   renderPettyCashLedgerTable(container, result);
 }
@@ -636,15 +673,28 @@ async function refreshEnergySection() {
   const container = document.getElementById(containerId);
   if (!container) return;
 
-  container.innerHTML = `<p style="color:var(--muted); font-size:13px;">Loading ledger...</p>`;
+  const cached = getLedgerCache("energy");
+  if (cached) {
+    lastFetchedEnergyLedger = cached.result || [];
+    renderEnergySummary();
+    renderEnergyLedgerTable(container, lastFetchedEnergyLedger);
+    showSyncBadge(containerId, true);
+  } else {
+    container.innerHTML = `<p style="color:var(--muted); font-size:13px;">Loading ledger...</p>`;
+  }
+
   const result = await callApi("getEnergyLedger", {});
+  showSyncBadge(containerId, false);
 
   if (!result || !Array.isArray(result)) {
-    container.innerHTML = `<p style="color:var(--danger); font-size:13px; font-weight:700;">${escapeHtml((result && result.message) || "Couldn't load the ledger.")}</p>`;
+    if (!cached) {
+      container.innerHTML = `<p style="color:var(--danger); font-size:13px; font-weight:700;">${escapeHtml((result && result.message) || "Couldn't load the ledger.")}</p>`;
+    }
     return;
   }
 
   lastFetchedEnergyLedger = result;
+  setLedgerCache("energy", { result });
   renderEnergySummary();
   renderEnergyLedgerTable(container, result);
 }
@@ -769,19 +819,33 @@ async function refreshInventorySection() {
   const container = document.getElementById(containerId);
   if (!container) return;
 
-  container.innerHTML = `<p style="color:var(--muted); font-size:13px;">Loading inventory...</p>`;
+  const cached = getLedgerCache("inventory");
+  if (cached) {
+    lastFetchedInventoryItems = cached.items || [];
+    lastFetchedInventoryMovements = cached.movements || [];
+    renderInventoryDashboard();
+    renderInventoryItemList(container, lastFetchedInventoryItems);
+    showSyncBadge(containerId, true);
+  } else {
+    container.innerHTML = `<p style="color:var(--muted); font-size:13px;">Loading inventory...</p>`;
+  }
+
   const [items, movements] = await Promise.all([
     callApi("getInventoryItems", {}),
     callApi("getInventoryMovements", {}),
   ]);
+  showSyncBadge(containerId, false);
 
   if (!items || !Array.isArray(items)) {
-    container.innerHTML = `<p style="color:var(--danger); font-size:13px; font-weight:700;">${escapeHtml((items && items.message) || "Couldn't load inventory.")}</p>`;
+    if (!cached) {
+      container.innerHTML = `<p style="color:var(--danger); font-size:13px; font-weight:700;">${escapeHtml((items && items.message) || "Couldn't load inventory.")}</p>`;
+    }
     return;
   }
 
   lastFetchedInventoryItems = items;
   lastFetchedInventoryMovements = Array.isArray(movements) ? movements : [];
+  setLedgerCache("inventory", { items: lastFetchedInventoryItems, movements: lastFetchedInventoryMovements });
   renderInventoryDashboard();
   renderInventoryItemList(container, items);
 }

@@ -265,6 +265,63 @@ function sortByDate(arr, dateField = "date", ascending = true) {
   return decorated.map((pair) => pair[1]);
 }
 
+// [FEATURE] Local-cache-first loading for the manager-only ledgers
+// (Service Charge, Petty Cash, Energy, Inventory) — none of them ride
+// along in the getAllData bundle (deliberately, so staff/viewer never
+// receive this data even in transit), which meant every single visit
+// to one of these sections paid Apps Script's full round-trip latency
+// before showing anything at all. This shows whatever was cached from
+// the last successful fetch immediately, then quietly re-fetches in
+// the background and re-renders once fresh data arrives — the
+// round-trip itself doesn't get any faster, but the user isn't stuck
+// staring at a blank "Loading..." for it on every visit, only the
+// very first one (or after a cache-clearing logout).
+const LEDGER_CACHE_PREFIX = "facility_pro_ledger_cache_";
+
+function getLedgerCache(key) {
+  try {
+    const raw = localStorage.getItem(LEDGER_CACHE_PREFIX + key);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function setLedgerCache(key, data) {
+  try {
+    localStorage.setItem(LEDGER_CACHE_PREFIX + key, JSON.stringify(data));
+  } catch (e) {
+    // Storage full/unavailable — caching is a nice-to-have speed
+    // boost, not required for correctness, so fail silently rather
+    // than interrupt the actual data load.
+  }
+}
+
+function clearAllLedgerCaches() {
+  Object.keys(localStorage)
+    .filter((k) => k.startsWith(LEDGER_CACHE_PREFIX))
+    .forEach((k) => localStorage.removeItem(k));
+}
+
+// Small "syncing in the background" note shown only while a
+// cache-first render is waiting on the real fetch behind it — created
+// once per container and reused afterward, so this never accumulates
+// duplicate badges across repeated visits to the same section.
+function showSyncBadge(containerId, show) {
+  const container = document.getElementById(containerId);
+  if (!container || !container.parentNode) return;
+  let badge = document.getElementById(containerId + "-sync-badge");
+  if (!badge) {
+    badge = document.createElement("div");
+    badge.id = containerId + "-sync-badge";
+    badge.style.cssText = "font-size:11px; color:var(--muted, #888); margin-bottom:6px; display:none;";
+    badge.innerHTML = '<i class="fas fa-rotate fa-spin"></i> Syncing latest data...';
+    container.parentNode.insertBefore(badge, container);
+  }
+  badge.style.display = show ? "block" : "none";
+}
+
+
 function formatDateForDisplay(dStr) {
   if (!dStr) return "Not Tracked";
   dStr = String(dStr).trim();
