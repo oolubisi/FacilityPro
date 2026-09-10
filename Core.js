@@ -251,6 +251,20 @@ function getLocalDateString(date = new Date()) {
   return `${y}-${m}-${d}`;
 }
 
+// [PERFORMANCE FIX] `arr.sort((a, b) => new Date(a.date) - new Date(b.date))`
+// re-parses each date string on every single comparison the sort makes
+// — O(n log n) calls to `new Date(...)`, not O(n). For a few dozen
+// rows that's invisible; for a few thousand (exactly what "the
+// ledgers get slower as entries grow" describes) it's real, repeated
+// work for no reason, since every item's date only needs parsing
+// once. This parses once per item up front (decorate/sort/undecorate)
+// instead, then sorts on the pre-computed numbers.
+function sortByDate(arr, dateField = "date", ascending = true) {
+  const decorated = (arr || []).map((item) => [new Date(item?.[dateField]).getTime(), item]);
+  decorated.sort((a, b) => (ascending ? a[0] - b[0] : b[0] - a[0]));
+  return decorated.map((pair) => pair[1]);
+}
+
 function formatDateForDisplay(dStr) {
   if (!dStr) return "Not Tracked";
   dStr = String(dStr).trim();

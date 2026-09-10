@@ -1691,9 +1691,11 @@ async function openModal(type, editData = null) {
     submit.style.display = "none";
     title.innerText = `${editData.name || ""} — ${editData.itemCode || ""}`;
 
-    const movements = (lastFetchedInventoryMovements || [])
-      .filter((m) => m && String(m.itemCode) === String(editData.itemCode))
-      .sort((a, b) => new Date(a.date) - new Date(b.date));
+    const movements = sortByDate(
+      (lastFetchedInventoryMovements || []).filter((m) => m && String(m.itemCode) === String(editData.itemCode)),
+      "date",
+      true,
+    );
 
     let running = 0;
     const withBalance = movements.map((m) => {

@@ -262,7 +262,7 @@ function wasApartmentOccupiedDuringPeriod(apt, occupancyLog, startDate, endDate,
 }
 
 function renderServiceChargeLedgerTable(container, ledger) {
-  const sorted = [...ledger].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const sorted = sortByDate(ledger, "date", false);
 
   if (sorted.length === 0) {
     container.innerHTML = `<p style="color:var(--muted); font-size:13px;">No entries yet.</p>`;
@@ -549,20 +549,18 @@ function renderPettyCashSummary() {
 function computePettyCashBalanceAsOf(ledger, asOfDate) {
   const cutoff = asOfDate ? new Date(asOfDate).getTime() : null;
   let balance = 0;
-  [...(ledger || [])]
-    .sort((a, b) => new Date(a.date) - new Date(b.date))
-    .forEach((row) => {
-      if (!row) return;
-      const rowTime = new Date(row.date).getTime();
-      if (cutoff !== null && (isNaN(rowTime) || rowTime > cutoff)) return;
-      const amt = Number(row.amount) || 0;
-      balance += String(row.direction).toLowerCase() === "inflow" ? amt : -amt;
-    });
+  (ledger || []).forEach((row) => {
+    if (!row) return;
+    const rowTime = new Date(row.date).getTime();
+    if (cutoff !== null && (isNaN(rowTime) || rowTime > cutoff)) return;
+    const amt = Number(row.amount) || 0;
+    balance += String(row.direction).toLowerCase() === "inflow" ? amt : -amt;
+  });
   return balance;
 }
 
 function renderPettyCashLedgerTable(container, ledger) {
-  const sorted = [...ledger].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const sorted = sortByDate(ledger, "date", true);
 
   if (sorted.length === 0) {
     container.innerHTML = `<p style="color:var(--muted); font-size:13px;">No entries yet.</p>`;
@@ -674,20 +672,18 @@ function renderEnergySummary() {
 function computeEnergyBalanceAsOf(ledger, asOfDate) {
   const cutoff = asOfDate ? new Date(asOfDate).getTime() : null;
   let balance = 0;
-  [...(ledger || [])]
-    .sort((a, b) => new Date(a.date) - new Date(b.date))
-    .forEach((row) => {
-      if (!row) return;
-      const rowTime = new Date(row.date).getTime();
-      if (cutoff !== null && (isNaN(rowTime) || rowTime > cutoff)) return;
-      const amt = Number(row.amount) || 0;
-      balance += String(row.direction).toLowerCase() === "inflow" ? amt : -amt;
-    });
+  (ledger || []).forEach((row) => {
+    if (!row) return;
+    const rowTime = new Date(row.date).getTime();
+    if (cutoff !== null && (isNaN(rowTime) || rowTime > cutoff)) return;
+    const amt = Number(row.amount) || 0;
+    balance += String(row.direction).toLowerCase() === "inflow" ? amt : -amt;
+  });
   return balance;
 }
 
 function renderEnergyLedgerTable(container, ledger) {
-  const sorted = [...ledger].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const sorted = sortByDate(ledger, "date", true);
 
   if (sorted.length === 0) {
     container.innerHTML = `<p style="color:var(--muted); font-size:13px;">No entries yet.</p>`;

@@ -1821,7 +1821,7 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
     poolBalanceAfterEntry[key] = runningPoolBalance;
   });
 
-  const sortedRows = [...groupedRows].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const sortedRows = sortByDate(groupedRows, "date", true);
   const activityTable = sortedRows.length
     ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; table-layout:fixed;">
         <colgroup>
@@ -2010,7 +2010,7 @@ function buildServiceChargeApartmentSectionHtml(unitId, ledger, occupancyLog, st
     }
     return typeLabels[row.type] || row.type;
   };
-  const sortedRows = [...periodRows].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const sortedRows = sortByDate(periodRows, "date", true);
 
   // [FEATURE] Balance-after-transaction — computed from this
   // apartment's FULL ledger history (chronological), not just the
@@ -2018,8 +2018,7 @@ function buildServiceChargeApartmentSectionHtml(unitId, ledger, occupancyLog, st
   // opening balance rather than restarting at zero.
   let runningBalance = 0;
   const balanceAfterEntryId = {};
-  [...unitLedger]
-    .sort((a, b) => new Date(a.date) - new Date(b.date))
+  sortByDate(unitLedger, "date", true)
     .forEach((row) => {
       const amt = Number(row.amount) || 0;
       runningBalance += row.direction === "credit" ? amt : -amt;
@@ -2145,8 +2144,7 @@ async function generatePettyCashReport(startDateStr, endDateStr) {
   // restarting at zero — then filtered down to just the rows that
   // actually fall within the selected period for display.
   let running = 0;
-  const withBalance = [...ledger]
-    .sort((a, b) => new Date(a.date) - new Date(b.date))
+  const withBalance = sortByDate(ledger, "date", true)
     .map((row) => {
       const amt = Number(row.amount) || 0;
       running += String(row.direction).toLowerCase() === "inflow" ? amt : -amt;
@@ -2253,8 +2251,7 @@ async function generateEnergyLedgerReport(startDateStr, endDateStr) {
   const closingBalance = computeEnergyBalanceAsOf(ledger, endDate);
 
   let running = 0;
-  const withBalance = [...ledger]
-    .sort((a, b) => new Date(a.date) - new Date(b.date))
+  const withBalance = sortByDate(ledger, "date", true)
     .map((row) => {
       const amt = Number(row.amount) || 0;
       running += String(row.direction).toLowerCase() === "inflow" ? amt : -amt;
@@ -2648,9 +2645,11 @@ async function generateServiceChargeBudgetVarianceReport(startDateStr, endDateSt
   );
 
   function budgetForCategory(category) {
-    const applicable = budgets
-      .filter((b) => b && b.category === category && new Date(b.effectiveFrom) <= startDate)
-      .sort((a, b) => new Date(b.effectiveFrom) - new Date(a.effectiveFrom));
+    const applicable = sortByDate(
+      budgets.filter((b) => b && b.category === category && new Date(b.effectiveFrom) <= startDate),
+      "effectiveFrom",
+      false,
+    );
     return applicable.length ? Number(applicable[0].monthlyBudgetAmount) || 0 : 0;
   }
 
