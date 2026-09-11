@@ -744,6 +744,14 @@ async function runReportAction(buttonIds, loadingLabel, workFn) {
   }
 }
 
+function generateTitleBar(titleText) {
+  return `
+    <div style="border-bottom:2px solid #000; padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between; align-items:flex-end; page-break-inside:avoid; page-break-after:avoid;">
+      <h2 style="margin:0; font-size:18px; font-weight:900; text-transform:uppercase;">${escapeHtml(titleText)}</h2>
+      <div style="text-align:right; font-size:12px;"><p style="margin:0; color:#555;">RUN DATE:</p><p style="margin:2px 0 0 0; font-weight:bold;">${new Date().toLocaleDateString("en-GB")}</p></div>
+    </div>`;
+}
+
 async function compileReportPreview() {
   await runReportAction(["rep-generate-btn", "desktop-preview-report"], "Generating...", async () => {
   const layout = document.getElementById("rep-layout-selector").value;
@@ -869,12 +877,6 @@ async function compileReportPreview() {
     generateLedgerReport(ledgerType);
     return;
   }
-
-  const generateTitleBar = (titleText) => `
-    <div style="border-bottom:2px solid #000; padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between; align-items:flex-end; page-break-inside:avoid; page-break-after:avoid;">
-      <h2 style="margin:0; font-size:18px; font-weight:900; text-transform:uppercase;">${escapeHtml(titleText)}</h2>
-      <div style="text-align:right; font-size:12px;"><p style="margin:0; color:#555;">RUN DATE:</p><p style="margin:2px 0 0 0; font-weight:bold;">${new Date().toLocaleDateString("en-GB")}</p></div>
-    </div>`;
 
   let out = `<div style="font-family:'Helvetica','Inter',sans-serif; color:#000; background:#fff; box-sizing:border-box; width:100%; max-width:900px; margin:0 auto; padding:0; line-height:1.4;">`;
 
