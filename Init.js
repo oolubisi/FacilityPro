@@ -107,14 +107,18 @@ function renderMobileHelpContent() {
   if (!container) return;
 
   const topics = [
-    { icon: "fa-building", title: "Apartments", body: "Tracks each unit's tenancy status, tenant details, and lease dates. Units marked type 'services' are grouped as Common Area." },
+    { icon: "fa-building", title: "Apartments", body: "Tracks each unit's tenancy status, tenant details, rent, service charge deposit, and lease dates. Units marked type 'services' are grouped as Common Area rather than counted in tenancy stats." },
     { icon: "fa-screwdriver-wrench", title: "Assets", body: "Equipment register with status and scheduled maintenance dates. Each asset has its own Maintenance History log \u2014 open an asset and use \"Add Entry\" to record what was actually done." },
     { icon: "fa-clipboard-list", title: "Tickets", body: "Maintenance tickets move through Open \u2192 In Progress \u2192 Resolved." },
-    { icon: "fa-file-invoice-dollar", title: "Work Orders", body: "Contractor/staff work goes through Pending Approval \u2192 Approved/Declined. Approved work orders become read-only and eligible to be paid against." },
-    { icon: "fa-wallet", title: "Ledger", body: "The full payment record. Paid entries are locked from editing. Payments can be linked to an approved Work Order via the Linked Record field." },
-    { icon: "fa-file-signature", title: "Expense Requests", body: "Estimated-cost requests awaiting review \u2014 considered handled once converted into a Work Order or Payment." },
-    { icon: "fa-boxes-stacked", title: "Inventory & Vendors", body: "Inventory tracks stock quantity per item. Vendors holds your supplier directory, used when assigning Work Orders and selecting Payment payees." },
-    { icon: "fa-file-lines", title: "Reports", body: "Generate printable reports by category, with a live preview before printing." },
+    { icon: "fa-boxes-stacked", title: "Inventory", body: "Manager+ only. Separate forms for Consumables (tracked stock, received/issued/adjusted) and Tools/Equipment (assigned to a custodian, with a price and purchase date). New consumables start at zero stock \u2014 use Receive Stock to add the first batch. Issuing stock automatically debits Service Charge, split by weight if issued to Shared. Items at or below their reorder level can be marked \"On Order\" until the delivery arrives. See Reports for Consumption and Stock Valuation breakdowns." },
+    { icon: "fa-truck", title: "Vendors", body: "Your supplier directory, referenced when logging expenses and payments." },
+    { icon: "fa-money-check-dollar", title: "Accounts", body: "The full payment ledger, split into Pending and Cleared. Paid records are locked from editing." },
+    { icon: "fa-users", title: "Staff", body: "Staff directory \u2014 referenced as custodians for tools and participants on tickets." },
+    { icon: "fa-coins", title: "Service Charge", body: "Manager+ only. Log Contributions (inflow), Apartment Expenses, and Shared Expenses (split by weight across occupied units). Set a standing monthly Budget per category and compare against actual spend. Recurring Expenses (e.g. staff salary, generator diesel) show up as \"due\" each month until confirmed \u2014 amount stays editable at confirmation time." },
+    { icon: "fa-wallet", title: "Petty Cash", body: "Manager+ only. Log cash Inflow/Outflow with a running balance shown after every entry. A Service Charge expense can optionally also create a linked Petty Cash outflow if it was physically paid from the till." },
+    { icon: "fa-bolt", title: "Energy", body: "Manager+ only. Records Energy Remittance (inflow), Diesel Purchase, and EKEDC Payments (both outflow), with a running balance." },
+    { icon: "fa-file-lines", title: "Reports", body: "Generate printable reports by category, with a live preview before printing. Report Groups let you bundle several reports together \u2014 build a named group once, and generating it runs every included report automatically." },
+    { icon: "fa-box-archive", title: "Archived", body: "Retired assets, staff, and vendors \u2014 filterable by type." },
   ];
 
   const supportName = escapeHtml(appSettings.fmName || "Facility Operations Management");

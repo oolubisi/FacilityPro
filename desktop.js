@@ -1135,7 +1135,7 @@ function renderHelpView() {
     {
       icon: "fa-building",
       title: "Apartments",
-      body: "Tracks every unit's tenancy status (Vacant/Occupied), tenant details, and lease dates. Units marked type 'services' are grouped as Common Area rather than counted in tenancy stats. Leases expiring within 30 days surface in the digest banner above.",
+      body: "Tracks every unit's tenancy status (Vacant/Occupied), tenant details, rent, service charge deposit, and lease dates. Units marked type 'services' are grouped as Common Area rather than counted in tenancy stats. Leases expiring within 30 days surface in the digest banner above.",
     },
     {
       icon: "fa-screwdriver-wrench",
@@ -1148,9 +1148,14 @@ function renderHelpView() {
       body: "Maintenance tickets move through Open \u2192 In Progress \u2192 Resolved. Use \"Select\" at the top of this view to bulk-mark several tickets Resolved at once.",
     },
     {
-      icon: "fa-file-invoice-dollar",
-      title: "Work Orders",
-      body: "Contractor/staff work goes through Pending Approval \u2192 Approved/Declined. Once Approved, a work order becomes read-only and eligible to be paid against. Open an existing work order to see any Payments already linked to it.",
+      icon: "fa-boxes-stacked",
+      title: "Inventory",
+      body: "Manager+ only. Separate forms for Consumables (tracked stock quantity, received/issued/adjusted, with reorder tracking) and Tools/Equipment (assigned to a custodian, with a price and purchase date instead of a stock quantity). New consumables start at zero stock — use Receive Stock to log the first batch, which also sets its weighted-average cost. Issuing stock automatically debits Service Charge for the value, split by weight across occupied units if issued to Shared rather than a specific apartment. Items at or below their reorder level can be marked \"On Order\" until the delivery clears it automatically. See Reports for Consumption (by category/apartment/employee/wastage) and Stock Valuation (opening + purchases − issues = closing) breakdowns.",
+    },
+    {
+      icon: "fa-truck",
+      title: "Vendors",
+      body: "Your supplier directory, referenced when logging expenses and payments.",
     },
     {
       icon: "fa-money-check-dollar",
@@ -1158,19 +1163,34 @@ function renderHelpView() {
       body: "The full payment ledger, split into Pending and Cleared. Paid records are locked from editing. \"Print Pending PRs\" prints a summary sheet plus one voucher per pending payment (two per page). \"Select\" lets you bulk-mark several pending payments as Paid at once.",
     },
     {
-      icon: "fa-receipt",
-      title: "Expense Requests",
-      body: "Estimated-cost requests awaiting review \u2014 there's no separate approval status; a request is considered handled once it's converted into a Work Order or Payment.",
+      icon: "fa-users",
+      title: "Staff",
+      body: "Staff directory — referenced as custodians for tools and participants on tickets.",
     },
     {
-      icon: "fa-boxes-stacked",
-      title: "Inventory & Vendors",
-      body: "Inventory tracks stock quantity per item (cards flag anything at zero). Vendors holds your supplier directory, referenced when assigning Work Orders and selecting Payment payees.",
+      icon: "fa-coins",
+      title: "Service Charge",
+      body: "Manager+ only. Log Contributions (inflow), Apartment Expenses (debited to one unit), and Shared Expenses (split by weight across units occupied on the transaction date). Set a standing monthly Budget per category and compare against actual spend in the Budget vs Actual report. Recurring Expenses (e.g. staff salary, generator diesel) surface as \"due\" each month until confirmed — the amount stays editable at confirmation time, since costs like diesel fluctuate. Any Apartment or Shared Expense can optionally also create a linked Petty Cash outflow if it was physically paid from the till.",
+    },
+    {
+      icon: "fa-wallet",
+      title: "Petty Cash",
+      body: "Manager+ only. Log cash Inflow/Outflow with a running balance shown after every entry. Entries can only be edited or deleted on the day they were created.",
+    },
+    {
+      icon: "fa-bolt",
+      title: "Energy",
+      body: "Manager+ only. Records Energy Remittance (inflow), Diesel Purchase, and EKEDC Payments (both outflow), with a running balance. Direction is derived automatically from the transaction type.",
     },
     {
       icon: "fa-file-lines",
       title: "Reports",
-      body: "Generate printable reports by category \u2014 Apartments & Tenancy, Assets & Maintenance, Financials & Ledger, or Executive dashboards \u2014 with a live preview before printing.",
+      body: "Generate printable reports by category — Apartments, Equipment, Financials, or Executive — with a live preview before printing. Report Groups let you bundle any combination of reports under a name you choose; generating a group runs every included report automatically with sensible current-period defaults, skipping only the few that need one specific apartment picked by hand.",
+    },
+    {
+      icon: "fa-box-archive",
+      title: "Archived",
+      body: "Retired assets, staff, and vendors — filterable by type.",
     },
   ];
 

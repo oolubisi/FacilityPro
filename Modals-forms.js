@@ -1376,6 +1376,9 @@ async function openModal(type, editData = null) {
       <div class="form-field"><label ${lbl}>Custodian</label>
         <select id="it_custodian" ${ls}></select>
       </div>
+      <div class="form-field"><label ${lbl}>Price (₦)</label><input id="it_price" type="text" inputmode="numeric" oninput="maskCurrencyInput(this)" value="${isEdit ? formatMoney(editData.unitCost || 0) : ""}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Purchase Date</label><input id="it_purchasedate" type="date" value="${isEdit && editData.purchaseDate ? String(editData.purchaseDate).slice(0, 10) : ""}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Quantity</label><input id="it_qty" type="number" min="0" value="${isEdit ? escapeHtml(editData.currentQty || 0) : "1"}" ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Specification</label><input id="it_spec" value="${isEdit ? escapeHtml(editData.specification || "") : ""}" placeholder="e.g. Model / capacity" ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Status</label>
         <select id="it_status" ${ls}>
@@ -1407,6 +1410,9 @@ async function openModal(type, editData = null) {
         name,
         category: document.getElementById("it_category").value,
         custodian: document.getElementById("it_custodian").value,
+        unitCost: document.getElementById("it_price").value.replace(/,/g, ""),
+        purchaseDate: document.getElementById("it_purchasedate").value,
+        currentQty: document.getElementById("it_qty").value,
         specification: sanitizeInput(document.getElementById("it_spec").value),
         itemType: "tool",
         status: document.getElementById("it_status").value,
@@ -1738,8 +1744,9 @@ async function openModal(type, editData = null) {
     body.innerHTML = `
       <div class="form-field span-3" style="background:#f9f9f9; border-radius:8px; padding:12px; display:flex; justify-content:space-between; align-items:center; gap:10px;">
         <div>
-          <strong>Current ${isTool ? "status" : "stock"}: ${isTool ? escapeHtml(editData.status || "—") : (editData.currentQty || 0) + " " + escapeHtml(editData.unit || "")}</strong><br>
-          ${!isTool ? `<span style="font-size:12px; color:#666;">Weighted-avg unit cost: ₦${formatMoney(editData.unitCost || 0)}</span>` : `<span style="font-size:12px; color:#666;">Custodian: ${escapeHtml(editData.custodian || "Unassigned")}</span>`}
+          <strong>Current ${isTool ? "quantity" : "stock"}: ${isTool ? (editData.currentQty || 0) : (editData.currentQty || 0) + " " + escapeHtml(editData.unit || "")}</strong><br>
+          ${isTool ? `<span style="font-size:12px; color:#666;">Status: ${escapeHtml(editData.status || "—")}</span><br>` : ""}
+          ${!isTool ? `<span style="font-size:12px; color:#666;">Weighted-avg unit cost: ₦${formatMoney(editData.unitCost || 0)}</span>` : `<span style="font-size:12px; color:#666;">Custodian: ${escapeHtml(editData.custodian || "Unassigned")} · Price: ₦${formatMoney(editData.unitCost || 0)}${editData.purchaseDate ? ` · Purchased: ${escapeHtml(formatDateForDisplay(editData.purchaseDate))}` : ""}</span>`}
           ${onOrderBadge}
         </div>
         <div style="display:flex; flex-direction:column; gap:6px; align-items:flex-end;">

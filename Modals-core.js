@@ -977,8 +977,8 @@ function renderInventoryItemList(container, items) {
             <td style="padding:6px; font-weight:800;">${escapeHtml(item.itemCode)}</td>
             <td style="padding:6px;">${escapeHtml(item.name || "")}${isTool ? ` <span style="color:var(--muted); font-size:11px;">(Tool)</span>` : ""}</td>
             <td style="padding:6px;">${escapeHtml(item.category || "")}</td>
-            <td style="padding:6px; text-align:right; font-weight:700;">${isTool ? "—" : qty + " " + escapeHtml(item.unit || "")}</td>
-            <td style="padding:6px; text-align:right;">${isTool ? "—" : "₦" + formatMoney(item.unitCost || 0)}</td>
+            <td style="padding:6px; text-align:right; font-weight:700;">${isTool ? (item.currentQty || 0) : qty + " " + escapeHtml(item.unit || "")}</td>
+            <td style="padding:6px; text-align:right;">₦${formatMoney(item.unitCost || 0)}</td>
             <td style="padding:6px;">${stockBadge}</td>
             <td style="padding:6px; text-align:right;"><i class="fas fa-chevron-right" style="color:var(--muted);"></i></td>
           </tr>`;
