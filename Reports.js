@@ -390,6 +390,8 @@ const REPORT_LAYOUT_OPTIONS_BY_PROFILE = {
     ["pm_schedule", "PM Schedule"],
     ["asset_register", "Master Asset Register"],
     ["ticket_report", "Maintenance Tickets"],
+    ["consumables_register", "Consumables Register"],
+    ["tools_register", "Tools / Equipment Register"],
     ["inventory_consumption", "Inventory Consumption"],
     ["inventory_valuation", "Inventory Stock Valuation"],
   ],
@@ -442,7 +444,13 @@ function handleReportProfileSwitch() {
     // even see these exist).
     .filter(
       ([val]) =>
-        (val.indexOf("sc_") !== 0 && val !== "petty_cash" && val !== "energy_ledger" && val !== "kpi_dashboard" && val.indexOf("inventory_") !== 0) ||
+        (val.indexOf("sc_") !== 0 &&
+          val !== "petty_cash" &&
+          val !== "energy_ledger" &&
+          val !== "kpi_dashboard" &&
+          val.indexOf("inventory_") !== 0 &&
+          val !== "consumables_register" &&
+          val !== "tools_register") ||
         currentUserMeetsRole("manager"),
     )
     .forEach(([val, label]) => {
@@ -829,6 +837,14 @@ async function compileReportPreview() {
       return;
     }
     await generateInventoryValuationReport(startDate, endDate);
+    return;
+  }
+  if (layout === "consumables_register") {
+    await generateConsumablesRegisterReport();
+    return;
+  }
+  if (layout === "tools_register") {
+    await generateToolsRegisterReport();
     return;
   }
   if (layout === "sc_budget_variance") {
@@ -2608,6 +2624,119 @@ async function generateInventoryValuationReport(startDateStr, endDateStr) {
   window.currentReportFilename = "Inventory_Valuation_" + Date.now();
   window.currentReportAttachmentManifest = [];
   window.currentReportTitle = "Inventory Stock Valuation";
+  window.currentReportShowTitleLine = true;
+  window.currentReportRef = ref;
+  window.currentReportRawContent = out;
+  setOnscreenPreviewCardDisplay("block");
+}
+
+// =========================================================
+// § CONSUMABLES REGISTER
+// Current-state listing — same shape as Master Asset Register — not
+// tied to any period. Only consumables (itemType !== "tool").
+// =========================================================
+async function generateConsumablesRegisterReport() {
+  const viewport = document.getElementById("report-preview-viewport");
+  if (!viewport) return;
+
+  viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading inventory data...</p>`;
+  const items = await callApi("getInventoryItems", {});
+  if (!items || !Array.isArray(items)) {
+    viewport.innerHTML = `<p style="padding:20px; color:#dc3545; font-weight:700;">${escapeHtml((items && items.message) || "Couldn't load inventory data.")}</p>`;
+    return;
+  }
+
+  let out = generateTitleBar("CONSUMABLES REGISTER");
+  const consumables = items
+    .filter((i) => i && (i.itemType || "consumable") === "consumable")
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+
+  const rows = consumables
+    .map((i) => {
+      const qty = Number(i.currentQty) || 0;
+      const min = Number(i.minQty) || 0;
+      const level = Number(i.reorderLevel) || 0;
+      let stockStatus = "OK";
+      let statusColor = "#198754";
+      if (qty <= 0) {
+        stockStatus = "OUT OF STOCK";
+        statusColor = "#dc3545";
+      } else if (qty <= min) {
+        stockStatus = "LOW";
+        statusColor = "#fd7e14";
+      } else if (level > 0 && qty <= level) {
+        stockStatus = "REORDER";
+        statusColor = "#dc3545";
+      }
+      if (i.onOrder === "Yes") {
+        stockStatus = "ON ORDER";
+        statusColor = "#856404";
+      }
+      return `<tr><td style="padding:6px; border:1px solid #000; font-weight:bold;">${escapeHtml(i.itemCode || "N/A")}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(i.name || "N/A")}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(i.category || "N/A")}</td><td style="padding:6px; border:1px solid #000; text-align:right;">${qty} ${escapeHtml(i.unit || "")}</td><td style="padding:6px; border:1px solid #000; text-align:right;">₦${formatMoney(i.unitCost || 0)}</td><td style="padding:6px; border:1px solid #000; color:${statusColor}; font-weight:bold;">${stockStatus}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(i.status || "Active")}</td></tr>`;
+    })
+    .join("");
+
+  out += `<table style="width:100%; border-collapse:collapse; font-size:12px; page-break-inside:auto;"><thead style="display:table-header-group;"><tr style="background:#f4f4f4; -webkit-print-color-adjust:exact;"><th style="padding:8px 6px; border:1px solid #000;">Code</th><th style="padding:8px 6px; border:1px solid #000;">Name</th><th style="padding:8px 6px; border:1px solid #000;">Category</th><th style="padding:8px 6px; border:1px solid #000; text-align:right;">Qty</th><th style="padding:8px 6px; border:1px solid #000; text-align:right;">Unit Cost</th><th style="padding:8px 6px; border:1px solid #000;">Stock Status</th><th style="padding:8px 6px; border:1px solid #000;">Item Status</th></tr></thead><tbody>${rows || `<tr><td colspan="7" style="padding:10px; text-align:center;">No consumables found.</td></tr>`}</tbody></table>`;
+
+  const ref = generateReportRef("RPT");
+  const wrapped = wrapReportContent(out, "Consumables Register", ref);
+  viewport.innerHTML = wrapped;
+  const printContainer = document.getElementById("report-print-container");
+  if (printContainer) printContainer.innerHTML = wrapped;
+  window.currentReportFilename = "Consumables_Register_" + Date.now();
+  window.currentReportAttachmentManifest = [];
+  window.currentReportTitle = "Consumables Register";
+  window.currentReportShowTitleLine = true;
+  window.currentReportRef = ref;
+  window.currentReportRawContent = out;
+  setOnscreenPreviewCardDisplay("block");
+}
+
+// =========================================================
+// § TOOLS / EQUIPMENT REGISTER
+// Current-state listing, same shape as Consumables Register — only
+// tools (itemType === "tool"), showing custodian/price/purchase date
+// instead of stock-quantity fields, since those don't apply to tools.
+// =========================================================
+async function generateToolsRegisterReport() {
+  const viewport = document.getElementById("report-preview-viewport");
+  if (!viewport) return;
+
+  viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading inventory data...</p>`;
+  const items = await callApi("getInventoryItems", {});
+  if (!items || !Array.isArray(items)) {
+    viewport.innerHTML = `<p style="padding:20px; color:#dc3545; font-weight:700;">${escapeHtml((items && items.message) || "Couldn't load inventory data.")}</p>`;
+    return;
+  }
+
+  let out = generateTitleBar("TOOLS / EQUIPMENT REGISTER");
+  const tools = items
+    .filter((i) => i && i.itemType === "tool")
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+
+  const totalValue = tools.reduce((s, i) => s + (Number(i.unitCost) || 0) * (Number(i.currentQty) || 0), 0);
+
+  const rows = tools
+    .map(
+      (i) =>
+        `<tr><td style="padding:6px; border:1px solid #000; font-weight:bold;">${escapeHtml(i.itemCode || "N/A")}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(i.name || "N/A")}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(i.category || "N/A")}</td><td style="padding:6px; border:1px solid #000; text-align:right;">${Number(i.currentQty) || 0}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(i.custodian || "Unassigned")}</td><td style="padding:6px; border:1px solid #000; text-align:right;">₦${formatMoney(i.unitCost || 0)}</td><td style="padding:6px; border:1px solid #000;">${i.purchaseDate ? formatDateForDisplay(i.purchaseDate) : "N/A"}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(i.status || "Active")}</td></tr>`,
+    )
+    .join("");
+
+  out += `<div style="background:#f8f9fa; border:2px solid #000; border-radius:12px; padding:14px; margin-bottom:20px; text-align:center;">
+    <div style="font-size:11px; font-weight:800; color:#000; text-transform:uppercase;">Total Fleet Value</div>
+    <div style="font-size:22px; font-weight:900; color:#000;">₦${formatMoney(totalValue)}</div>
+  </div>`;
+  out += `<table style="width:100%; border-collapse:collapse; font-size:12px; page-break-inside:auto;"><thead style="display:table-header-group;"><tr style="background:#f4f4f4; -webkit-print-color-adjust:exact;"><th style="padding:8px 6px; border:1px solid #000;">Code</th><th style="padding:8px 6px; border:1px solid #000;">Name</th><th style="padding:8px 6px; border:1px solid #000;">Category</th><th style="padding:8px 6px; border:1px solid #000; text-align:right;">Qty</th><th style="padding:8px 6px; border:1px solid #000;">Custodian</th><th style="padding:8px 6px; border:1px solid #000; text-align:right;">Price</th><th style="padding:8px 6px; border:1px solid #000;">Purchase Date</th><th style="padding:8px 6px; border:1px solid #000;">Status</th></tr></thead><tbody>${rows || `<tr><td colspan="8" style="padding:10px; text-align:center;">No tools/equipment found.</td></tr>`}</tbody></table>`;
+
+  const ref = generateReportRef("RPT");
+  const wrapped = wrapReportContent(out, "Tools / Equipment Register", ref);
+  viewport.innerHTML = wrapped;
+  const printContainer = document.getElementById("report-print-container");
+  if (printContainer) printContainer.innerHTML = wrapped;
+  window.currentReportFilename = "Tools_Equipment_Register_" + Date.now();
+  window.currentReportAttachmentManifest = [];
+  window.currentReportTitle = "Tools / Equipment Register";
   window.currentReportShowTitleLine = true;
   window.currentReportRef = ref;
   window.currentReportRawContent = out;

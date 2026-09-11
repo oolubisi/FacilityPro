@@ -431,78 +431,61 @@ async function openModal(type, editData = null) {
     };
   }
 
-  // ── SERVICE CHARGE: APARTMENT-SPECIFIC EXPENSE ──
-  else if (type === "apartmentexpense") {
-    title.innerText = "Log Apartment Expense";
-    body.innerHTML = `
-      <div class="form-field span-3"><label ${lbl}>Apartment</label><select id="sc_ae_apt" ${ls}></select></div>
-      <div class="form-field"><label ${lbl}>Category</label><input id="sc_ae_category" placeholder="e.g. Plumbing Repair" ${ls}></div>
-      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="sc_ae_amount" type="text" inputmode="numeric" oninput="maskCurrencyInput(this)" ${ls}></div>
-      <div class="form-field"><label ${lbl}>Date</label><input id="sc_ae_date" type="date" value="${getLocalDateString()}" ${ls}></div>
-      <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="sc_ae_description" ${ls}></div>
-      <div class="form-field span-3"><label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer;"><input type="checkbox" id="sc_ae_from_petty_cash" style="width:auto;"> Pay from Petty Cash</label></div>
-    `;
-    populateOccupiedUnitDropdown("sc_ae_apt");
-
-    submit.onclick = () => {
-      const apt = document.getElementById("sc_ae_apt").value;
-      const amount = document.getElementById("sc_ae_amount").value.replace(/,/g, "");
-      if (!apt || !amount || Number(amount) <= 0) {
-        showToast("Select an apartment and enter a positive amount.", "error");
-        return;
-      }
-      submit.disabled = true;
-      submit.classList.add("loading");
-      callApi("logApartmentExpense", {
-        apt,
-        amount,
-        category: sanitizeInput(document.getElementById("sc_ae_category").value) || "Expense",
-        date: document.getElementById("sc_ae_date").value,
-        description: sanitizeInput(document.getElementById("sc_ae_description").value),
-        fromPettyCash: document.getElementById("sc_ae_from_petty_cash").checked,
-      })
-        .then((result) => {
-          submit.disabled = false;
-          submit.classList.remove("loading");
-          if (!result || result.status !== "success") {
-            showToast((result && result.message) || "Failed to log expense.", "error");
-            return;
-          }
-          closeModal();
-          showToast("Apartment expense logged.", "success");
-          if (typeof refreshServiceChargeSection === "function") refreshServiceChargeSection();
-        })
-        .catch(() => {
-          submit.disabled = false;
-          submit.classList.remove("loading");
-        });
-    };
-  }
-
-  // ── SERVICE CHARGE: SHARED EXPENSE ──
-  // No apartment picker — the server splits this by each currently-
-  // occupied real apartment's weight (see logSharedExpense in Code.gs).
-  // Also the path for Common Area/Service unit costs, which never get
-  // their own balance — see the Weight field's help text on the
-  // apartment form.
+  // ── SERVICE CHARGE: EXPENSE (apartment-specific or shared) ──
+  // A single form covers both — checking just one apartment debits
+  // that unit alone (the weighted split degenerates to 100% of the
+  // amount going to whichever one apartment is checked), checking
+  // several splits the amount across them by weight. See
+  // logSharedExpense in Code.gs.
   else if (type === "sharedexpense") {
-    title.innerText = "Log Shared Expense";
+    title.innerText = "Log Expense";
+    const realApts = (cache.apts || []).filter(
+      (a) => a && String(a.type || a.Type || "").toLowerCase() !== "services",
+    );
     body.innerHTML = `
-      <div class="form-field span-3" style="background:#f0f4ff; border:2px solid #c7d2fe; border-radius:10px; padding:10px 14px; margin-bottom:4px;">
-        <small style="font-weight:700; color:#4f46e5;"><i class="fas fa-diagram-project"></i> This amount is automatically split across every currently-occupied apartment, by that unit's Service Charge Weight.</small>
-      </div>
       <div class="form-field span-3"><label ${lbl}>Category</label><select id="sc_se_category" ${ls}>${buildServiceChargeCategoryOptionsHtml("")}</select></div>
       <div class="form-field"><label ${lbl}>Total Amount (₦)</label><input id="sc_se_amount" type="text" inputmode="numeric" oninput="maskCurrencyInput(this)" ${ls}></div>
       <div class="form-field"><label ${lbl}>Date</label><input id="sc_se_date" type="date" value="${getLocalDateString()}" ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="sc_se_description" ${ls}></div>
       <div class="form-field span-3"><label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer;"><input type="checkbox" id="sc_se_from_petty_cash" style="width:auto;"> Pay from Petty Cash</label></div>
+      <div class="form-field span-3">
+        <label ${lbl}>Apartments</label>
+        <p style="font-size:12px; color:var(--muted); margin:0 0 8px 0;">The amount is split by weight across whichever apartments are checked below — check just one to debit that unit alone.</p>
+        <div style="display:flex; gap:8px; margin-bottom:8px;">
+          <button type="button" id="sc_se_select_all" style="background:var(--text); color:#fff; border:0; border-radius:6px; padding:6px 12px; font-size:12px; font-weight:700; cursor:pointer;">All</button>
+          <button type="button" id="sc_se_select_none" style="background:#f0f0f0; color:#333; border:0; border-radius:6px; padding:6px 12px; font-size:12px; font-weight:700; cursor:pointer;">None</button>
+        </div>
+        <div style="max-height:220px; overflow-y:auto; border:2px solid var(--border); border-radius:8px; padding:8px 12px;">
+          ${realApts
+            .map((a) => {
+              const unit = getUnitNumber(a);
+              return `<label style="display:flex; align-items:center; gap:8px; font-weight:700; padding:5px 0; cursor:pointer;">
+                <input type="checkbox" class="sc_se_apt_cb" value="${escapeHtml(unit)}" style="width:auto;">
+                Unit ${escapeHtml(unit)}
+              </label>`;
+            })
+            .join("")}
+        </div>
+      </div>
     `;
+
+    document.getElementById("sc_se_select_all").onclick = () => {
+      document.querySelectorAll(".sc_se_apt_cb").forEach((cb) => (cb.checked = true));
+    };
+    document.getElementById("sc_se_select_none").onclick = () => {
+      document.querySelectorAll(".sc_se_apt_cb").forEach((cb) => (cb.checked = false));
+    };
 
     submit.onclick = () => {
       const amount = document.getElementById("sc_se_amount").value.replace(/,/g, "");
       const category = document.getElementById("sc_se_category").value;
+      const selectedApts = Array.from(document.querySelectorAll(".sc_se_apt_cb:checked")).map((el) => el.value);
       if (!category || !amount || Number(amount) <= 0) {
         showToast("Enter a category and a positive amount.", "error");
+        return;
+      }
+      if (selectedApts.length === 0) {
+        showToast("Select at least one apartment.", "error");
         return;
       }
       submit.disabled = true;
@@ -513,16 +496,22 @@ async function openModal(type, editData = null) {
         date: document.getElementById("sc_se_date").value,
         description: sanitizeInput(document.getElementById("sc_se_description").value),
         fromPettyCash: document.getElementById("sc_se_from_petty_cash").checked,
+        selectedApts,
       })
         .then((result) => {
           submit.disabled = false;
           submit.classList.remove("loading");
           if (!result || result.status !== "success") {
-            showToast((result && result.message) || "Failed to log shared expense.", "error");
+            showToast((result && result.message) || "Failed to log expense.", "error");
             return;
           }
           closeModal();
-          showToast(`Shared expense split across ${result.splits.length} apartment(s).`, "success");
+          showToast(
+            result.splits.length === 1
+              ? `Expense logged to Unit ${result.splits[0].apt}.`
+              : `Expense split across ${result.splits.length} apartment(s).`,
+            "success",
+          );
           if (typeof refreshServiceChargeSection === "function") refreshServiceChargeSection();
         })
         .catch(() => {

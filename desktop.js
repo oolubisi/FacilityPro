@@ -1050,8 +1050,7 @@ function renderServiceChargeShortcuts() {
       <h3 style="margin:0 0 12px; font-size:15px;">Log an Entry</h3>
       <div style="display:flex; gap:10px; flex-wrap:wrap;">
         <button class="action-btn" style="width:auto; background:var(--green);" onclick="openModal('contribution')"><i class="fas fa-hand-holding-dollar"></i> New Contribution</button>
-        <button class="action-btn" style="width:auto; background:var(--red);" onclick="openModal('apartmentexpense')"><i class="fas fa-receipt"></i> New Apartment Expense</button>
-        <button class="action-btn" style="width:auto; background:#fd7e14;" onclick="openModal('sharedexpense')"><i class="fas fa-diagram-project"></i> New Shared Expense</button>
+        <button class="action-btn" style="width:auto; background:var(--red);" onclick="openModal('sharedexpense')"><i class="fas fa-receipt"></i> New Expense</button>
       </div>
     </div>
     <div class="desktop-form-card" style="grid-column:1/-1;">
