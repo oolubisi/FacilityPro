@@ -724,13 +724,12 @@ function resolveServiceChargeReportPeriod() {
 let reportActionInProgress = false;
 
 // [FEATURE] 60-second cooldown (with a visible countdown on the
-// button) after a report generation comes back with partial
-// failures — set window.lastReportHadFailures = true from within a
-// report generator when it detects this (see the KPI Dashboard for
-// an example). Reports that never set this flag are unaffected;
-// rapid-retrying a report that DID come back incomplete is exactly
-// the behavior that made the underlying Apps Script contention
-// worse, not better, based on direct testing.
+// button) enforced after every report generation, regardless of
+// whether it succeeded — directly enforces the spacing that testing
+// showed avoids Apps Script's underlying request contention, rather
+// than relying on each report type to detect and flag its own
+// partial failures (unreliable — not every report has that logic,
+// and it's easy for it to silently not fire).
 let reportCooldownUntil = 0;
 let reportCooldownInterval = null;
 
@@ -762,10 +761,7 @@ async function runReportAction(buttonIds, loadingLabel, workFn) {
   }
   if (Date.now() < reportCooldownUntil) {
     const remaining = Math.ceil((reportCooldownUntil - Date.now()) / 1000);
-    showToast(
-      `The last attempt had missing data — retrying immediately tends to make that worse. Please wait ${remaining}s.`,
-      "warning",
-    );
+    showToast(`Please wait ${remaining}s before generating another report.`, "warning");
     return;
   }
   reportActionInProgress = true;
@@ -780,7 +776,6 @@ async function runReportAction(buttonIds, loadingLabel, workFn) {
     btn.disabled = true;
     btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${escapeHtml(loadingLabel)}`;
   }
-  window.lastReportHadFailures = false;
   try {
     await workFn();
   } catch (err) {
@@ -788,12 +783,14 @@ async function runReportAction(buttonIds, loadingLabel, workFn) {
     showToast("Something went wrong. Please try again.", "error");
   } finally {
     reportActionInProgress = false;
-    if (window.lastReportHadFailures) {
-      startReportCooldown(btn, originalHtml);
-    } else if (btn) {
-      btn.disabled = false;
-      btn.innerHTML = originalHtml;
-    }
+    // [FEATURE] Unconditional now, not just when a failure was
+    // detected — a blanket 60s cooldown after every generation is
+    // simpler and more robust than relying on each report type to
+    // correctly flag its own partial failures, and directly enforces
+    // the spacing that testing showed actually avoids the underlying
+    // Apps Script contention, rather than hoping the user remembers
+    // to wait on their own.
+    startReportCooldown(btn, originalHtml);
   }
 }
 
@@ -1212,14 +1209,6 @@ async function compileReportPreview() {
     const energyLedger = await callApiStrict("getEnergyLedger", {});
     await new Promise((resolve) => setTimeout(resolve, 400));
     const occupancyLog = await callApiStrict("getOccupancyLog", {});
-
-    // [FEATURE] Flags this run as incomplete so runReportAction starts
-    // the 60s cooldown — retrying immediately after a partial failure
-    // is exactly what tended to make the underlying contention worse
-    // rather than better.
-    if (scLedger === null || pettyCashLedger === null || energyLedger === null || occupancyLog === null) {
-      window.lastReportHadFailures = true;
-    }
 
     // [BUG FIX] The headline cards and Net Position now reflect the
     // END of the selected period, not "right now" — with a range
