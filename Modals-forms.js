@@ -53,8 +53,17 @@ const SERVICE_CHARGE_CATEGORIES = [
   "Repairs & Maintenance",
   "Insurance",
   "Administrative",
+  "Petty Cash Topup",
   "Other",
 ];
+
+// [FEATURE] Logged as a normal Service Charge expense (debits the
+// pool), but automatically creates a Petty Cash INFLOW instead of the
+// usual "Pay from Petty Cash" OUTFLOW — this category means the
+// opposite kind of transaction: moving money OUT of the pool and INTO
+// the till, not paying for something using cash already in the till.
+// See logSharedExpense in Code.gs, which checks for this exact string.
+const PETTY_CASH_TOPUP_CATEGORY = "Petty Cash Topup";
 
 function buildServiceChargeCategoryOptionsHtml(selectedValue) {
   return SERVICE_CHARGE_CATEGORIES.map(
@@ -443,11 +452,14 @@ async function openModal(type, editData = null) {
       (a) => a && String(a.type || a.Type || "").toLowerCase() !== "services",
     );
     body.innerHTML = `
-      <div class="form-field span-3"><label ${lbl}>Category</label><select id="sc_se_category" ${ls}>${buildServiceChargeCategoryOptionsHtml("")}</select></div>
+      <div class="form-field span-3"><label ${lbl}>Category</label><select id="sc_se_category" ${ls} onchange="const isTopup = this.value === '${PETTY_CASH_TOPUP_CATEGORY}'; document.getElementById('sc_se_petty_cash_field').style.display = isTopup ? 'none' : 'block'; document.getElementById('sc_se_topup_note').style.display = isTopup ? 'block' : 'none';">${buildServiceChargeCategoryOptionsHtml("")}</select></div>
       <div class="form-field"><label ${lbl}>Total Amount (₦)</label><input id="sc_se_amount" type="text" inputmode="numeric" oninput="maskCurrencyInput(this)" ${ls}></div>
       <div class="form-field"><label ${lbl}>Date</label><input id="sc_se_date" type="date" value="${getLocalDateString()}" ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="sc_se_description" ${ls}></div>
-      <div class="form-field span-3"><label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer;"><input type="checkbox" id="sc_se_from_petty_cash" style="width:auto;"> Pay from Petty Cash</label></div>
+      <div class="form-field span-3" id="sc_se_petty_cash_field"><label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer;"><input type="checkbox" id="sc_se_from_petty_cash" style="width:auto;"> Pay from Petty Cash</label></div>
+      <div class="form-field span-3" id="sc_se_topup_note" style="display:none; background:#f0f4ff; border:2px solid #c7d2fe; border-radius:10px; padding:10px 14px;">
+        <small style="font-weight:700; color:#4f46e5;"><i class="fas fa-diagram-project"></i> This debits the Service Charge pool and automatically credits Petty Cash with the same amount — recorded as a transfer, not a purchase.</small>
+      </div>
       <div class="form-field span-3">
         <label ${lbl}>Apartments</label>
         <p style="font-size:12px; color:var(--muted); margin:0 0 8px 0;">The amount is split by weight across whichever apartments are checked below — check just one to debit that unit alone.</p>
