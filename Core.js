@@ -644,7 +644,7 @@ async function callApi(action, data = {}, options = {}) {
 // than immediately falling back to callApi's normal stale-backup/[]
 // behavior, which a caller checking Array.isArray() can't tell apart
 // from a real, successful, genuinely-empty result.
-async function callApiStrict(action, data = {}, retries = 4, delayMs = 500) {
+async function callApiStrict(action, data = {}, retries = 2, delayMs = 1500) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     const result = await callApi(action, data, { strict: true });
     if (result !== null) return result;
@@ -669,8 +669,13 @@ async function callApiStrict(action, data = {}, retries = 4, delayMs = 500) {
 // this replaces.
 async function callApiSequential(calls) {
   const results = [];
-  for (const [action, data] of calls) {
+  for (let i = 0; i < calls.length; i++) {
+    const [action, data] = calls[i];
     results.push(await callApi(action, data));
+    // Same reasoning as the KPI Dashboard's manually-sequenced calls —
+    // a small pause between requests spaces the batch out further,
+    // reducing how many land in the same short window.
+    if (i < calls.length - 1) await new Promise((resolve) => setTimeout(resolve, 400));
   }
   return results;
 }

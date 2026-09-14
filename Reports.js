@@ -51,13 +51,23 @@ async function loadReportDataBundle() {
     cache.payments = Array.isArray(bundled.payments) ? bundled.payments : [];
     return;
   }
-  await Promise.all([
-    callApi("getApartments", {}).then((r) => (cache.apts = Array.isArray(r) ? r : [])),
-    callApi("getAssets", {}).then((r) => (cache.assets = Array.isArray(r) ? r : [])),
-    callApi("getMaintenance", {}).then((r) => (cache.tickets = Array.isArray(r) ? r : [])),
-    callApi("getUtilities", {}).then((r) => (cache.utilities = Array.isArray(r) ? r : [])),
-    callApi("getPayments", {}).then((r) => (cache.payments = Array.isArray(r) ? r : [])),
+  // [BUG FIX] Sequential, not Promise.all — Apps Script queues
+  // simultaneous requests to the same script internally; firing 5 at
+  // once meant several sat waiting long enough for their one-time
+  // redirect URL to expire, producing 404s that never reached Code.gs
+  // at all (see callApiSequential in Core.js).
+  const [apts, assets, tickets, utilities, payments] = await callApiSequential([
+    ["getApartments", {}],
+    ["getAssets", {}],
+    ["getMaintenance", {}],
+    ["getUtilities", {}],
+    ["getPayments", {}],
   ]);
+  cache.apts = Array.isArray(apts) ? apts : [];
+  cache.assets = Array.isArray(assets) ? assets : [];
+  cache.tickets = Array.isArray(tickets) ? tickets : [];
+  cache.utilities = Array.isArray(utilities) ? utilities : [];
+  cache.payments = Array.isArray(payments) ? payments : [];
 }
 
 function getReportPresets() {
@@ -1143,12 +1153,22 @@ async function compileReportPreview() {
     // requests would silently show a confident-looking ₦0.00 balance
     // instead of "Unavailable", since callApi's normal fallback
     // always returns something Array.isArray() accepts.
-    const [scLedger, pettyCashLedger, energyLedger, occupancyLog] = await Promise.all([
-      callApiStrict("getServiceChargeLedger", {}),
-      callApiStrict("getPettyCashLedger", {}),
-      callApiStrict("getEnergyLedger", {}),
-      callApiStrict("getOccupancyLog", {}),
-    ]);
+    // [BUG FIX] Sequential, not Promise.all — Apps Script queues
+    // simultaneous requests to the same script internally, and firing
+    // 4 at once meant 3 of them sat waiting behind the first until
+    // their one-time redirect URL expired, producing a 404 that never
+    // reached Code.gs at all (see callApiSequential in Core.js). A
+    // small pause between each of the 4 (not just within a single
+    // call's own retries) spaces the whole batch out further, closer
+    // to the pattern that tested cleanly when calls were spread out
+    // in time rather than fired back-to-back.
+    const scLedger = await callApiStrict("getServiceChargeLedger", {});
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const pettyCashLedger = await callApiStrict("getPettyCashLedger", {});
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const energyLedger = await callApiStrict("getEnergyLedger", {});
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const occupancyLog = await callApiStrict("getOccupancyLog", {});
 
     // [BUG FIX] The headline cards and Net Position now reflect the
     // END of the selected period, not "right now" — with a range
@@ -1726,9 +1746,9 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
 
   viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading Service Charge data...</p>`;
 
-  const [ledger, occupancyLog] = await Promise.all([
-    callApi("getServiceChargeLedger", {}),
-    callApi("getOccupancyLog", {}),
+  const [ledger, occupancyLog] = await callApiSequential([
+    ["getServiceChargeLedger", {}],
+    ["getOccupancyLog", {}],
   ]);
   if (!ledger || !Array.isArray(ledger)) {
     viewport.innerHTML = `<p style="padding:20px; color:#dc3545; font-weight:700;">${escapeHtml((ledger && ledger.message) || "Couldn't load the Service Charge ledger.")}</p>`;
@@ -2109,9 +2129,9 @@ async function generateServiceChargePerApartmentReport(unitId, startDateStr, end
 
   viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading Service Charge data...</p>`;
 
-  const [ledger, occupancyLog] = await Promise.all([
-    callApi("getServiceChargeLedger", {}),
-    callApi("getOccupancyLog", {}),
+  const [ledger, occupancyLog] = await callApiSequential([
+    ["getServiceChargeLedger", {}],
+    ["getOccupancyLog", {}],
   ]);
   if (!ledger || !Array.isArray(ledger)) {
     viewport.innerHTML = `<p style="padding:20px; color:#dc3545; font-weight:700;">${escapeHtml((ledger && ledger.message) || "Couldn't load the Service Charge ledger.")}</p>`;
@@ -2374,9 +2394,9 @@ async function generateInventoryConsumptionReport(startDateStr, endDateStr, grou
   if (!viewport) return;
 
   viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading inventory data...</p>`;
-  const [items, movements] = await Promise.all([
-    callApi("getInventoryItems", {}),
-    callApi("getInventoryMovements", {}),
+  const [items, movements] = await callApiSequential([
+    ["getInventoryItems", {}],
+    ["getInventoryMovements", {}],
   ]);
   if (!items || !Array.isArray(items) || !movements || !Array.isArray(movements)) {
     viewport.innerHTML = `<p style="padding:20px; color:#dc3545; font-weight:700;">Couldn't load inventory data.</p>`;
@@ -2529,9 +2549,9 @@ async function generateInventoryValuationReport(startDateStr, endDateStr) {
   if (!viewport) return;
 
   viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading inventory data...</p>`;
-  const [items, movements] = await Promise.all([
-    callApi("getInventoryItems", {}),
-    callApi("getInventoryMovements", {}),
+  const [items, movements] = await callApiSequential([
+    ["getInventoryItems", {}],
+    ["getInventoryMovements", {}],
   ]);
   if (!items || !Array.isArray(items) || !movements || !Array.isArray(movements)) {
     viewport.innerHTML = `<p style="padding:20px; color:#dc3545; font-weight:700;">Couldn't load inventory data.</p>`;
@@ -2769,9 +2789,9 @@ async function generateServiceChargeBudgetVarianceReport(startDateStr, endDateSt
   if (!viewport) return;
 
   viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading Service Charge data...</p>`;
-  const [ledger, budgets] = await Promise.all([
-    callApi("getServiceChargeLedger", {}),
-    callApi("getServiceChargeBudgets", {}),
+  const [ledger, budgets] = await callApiSequential([
+    ["getServiceChargeLedger", {}],
+    ["getServiceChargeBudgets", {}],
   ]);
   if (!ledger || !Array.isArray(ledger) || !budgets || !Array.isArray(budgets)) {
     viewport.innerHTML = `<p style="padding:20px; color:#dc3545; font-weight:700;">Couldn't load Service Charge data.</p>`;
