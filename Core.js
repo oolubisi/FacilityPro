@@ -644,7 +644,7 @@ async function callApi(action, data = {}, options = {}) {
 // than immediately falling back to callApi's normal stale-backup/[]
 // behavior, which a caller checking Array.isArray() can't tell apart
 // from a real, successful, genuinely-empty result.
-async function callApiStrict(action, data = {}, retries = 2, delayMs = 600) {
+async function callApiStrict(action, data = {}, retries = 4, delayMs = 500) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     const result = await callApi(action, data, { strict: true });
     if (result !== null) return result;
