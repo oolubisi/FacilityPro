@@ -280,6 +280,7 @@ async function compileAndDownloadUnifiedPDF(
 
     const response = await fetch(GAS_URL, {
       method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify({ action: "generatePDF", html: cleanHTML, token: API_TOKEN, sessionToken: currentUser?.sessionToken || null }),
     });
     const text = await response.text();

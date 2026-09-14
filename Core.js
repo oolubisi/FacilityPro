@@ -536,6 +536,15 @@ async function callApi(action, data = {}, options = {}) {
   try {
     const response = await fetch(GAS_URL, {
       method: "POST",
+      // [BUG FIX] Explicit Content-Type avoids the browser's default
+      // CORS preflight for cross-origin JSON POSTs, which is where
+      // Apps Script's POST-then-302-redirect can get mishandled and
+      // silently downgraded to a GET (losing the body — the request
+      // then lands on an unrelated Google page and 404s, never
+      // reaching doPost() at all). text/plain works fine here since
+      // Apps Script reads e.postData.contents as a raw string
+      // regardless of the declared content-type.
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify({
         action,
         data,
@@ -643,6 +652,27 @@ async function callApiStrict(action, data = {}, retries = 2, delayMs = 600) {
       await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
   return null;
+}
+
+// [BUG FIX] Apps Script queues/serializes simultaneous requests to the
+// same script internally — firing several callApi() calls at once via
+// Promise.all() means all but the first sit waiting behind it, and if
+// that wait is long enough, the one-time redirect URL Google issues
+// for that request can expire before it's ever serviced. The result
+// is a 404 that never reaches Code.gs at all — it won't show up in
+// the Apps Script Executions log, since the execution never properly
+// started. Running the same calls one at a time avoids the queue
+// entirely: slower in wall-clock time, but each request gets fully
+// serviced before the next one is even sent. Pass an array of
+// [action, data] pairs; returns results in the same order, matching
+// how Promise.all's destructuring was being used at every call site
+// this replaces.
+async function callApiSequential(calls) {
+  const results = [];
+  for (const [action, data] of calls) {
+    results.push(await callApi(action, data));
+  }
+  return results;
 }
 
 async function processSyncQueue() {
@@ -1082,6 +1112,7 @@ async function generateNextRecordId(prefix, sheetName, idKey, fallbackList) {
   try {
     const response = await fetch(GAS_URL, {
       method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify({
         action: "generateId",
         data: { prefix, sheetName, idKey },
