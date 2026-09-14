@@ -1137,11 +1137,17 @@ async function compileReportPreview() {
     // Charge uses to determine who was occupying a unit on a given
     // date — reused here to work out occupancy AS OF a specific date,
     // not just its live status right now.
+    // [BUG FIX] Using callApiStrict here (retries transient failures,
+    // then returns null rather than a stale/empty fallback) — with
+    // ordinary callApi, a dropped connection on any one of these four
+    // requests would silently show a confident-looking ₦0.00 balance
+    // instead of "Unavailable", since callApi's normal fallback
+    // always returns something Array.isArray() accepts.
     const [scLedger, pettyCashLedger, energyLedger, occupancyLog] = await Promise.all([
-      callApi("getServiceChargeLedger", {}),
-      callApi("getPettyCashLedger", {}),
-      callApi("getEnergyLedger", {}),
-      callApi("getOccupancyLog", {}),
+      callApiStrict("getServiceChargeLedger", {}),
+      callApiStrict("getPettyCashLedger", {}),
+      callApiStrict("getEnergyLedger", {}),
+      callApiStrict("getOccupancyLog", {}),
     ]);
 
     // [BUG FIX] The headline cards and Net Position now reflect the
@@ -1177,6 +1183,7 @@ async function compileReportPreview() {
       return { credit, debit };
     }
 
+    const occupancyLogFailed = occupancyLog === null;
     const occupancyLogSafe = Array.isArray(occupancyLog) ? occupancyLog : [];
     const realApts = (cache.apts || []).filter(
       (a) => a && String(a.type || a.Type || "").toLowerCase() !== "services",
@@ -1191,9 +1198,13 @@ async function compileReportPreview() {
     }
 
     const totalApts = realApts.length;
-    const openingOccupancyRate = occupancyRateAsOf(monthStart);
-    const closingOccupancyRate = occupancyRateAsOf(monthEnd);
-    const closingOccupiedCount = occupiedCountAsOf(monthEnd);
+    // A failed OccupancyLog fetch would otherwise silently read as
+    // "nobody has ever moved in" (0% for both), which looks like a
+    // real, if surprising, result rather than the error it actually
+    // is — same reasoning as the three ledger balances below.
+    const openingOccupancyRate = occupancyLogFailed ? null : occupancyRateAsOf(monthStart);
+    const closingOccupancyRate = occupancyLogFailed ? null : occupancyRateAsOf(monthEnd);
+    const closingOccupiedCount = occupancyLogFailed ? null : occupiedCountAsOf(monthEnd);
 
     const scBalance = Array.isArray(scLedger) ? ledgerBalanceAsOf(scLedger, monthEnd, "credit") : null;
     const pettyCashBalance = Array.isArray(pettyCashLedger) ? ledgerBalanceAsOf(pettyCashLedger, monthEnd, "inflow") : null;
@@ -1218,7 +1229,7 @@ async function compileReportPreview() {
     const asOfLabel = monthEnd.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
     out += `<div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:12px; margin-bottom:20px;">
-      <div style="background:#e8f4fd; border:2px solid #0d6efd; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; color:#0d6efd; text-transform:uppercase;">Occupancy Rate</div><div style="font-size:28px; font-weight:900;">${closingOccupancyRate.toFixed(1)}%</div><div style="font-size:12px; color:#666;">${closingOccupiedCount} / ${totalApts} units as of ${escapeHtml(asOfLabel)}</div></div>
+      <div style="background:#e8f4fd; border:2px solid #0d6efd; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; color:#0d6efd; text-transform:uppercase;">Occupancy Rate</div><div style="font-size:28px; font-weight:900; color:${closingOccupancyRate === null ? "#999" : "inherit"};">${closingOccupancyRate === null ? "Unavailable" : closingOccupancyRate.toFixed(1) + "%"}</div><div style="font-size:12px; color:#666;">${closingOccupancyRate === null ? "Couldn't load occupancy data" : `${closingOccupiedCount} / ${totalApts} units as of ${escapeHtml(asOfLabel)}`}</div></div>
       ${balanceCard("Service Charge Pool", scBalance, "#198754")}
       ${balanceCard("Petty Cash", pettyCashBalance, "#198754")}
       ${balanceCard("Energy", energyBalance, "#198754")}
@@ -1271,12 +1282,12 @@ async function compileReportPreview() {
         </tr></thead>
         <tbody>
           ${(() => {
-            const occDelta = closingOccupancyRate - openingOccupancyRate;
+            const occDelta = closingOccupancyRate === null || openingOccupancyRate === null ? null : closingOccupancyRate - openingOccupancyRate;
             return breakdownRow(
               "Occupancy Rate",
               openingOccupancyRate,
-              occDelta > 0 ? occDelta : 0,
-              occDelta < 0 ? Math.abs(occDelta) : 0,
+              occDelta === null ? null : occDelta > 0 ? occDelta : 0,
+              occDelta === null ? null : occDelta < 0 ? Math.abs(occDelta) : 0,
               closingOccupancyRate,
               true,
             );

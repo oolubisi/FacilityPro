@@ -13,7 +13,7 @@
 // =========================================================
 
 const GAS_URL =
-  "https://script.google.com/macros/s/AKfycbywuJnim2WBgSIrM-uFvLxKyBtKvMevnbbs0QOHQBShlsHHtAHbUdJAxeaP524v_Boj/exec";
+  "https://script.google.com/macros/s/AKfycbxG8ubpGZdJtvY61-wmVw2O9J6NOwstoQQ4SMsXq0JMsttXf61dKwSrbEVfcBPQysmY/exec";
 
 // [SECURITY FIX] Shared-secret token sent with every request so the
 // endpoint above can reject calls that didn't come from this app. This
@@ -260,7 +260,10 @@ function getLocalDateString(date = new Date()) {
 // once. This parses once per item up front (decorate/sort/undecorate)
 // instead, then sorts on the pre-computed numbers.
 function sortByDate(arr, dateField = "date", ascending = true) {
-  const decorated = (arr || []).map((item) => [new Date(item?.[dateField]).getTime(), item]);
+  const decorated = (arr || []).map((item) => [
+    new Date(item?.[dateField]).getTime(),
+    item,
+  ]);
   decorated.sort((a, b) => (ascending ? a[0] - b[0] : b[0] - a[0]));
   return decorated.map((pair) => pair[1]);
 }
@@ -314,13 +317,14 @@ function showSyncBadge(containerId, show) {
   if (!badge) {
     badge = document.createElement("div");
     badge.id = containerId + "-sync-badge";
-    badge.style.cssText = "font-size:11px; color:var(--muted, #888); margin-bottom:6px; display:none;";
-    badge.innerHTML = '<i class="fas fa-rotate fa-spin"></i> Syncing latest data...';
+    badge.style.cssText =
+      "font-size:11px; color:var(--muted, #888); margin-bottom:6px; display:none;";
+    badge.innerHTML =
+      '<i class="fas fa-rotate fa-spin"></i> Syncing latest data...';
     container.parentNode.insertBefore(badge, container);
   }
   badge.style.display = show ? "block" : "none";
 }
-
 
 function formatDateForDisplay(dStr) {
   if (!dStr) return "Not Tracked";
@@ -387,7 +391,10 @@ function getDirectImageUrl(url) {
   // instead of the intended logo. Assume https:// if no scheme is
   // present, rather than giving up.
   if (!/^https?:\/\//i.test(normalized)) {
-    if (/^[\w.-]+\.[a-z]{2,}\//i.test(normalized) || normalized.includes("drive.google.com")) {
+    if (
+      /^[\w.-]+\.[a-z]{2,}\//i.test(normalized) ||
+      normalized.includes("drive.google.com")
+    ) {
       normalized = "https://" + normalized.replace(/^\/+/, "");
     } else {
       return "";
@@ -395,7 +402,8 @@ function getDirectImageUrl(url) {
   }
   if (normalized.includes("drive.google.com")) {
     const fileId =
-      normalized.split("/d/")[1]?.split("/")[0] || normalized.split("id=")[1]?.split("&")[0];
+      normalized.split("/d/")[1]?.split("/")[0] ||
+      normalized.split("id=")[1]?.split("&")[0];
     if (fileId)
       return `https://drive.google.com/thumbnail?id=${fileId}&sz=w800`;
   }
@@ -518,7 +526,7 @@ function currentUserMeetsRole(minRole) {
 // ─────────────────────────────────────────────
 // § API LAYER
 // ─────────────────────────────────────────────
-async function callApi(action, data = {}) {
+async function callApi(action, data = {}, options = {}) {
   // Auth actions can't be queued for later — there's nothing meaningful
   // to "sync" about a login attempt once the caller has moved on, and
   // retrying it blind from the offline queue would silently discard
@@ -572,6 +580,19 @@ async function callApi(action, data = {}) {
     }
 
     if (action.startsWith("get")) {
+      // [BUG FIX] This fallback (stale backup, or [] with none) meant
+      // a genuine network failure was indistinguishable from "fetched
+      // successfully, ledger happens to be empty" to any caller doing
+      // an Array.isArray() check — exactly the check the Executive
+      // KPI Dashboard uses to decide whether to show a real balance
+      // or "Unavailable". A transient blip on, say, the Petty Cash
+      // request would silently produce a ₦0.00 (or stale) balance
+      // that looked like real data instead of the intended error
+      // state. options.strict skips the fallback and returns null —
+      // still Array.isArray()-false, but now correctly so — for
+      // callers where showing "we don't actually know" beats showing
+      // a confident-looking wrong number.
+      if (options.strict) return null;
       const backup = localStorage.getItem("facility_pro_backup_" + action);
       if (backup) {
         try {
@@ -605,6 +626,23 @@ async function callApi(action, data = {}) {
     showToast("Saved locally. Will sync when online.", "warning");
     return { status: "queued" };
   }
+}
+
+// [FEATURE] For fetches where a confident-looking wrong number is
+// worse than an honest "couldn't load" — gives a transient network
+// blip a couple of extra chances to resolve itself (short delay
+// between attempts) before finally reporting failure via null, rather
+// than immediately falling back to callApi's normal stale-backup/[]
+// behavior, which a caller checking Array.isArray() can't tell apart
+// from a real, successful, genuinely-empty result.
+async function callApiStrict(action, data = {}, retries = 2, delayMs = 600) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const result = await callApi(action, data, { strict: true });
+    if (result !== null) return result;
+    if (attempt < retries)
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  return null;
 }
 
 async function processSyncQueue() {
@@ -648,7 +686,8 @@ async function processSyncQueue() {
     showToast(
       conflictCount === 1
         ? "1 change couldn't sync — someone else edited that record. See Diagnostics to review."
-        : conflictCount + " changes couldn't sync — someone else edited those records. See Diagnostics to review.",
+        : conflictCount +
+            " changes couldn't sync — someone else edited those records. See Diagnostics to review.",
       "warning",
     );
   }
@@ -672,7 +711,9 @@ async function processSyncQueue() {
 // ─────────────────────────────────────────────
 function getSyncConflicts() {
   try {
-    return JSON.parse(localStorage.getItem("facility_pro_sync_conflicts") || "[]");
+    return JSON.parse(
+      localStorage.getItem("facility_pro_sync_conflicts") || "[]",
+    );
   } catch (e) {
     return [];
   }
@@ -686,17 +727,27 @@ function addSyncConflict(item, message) {
     message: message || "This record was changed elsewhere.",
     conflictedAt: Date.now(),
   });
-  localStorage.setItem("facility_pro_sync_conflicts", JSON.stringify(conflicts));
+  localStorage.setItem(
+    "facility_pro_sync_conflicts",
+    JSON.stringify(conflicts),
+  );
   updateStatusBarSync();
 }
 
 function discardSyncConflict(index) {
   const conflicts = getSyncConflicts();
   conflicts.splice(index, 1);
-  localStorage.setItem("facility_pro_sync_conflicts", JSON.stringify(conflicts));
+  localStorage.setItem(
+    "facility_pro_sync_conflicts",
+    JSON.stringify(conflicts),
+  );
   updateStatusBarSync();
   if (typeof renderDiagnosticsPanel === "function") renderDiagnosticsPanel();
-  if (typeof renderSettingsShortcuts === "function" && typeof desktopState !== "undefined" && desktopState.view === "settings") {
+  if (
+    typeof renderSettingsShortcuts === "function" &&
+    typeof desktopState !== "undefined" &&
+    desktopState.view === "settings"
+  ) {
     renderSettingsShortcuts();
   }
   showToast("Discarded.", "success");
@@ -721,10 +772,17 @@ async function retrySyncConflict(index) {
   }
 
   conflicts.splice(index, 1);
-  localStorage.setItem("facility_pro_sync_conflicts", JSON.stringify(conflicts));
+  localStorage.setItem(
+    "facility_pro_sync_conflicts",
+    JSON.stringify(conflicts),
+  );
   updateStatusBarSync();
   if (typeof renderDiagnosticsPanel === "function") renderDiagnosticsPanel();
-  if (typeof renderSettingsShortcuts === "function" && typeof desktopState !== "undefined" && desktopState.view === "settings") {
+  if (
+    typeof renderSettingsShortcuts === "function" &&
+    typeof desktopState !== "undefined" &&
+    desktopState.view === "settings"
+  ) {
     renderSettingsShortcuts();
   }
   showToast("Change applied.", "success");
@@ -742,8 +800,18 @@ function getSyncConflictsHtml() {
   }
   return conflicts
     .map((c, i) => {
-      const label = c.data && (c.data.reqId || c.data.cashId || c.data.ticketId ||
-        c.data.paymentId || c.data.itemId || c.data.tag || c.data.rowId || c.data.logId || c.data.apt || c.action);
+      const label =
+        c.data &&
+        (c.data.reqId ||
+          c.data.cashId ||
+          c.data.ticketId ||
+          c.data.paymentId ||
+          c.data.itemId ||
+          c.data.tag ||
+          c.data.rowId ||
+          c.data.logId ||
+          c.data.apt ||
+          c.action);
       return `
         <div style="border:2px solid #e0b34d; background:#fff8ea; border-radius:10px; padding:10px 12px; margin-top:8px;">
           <div style="font-weight:800; font-size:13px;">${escapeHtml(c.action)} — ${escapeHtml(String(label || ""))}</div>
@@ -761,8 +829,10 @@ function handleSyncConflictClick(event) {
   const actionEl = event.target.closest("[data-action]");
   if (!actionEl) return;
   const index = Number(actionEl.dataset.index);
-  if (actionEl.dataset.action === "discard-conflict") discardSyncConflict(index);
-  else if (actionEl.dataset.action === "retry-conflict") retrySyncConflict(index);
+  if (actionEl.dataset.action === "discard-conflict")
+    discardSyncConflict(index);
+  else if (actionEl.dataset.action === "retry-conflict")
+    retrySyncConflict(index);
 }
 
 if (typeof document !== "undefined") {
@@ -920,14 +990,18 @@ function exportRecordsAsCsv(records, columns, filename) {
   const header = columns.map((c) => escapeCsvValue(c.label)).join(",");
   const rows = records.map((r) =>
     columns
-      .map((c) => escapeCsvValue(typeof c.value === "function" ? c.value(r) : r[c.value]))
+      .map((c) =>
+        escapeCsvValue(typeof c.value === "function" ? c.value(r) : r[c.value]),
+      )
       .join(","),
   );
   const csvContent = [header, ...rows].join("\r\n");
 
   // Leading BOM so Excel opens the file as UTF-8 (otherwise ₦ and other
   // non-ASCII characters render as garbled text on Windows).
-  const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+  const blob = new Blob(["\uFEFF" + csvContent], {
+    type: "text/csv;charset=utf-8;",
+  });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -937,7 +1011,10 @@ function exportRecordsAsCsv(records, columns, filename) {
   document.body.removeChild(link);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 
-  showToast(`Exported ${records.length} record${records.length === 1 ? "" : "s"}.`, "success");
+  showToast(
+    `Exported ${records.length} record${records.length === 1 ? "" : "s"}.`,
+    "success",
+  );
 }
 
 const CSV_EXPORT_COLUMNS = {
@@ -953,7 +1030,10 @@ const CSV_EXPORT_COLUMNS = {
     {
       label: "Paid",
       value: (r) =>
-        r.isPaid === true || String(r.isPaid || r.IsPaid || "").toUpperCase() === "TRUE" ? "Yes" : "No",
+        r.isPaid === true ||
+        String(r.isPaid || r.IsPaid || "").toUpperCase() === "TRUE"
+          ? "Yes"
+          : "No",
     },
     { label: "Reference", value: (r) => r.reference || r.Reference || "" },
     { label: "Created By", value: (r) => r.createdBy || r.CreatedBy || "" },
@@ -1013,7 +1093,10 @@ async function generateNextRecordId(prefix, sheetName, idKey, fallbackList) {
     const result = await response.json();
     if (result?.status === "success" && result.id) return result.id;
   } catch (err) {
-    console.warn("Backend ID generation unavailable; using local fallback.", err);
+    console.warn(
+      "Backend ID generation unavailable; using local fallback.",
+      err,
+    );
   }
   return generateNextId(prefix, fallbackList || [], idKey);
 }
@@ -1049,7 +1132,8 @@ function populateUnitDropdown(selectElementId, currentlySelectedValue) {
     callApi("getApartments", {}).then((res) => {
       if (res && Array.isArray(res)) {
         cache.apts = res;
-        if (typeof sortApartmentsCacheList === "function") sortApartmentsCacheList();
+        if (typeof sortApartmentsCacheList === "function")
+          sortApartmentsCacheList();
         renderOptions();
       }
     });
@@ -1076,7 +1160,8 @@ function populateOccupiedUnitDropdown(selectElementId, currentlySelectedValue) {
       const uNum = getUnitNumber(u);
       if (!uNum && uNum !== 0) return;
       if (String(u.type || u.Type || "").toLowerCase() === "services") return;
-      if (String(u.status || u.Status || "").toLowerCase() !== "occupied") return;
+      if (String(u.status || u.Status || "").toLowerCase() !== "occupied")
+        return;
       const opt = document.createElement("option");
       opt.value = uNum;
       opt.textContent = "Unit " + uNum;
@@ -1093,7 +1178,8 @@ function populateOccupiedUnitDropdown(selectElementId, currentlySelectedValue) {
     callApi("getApartments", {}).then((res) => {
       if (res && Array.isArray(res)) {
         cache.apts = res;
-        if (typeof sortApartmentsCacheList === "function") sortApartmentsCacheList();
+        if (typeof sortApartmentsCacheList === "function")
+          sortApartmentsCacheList();
         renderOptions();
       }
     });
