@@ -723,9 +723,49 @@ function resolveServiceChargeReportPeriod() {
 // being generated shouldn't queue up a second, conflicting run).
 let reportActionInProgress = false;
 
+// [FEATURE] 60-second cooldown (with a visible countdown on the
+// button) after a report generation comes back with partial
+// failures — set window.lastReportHadFailures = true from within a
+// report generator when it detects this (see the KPI Dashboard for
+// an example). Reports that never set this flag are unaffected;
+// rapid-retrying a report that DID come back incomplete is exactly
+// the behavior that made the underlying Apps Script contention
+// worse, not better, based on direct testing.
+let reportCooldownUntil = 0;
+let reportCooldownInterval = null;
+
+function startReportCooldown(btn, originalHtml) {
+  if (!btn) return;
+  reportCooldownUntil = Date.now() + 60000;
+  if (reportCooldownInterval) clearInterval(reportCooldownInterval);
+
+  const tick = () => {
+    const remaining = Math.ceil((reportCooldownUntil - Date.now()) / 1000);
+    if (remaining <= 0) {
+      clearInterval(reportCooldownInterval);
+      reportCooldownInterval = null;
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+      return;
+    }
+    btn.disabled = true;
+    btn.innerHTML = `<i class="fas fa-clock"></i> Retry available in ${remaining}s...`;
+  };
+  tick();
+  reportCooldownInterval = setInterval(tick, 1000);
+}
+
 async function runReportAction(buttonIds, loadingLabel, workFn) {
   if (reportActionInProgress) {
     showToast("Still working on the previous request — please wait.", "warning");
+    return;
+  }
+  if (Date.now() < reportCooldownUntil) {
+    const remaining = Math.ceil((reportCooldownUntil - Date.now()) / 1000);
+    showToast(
+      `The last attempt had missing data — retrying immediately tends to make that worse. Please wait ${remaining}s.`,
+      "warning",
+    );
     return;
   }
   reportActionInProgress = true;
@@ -740,6 +780,7 @@ async function runReportAction(buttonIds, loadingLabel, workFn) {
     btn.disabled = true;
     btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${escapeHtml(loadingLabel)}`;
   }
+  window.lastReportHadFailures = false;
   try {
     await workFn();
   } catch (err) {
@@ -747,7 +788,9 @@ async function runReportAction(buttonIds, loadingLabel, workFn) {
     showToast("Something went wrong. Please try again.", "error");
   } finally {
     reportActionInProgress = false;
-    if (btn) {
+    if (window.lastReportHadFailures) {
+      startReportCooldown(btn, originalHtml);
+    } else if (btn) {
       btn.disabled = false;
       btn.innerHTML = originalHtml;
     }
@@ -1169,6 +1212,14 @@ async function compileReportPreview() {
     const energyLedger = await callApiStrict("getEnergyLedger", {});
     await new Promise((resolve) => setTimeout(resolve, 400));
     const occupancyLog = await callApiStrict("getOccupancyLog", {});
+
+    // [FEATURE] Flags this run as incomplete so runReportAction starts
+    // the 60s cooldown — retrying immediately after a partial failure
+    // is exactly what tended to make the underlying contention worse
+    // rather than better.
+    if (scLedger === null || pettyCashLedger === null || energyLedger === null || occupancyLog === null) {
+      window.lastReportHadFailures = true;
+    }
 
     // [BUG FIX] The headline cards and Net Position now reflect the
     // END of the selected period, not "right now" — with a range
