@@ -452,15 +452,15 @@ async function openModal(type, editData = null) {
       (a) => a && String(a.type || a.Type || "").toLowerCase() !== "services",
     );
     body.innerHTML = `
-      <div class="form-field span-3"><label ${lbl}>Category</label><select id="sc_se_category" ${ls} onchange="const isTopup = this.value === '${PETTY_CASH_TOPUP_CATEGORY}'; document.getElementById('sc_se_petty_cash_field').style.display = isTopup ? 'none' : 'block'; document.getElementById('sc_se_topup_note').style.display = isTopup ? 'block' : 'none';">${buildServiceChargeCategoryOptionsHtml("")}</select></div>
+      <div class="form-field span-3"><label ${lbl}>Category</label><select id="sc_se_category" ${ls} onchange="const isTopup = this.value === '${PETTY_CASH_TOPUP_CATEGORY}'; document.getElementById('sc_se_petty_cash_field').style.display = isTopup ? 'none' : 'block'; document.getElementById('sc_se_topup_note').style.display = isTopup ? 'block' : 'none'; document.getElementById('sc_se_apt_section').style.display = isTopup ? 'none' : 'block';">${buildServiceChargeCategoryOptionsHtml("")}</select></div>
       <div class="form-field"><label ${lbl}>Total Amount (₦)</label><input id="sc_se_amount" type="text" inputmode="numeric" oninput="maskCurrencyInput(this)" ${ls}></div>
       <div class="form-field"><label ${lbl}>Date</label><input id="sc_se_date" type="date" value="${getLocalDateString()}" ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="sc_se_description" ${ls}></div>
       <div class="form-field span-3" id="sc_se_petty_cash_field"><label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer;"><input type="checkbox" id="sc_se_from_petty_cash" style="width:auto;"> Pay from Petty Cash</label></div>
       <div class="form-field span-3" id="sc_se_topup_note" style="display:none; background:#f0f4ff; border:2px solid #c7d2fe; border-radius:10px; padding:10px 14px;">
-        <small style="font-weight:700; color:#4f46e5;"><i class="fas fa-diagram-project"></i> This debits the Service Charge pool and automatically credits Petty Cash with the same amount — recorded as a transfer, not a purchase.</small>
+        <small style="font-weight:700; color:#4f46e5;"><i class="fas fa-diagram-project"></i> This debits the Service Charge pool and credits Petty Cash with the same amount as a single transfer — not split across any apartments.</small>
       </div>
-      <div class="form-field span-3">
+      <div class="form-field span-3" id="sc_se_apt_section">
         <label ${lbl}>Apartments</label>
         <p style="font-size:12px; color:var(--muted); margin:0 0 8px 0;">The amount is split by weight across whichever apartments are checked below — check just one to debit that unit alone.</p>
         <div style="display:flex; gap:8px; margin-bottom:8px;">
@@ -491,12 +491,13 @@ async function openModal(type, editData = null) {
     submit.onclick = () => {
       const amount = document.getElementById("sc_se_amount").value.replace(/,/g, "");
       const category = document.getElementById("sc_se_category").value;
+      const isTopup = category === PETTY_CASH_TOPUP_CATEGORY;
       const selectedApts = Array.from(document.querySelectorAll(".sc_se_apt_cb:checked")).map((el) => el.value);
       if (!category || !amount || Number(amount) <= 0) {
         showToast("Enter a category and a positive amount.", "error");
         return;
       }
-      if (selectedApts.length === 0) {
+      if (!isTopup && selectedApts.length === 0) {
         showToast("Select at least one apartment.", "error");
         return;
       }
@@ -507,8 +508,8 @@ async function openModal(type, editData = null) {
         category,
         date: document.getElementById("sc_se_date").value,
         description: sanitizeInput(document.getElementById("sc_se_description").value),
-        fromPettyCash: document.getElementById("sc_se_from_petty_cash").checked,
-        selectedApts,
+        fromPettyCash: isTopup ? false : document.getElementById("sc_se_from_petty_cash").checked,
+        selectedApts: isTopup ? [] : selectedApts,
       })
         .then((result) => {
           submit.disabled = false;
@@ -519,9 +520,11 @@ async function openModal(type, editData = null) {
           }
           closeModal();
           showToast(
-            result.splits.length === 1
-              ? `Expense logged to Unit ${result.splits[0].apt}.`
-              : `Expense split across ${result.splits.length} apartment(s).`,
+            isTopup
+              ? "Petty Cash topped up."
+              : result.splits.length === 1
+                ? `Expense logged to Unit ${result.splits[0].apt}.`
+                : `Expense split across ${result.splits.length} apartment(s).`,
             "success",
           );
           if (typeof refreshServiceChargeSection === "function") refreshServiceChargeSection();
