@@ -1187,28 +1187,23 @@ async function compileReportPreview() {
     // Charge uses to determine who was occupying a unit on a given
     // date — reused here to work out occupancy AS OF a specific date,
     // not just its live status right now.
-    // [BUG FIX] Using callApiStrict here (retries transient failures,
-    // then returns null rather than a stale/empty fallback) — with
-    // ordinary callApi, a dropped connection on any one of these four
-    // requests would silently show a confident-looking ₦0.00 balance
-    // instead of "Unavailable", since callApi's normal fallback
-    // always returns something Array.isArray() accepts.
-    // [BUG FIX] Sequential, not Promise.all — Apps Script queues
-    // simultaneous requests to the same script internally, and firing
-    // 4 at once meant 3 of them sat waiting behind the first until
-    // their one-time redirect URL expired, producing a 404 that never
-    // reached Code.gs at all (see callApiSequential in Core.js). A
-    // small pause between each of the 4 (not just within a single
-    // call's own retries) spaces the whole batch out further, closer
-    // to the pattern that tested cleanly when calls were spread out
-    // in time rather than fired back-to-back.
-    const scLedger = await callApiStrict("getServiceChargeLedger", {});
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    const pettyCashLedger = await callApiStrict("getPettyCashLedger", {});
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    const energyLedger = await callApiStrict("getEnergyLedger", {});
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    const occupancyLog = await callApiStrict("getOccupancyLog", {});
+    // [BUG FIX] One bundled request instead of four separate ones —
+    // each individual request pays Apps Script's redirect-based
+    // execution model once (POST -> 302 -> one-time execution URL),
+    // and that redirect step has shown a real, evidenced chance of
+    // dropping the POST body and 404ing before reaching Code.gs at
+    // all. Sequential calls and spacing between them reduced how
+    // often that happened, but didn't eliminate it — one request
+    // means one chance instead of four, which is the more direct fix.
+    // callApiStrict still retries this single call on failure and
+    // returns null (not a stale/empty fallback) so a dropped
+    // connection here shows "Unavailable" honestly rather than a
+    // confident-looking wrong number.
+    const bundled = await callApiStrict("getKpiDashboardData", {});
+    const scLedger = bundled ? bundled.serviceCharge : null;
+    const pettyCashLedger = bundled ? bundled.pettyCash : null;
+    const energyLedger = bundled ? bundled.energy : null;
+    const occupancyLog = bundled ? bundled.occupancyLog : null;
 
     // [BUG FIX] The headline cards and Net Position now reflect the
     // END of the selected period, not "right now" — with a range
