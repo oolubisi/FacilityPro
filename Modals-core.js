@@ -556,11 +556,15 @@ function isEntrySameCalendarDay(isoString) {
 }
 
 function deleteServiceChargeLedgerEntry(entryId) {
-  if (!window.confirm("Delete this entry? This can't be undone. (If it's part of a shared expense, every apartment's share of that same expense will be removed together.)")) return;
+  if (!window.confirm("Delete this entry? This can't be undone. (If it's part of a shared expense, every apartment's share of that same expense will be removed together — and if it was linked to a Petty Cash entry, that gets removed too.)")) return;
   callApi("deleteServiceChargeEntry", { entryId }).then((result) => {
     if (result && result.status === "success") {
-      showToast("Entry deleted.", "success");
+      showToast(
+        result.deletedPettyCashCount > 0 ? "Entry deleted, along with its linked Petty Cash entry." : "Entry deleted.",
+        "success",
+      );
       refreshServiceChargeSection();
+      if (result.deletedPettyCashCount > 0 && typeof refreshPettyCashSection === "function") refreshPettyCashSection();
     } else {
       showToast((result && result.message) || "Failed to delete entry.", "error");
     }
