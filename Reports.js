@@ -723,45 +723,9 @@ function resolveServiceChargeReportPeriod() {
 // being generated shouldn't queue up a second, conflicting run).
 let reportActionInProgress = false;
 
-// [FEATURE] 60-second cooldown (with a visible countdown on the
-// button) enforced after every report generation, regardless of
-// whether it succeeded — directly enforces the spacing that testing
-// showed avoids Apps Script's underlying request contention, rather
-// than relying on each report type to detect and flag its own
-// partial failures (unreliable — not every report has that logic,
-// and it's easy for it to silently not fire).
-let reportCooldownUntil = 0;
-let reportCooldownInterval = null;
-
-function startReportCooldown(btn, originalHtml) {
-  if (!btn) return;
-  reportCooldownUntil = Date.now() + 60000;
-  if (reportCooldownInterval) clearInterval(reportCooldownInterval);
-
-  const tick = () => {
-    const remaining = Math.ceil((reportCooldownUntil - Date.now()) / 1000);
-    if (remaining <= 0) {
-      clearInterval(reportCooldownInterval);
-      reportCooldownInterval = null;
-      btn.disabled = false;
-      btn.innerHTML = originalHtml;
-      return;
-    }
-    btn.disabled = true;
-    btn.innerHTML = `<i class="fas fa-clock"></i> Retry available in ${remaining}s...`;
-  };
-  tick();
-  reportCooldownInterval = setInterval(tick, 1000);
-}
-
 async function runReportAction(buttonIds, loadingLabel, workFn) {
   if (reportActionInProgress) {
     showToast("Still working on the previous request — please wait.", "warning");
-    return;
-  }
-  if (Date.now() < reportCooldownUntil) {
-    const remaining = Math.ceil((reportCooldownUntil - Date.now()) / 1000);
-    showToast(`Please wait ${remaining}s before generating another report.`, "warning");
     return;
   }
   reportActionInProgress = true;
@@ -783,14 +747,10 @@ async function runReportAction(buttonIds, loadingLabel, workFn) {
     showToast("Something went wrong. Please try again.", "error");
   } finally {
     reportActionInProgress = false;
-    // [FEATURE] Unconditional now, not just when a failure was
-    // detected — a blanket 60s cooldown after every generation is
-    // simpler and more robust than relying on each report type to
-    // correctly flag its own partial failures, and directly enforces
-    // the spacing that testing showed actually avoids the underlying
-    // Apps Script contention, rather than hoping the user remembers
-    // to wait on their own.
-    startReportCooldown(btn, originalHtml);
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+    }
   }
 }
 

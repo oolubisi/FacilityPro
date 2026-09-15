@@ -263,6 +263,66 @@ function computeServiceChargePoolBalanceAsOf(ledger, asOfDate) {
   return balance;
 }
 
+// [FEATURE] One apartment's Service Charge standing at a glance — the
+// "View Apartment Balance" quick-check modal calls this on selection
+// change. Deliberately includes "Paid from Petty Cash" expenses at
+// full weight (unlike the pool's own aggregate balance) since this
+// apartment genuinely was charged for them regardless of which till
+// physically paid — see computeServiceChargePoolBalanceAsOf above for
+// why those two numbers differ on purpose.
+function renderScApartmentBalanceDetail(unitId) {
+  const el = document.getElementById("scab_detail");
+  if (!el) return;
+  if (!unitId) {
+    el.innerHTML = "";
+    return;
+  }
+
+  const unitLedger = sortByDate(
+    (lastFetchedServiceChargeLedger || []).filter((row) => row && String(row.apt) === String(unitId)),
+    "date",
+    false,
+  );
+  const balance = (computeServiceChargeBalancesAsOf(lastFetchedServiceChargeLedger, null) || {})[unitId] || 0;
+  const typeLabels = { contribution: "Contribution", apartment_expense: "Apartment Expense", shared_expense: "Shared Expense" };
+  const typeColors = { contribution: "#198754", apartment_expense: "#dc3545", shared_expense: "#fd7e14" };
+
+  const rows = unitLedger.length
+    ? unitLedger
+        .map((row) => {
+          const amountDisplay = `${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}`;
+          const paidFromPettyCash = String(row.paidFromPettyCash).toLowerCase() === "yes";
+          return `<tr style="border-bottom:1px solid #eee;">
+            <td style="padding:6px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
+            <td style="padding:6px;"><span style="background:${typeColors[row.type] || "#666"}22; color:${typeColors[row.type] || "#666"}; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:800;">${typeLabels[row.type] || row.type}</span></td>
+            <td style="padding:6px;">${escapeHtml(row.category || "")}</td>
+            <td style="padding:6px; color:#555;">${escapeHtml(row.description || "")}${paidFromPettyCash ? ' <span style="color:#fd7e14; font-size:11px; font-weight:800;">(Petty Cash)</span>' : ""}</td>
+            <td style="padding:6px; text-align:right; font-weight:800; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${amountDisplay}</td>
+          </tr>`;
+        })
+        .join("")
+    : `<tr><td colspan="5" style="padding:10px; text-align:center; color:var(--muted);">No activity for this apartment yet.</td></tr>`;
+
+  el.innerHTML = `
+    <div style="background:#fff; border:2px solid #000; border-radius:12px; padding:14px; text-align:center; margin-bottom:14px;">
+      <div style="font-size:11px; font-weight:800; text-transform:uppercase; color:var(--muted);">Current Balance — Unit ${escapeHtml(unitId)}</div>
+      <div style="font-size:24px; font-weight:900; color:${balance >= 0 ? "#198754" : "#dc3545"};">${balance >= 0 ? "" : "-"}₦${formatMoney(Math.abs(balance))}</div>
+    </div>
+    <div style="overflow-x:auto; max-height:320px; overflow-y:auto;">
+      <table style="width:100%; border-collapse:collapse; font-size:13px;">
+        <thead><tr style="border-bottom:2px solid #000; text-align:left; position:sticky; top:0; background:#fff;">
+          <th style="padding:8px 6px;">Date</th>
+          <th style="padding:8px 6px;">Type</th>
+          <th style="padding:8px 6px;">Category</th>
+          <th style="padding:8px 6px;">Notes</th>
+          <th style="padding:8px 6px; text-align:right;">Amount</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
 // [FEATURE] apt.status only ever reflects "right now" — a report run
 // today has no way to know whether a unit was occupied during some
 // past period once its status has since changed. This reconstructs

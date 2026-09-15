@@ -686,6 +686,27 @@ async function openModal(type, editData = null) {
   // Reads ALL_REPORTS_FLAT (Reports.js) so every real report in the
   // app is offered here automatically — nothing to keep in sync by
   // hand when a new report type gets added later.
+  // ── SERVICE CHARGE: APARTMENT BALANCE VIEWER (view-only) ──
+  // A quick way to check one apartment's own Service Charge standing
+  // and full activity without generating a printed report — pick a
+  // unit, see its balance and every contribution/expense that's ever
+  // touched it, re-rendering live as the selection changes.
+  else if (type === "scapartmentbalance") {
+    submit.style.display = "none";
+    title.innerText = "Apartment Service Charge Balance";
+    body.innerHTML = `
+      <div class="form-field span-3"><label ${lbl}>Select Apartment</label>
+        <select id="scab_apt" onchange="renderScApartmentBalanceDetail(this.value)" ${ls}></select>
+      </div>
+      <div class="form-field span-3" id="scab_detail"></div>
+    `;
+    populateUnitDropdown("scab_apt");
+    setTimeout(() => {
+      const sel = document.getElementById("scab_apt");
+      if (sel && sel.value) renderScApartmentBalanceDetail(sel.value);
+    }, 0);
+  }
+
   else if (type === "reportgroupeditor") {
     title.innerText = isEdit ? "Edit Report Group" : "New Report Group";
     const selectedKeys = isEdit ? editData.reportKeys || [] : [];

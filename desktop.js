@@ -129,7 +129,11 @@ async function initDesktop() {
     setGlobalLoading(false);
   }
 
-  await Promise.all([loadDesktopSettings(), loadDesktopData(hadCache)]);
+  // [BUG FIX] Sequential, not Promise.all — firing getSettings and
+  // getAllData simultaneously risked exactly the queued-request 404
+  // documented on callApiSequential in Core.js, right at app startup.
+  await loadDesktopSettings();
+  await loadDesktopData(hadCache);
   renderDesktop();
 }
 
@@ -1051,6 +1055,7 @@ function renderServiceChargeShortcuts() {
       <div style="display:flex; gap:10px; flex-wrap:wrap;">
         <button class="action-btn" style="width:auto; background:var(--green);" onclick="openModal('contribution')"><i class="fas fa-hand-holding-dollar"></i> New Contribution</button>
         <button class="action-btn" style="width:auto; background:var(--red);" onclick="openModal('sharedexpense')"><i class="fas fa-receipt"></i> New Expense</button>
+        <button class="action-btn" style="width:auto;" onclick="openModal('scapartmentbalance')"><i class="fas fa-magnifying-glass-dollar"></i> View Apartment Balance</button>
       </div>
     </div>
     <div class="desktop-form-card" style="grid-column:1/-1;">
