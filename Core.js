@@ -671,7 +671,17 @@ async function callApiSequential(calls) {
   const results = [];
   for (let i = 0; i < calls.length; i++) {
     const [action, data] = calls[i];
-    results.push(await callApi(action, data));
+    // [BUG FIX] callApiStrict (retries transient failures, returns
+    // null on real failure) instead of plain callApi — a dropped
+    // connection here used to silently fall back to a stale backup or
+    // an empty array, both of which pass an Array.isArray() check, so
+    // callers had no way to tell "genuinely empty" from "the request
+    // never actually reached Code.gs". That's exactly what could make
+    // a just-saved entry seem to vanish: the post-save refresh fetch
+    // fails silently and quietly redisplays old cached data with no
+    // visible error, leaving the user to refresh repeatedly hoping
+    // for a request that happens to succeed.
+    results.push(await callApiStrict(action, data));
     // Same reasoning as the KPI Dashboard's manually-sequenced calls —
     // a small pause between requests spaces the batch out further,
     // reducing how many land in the same short window.

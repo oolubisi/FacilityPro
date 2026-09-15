@@ -168,10 +168,10 @@ async function refreshServiceChargeSection() {
     container.innerHTML = `<p style="color:var(--muted); font-size:13px;">Loading ledger...</p>`;
   }
 
-  const [result, budgets, templates] = await Promise.all([
-    callApi("getServiceChargeLedger", {}),
-    callApi("getServiceChargeBudgets", {}),
-    callApi("getRecurringExpenseTemplates", {}),
+  const [result, budgets, templates] = await callApiSequential([
+    ["getServiceChargeLedger", {}],
+    ["getServiceChargeBudgets", {}],
+    ["getRecurringExpenseTemplates", {}],
   ]);
   showSyncBadge(containerId, false);
 
@@ -205,7 +205,7 @@ function renderServiceChargeSummary() {
   if (!el) return;
 
   const balances = computeServiceChargeBalancesAsOf(lastFetchedServiceChargeLedger, null);
-  const total = Object.values(balances).reduce((sum, v) => sum + v, 0);
+  const total = computeServiceChargePoolBalanceAsOf(lastFetchedServiceChargeLedger, null);
 
   el.innerHTML = `
     <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px;">
@@ -238,6 +238,29 @@ function computeServiceChargeBalancesAsOf(ledger, asOfDate) {
     balances[row.apt] = (balances[row.apt] || 0) + signed;
   });
   return balances;
+}
+
+// [FEATURE] The pool's own aggregate cash balance — deliberately NOT
+// the sum of computeServiceChargeBalancesAsOf's per-apartment
+// balances above, because those two numbers now mean different
+// things. A "Paid from Petty Cash" expense still reduces the specific
+// apartment's own balance (they were genuinely charged for it) but
+// must NOT reduce the pool's total again here — that cash already
+// left the pool once, at the moment it was transferred into Petty
+// Cash via a Topup. Debiting the pool a second time when it's later
+// spent from the till would double-count the same outflow.
+function computeServiceChargePoolBalanceAsOf(ledger, asOfDate) {
+  const cutoff = asOfDate ? new Date(asOfDate).getTime() : null;
+  let balance = 0;
+  (ledger || []).forEach((row) => {
+    if (!row) return;
+    if (String(row.paidFromPettyCash).toLowerCase() === "yes") return;
+    const rowTime = new Date(row.date).getTime();
+    if (cutoff !== null && (isNaN(rowTime) || rowTime > cutoff)) return;
+    const amt = Number(row.amount) || 0;
+    balance += String(row.direction).toLowerCase() === "credit" ? amt : -amt;
+  });
+  return balance;
 }
 
 // [FEATURE] apt.status only ever reflects "right now" — a report run
@@ -293,8 +316,8 @@ function renderServiceChargeLedgerTable(container, ledger) {
     return;
   }
 
-  const typeLabels = { contribution: "Contribution", apartment_expense: "Apartment Expense", shared_expense: "Shared Expense" };
-  const typeColors = { contribution: "#198754", apartment_expense: "#dc3545", shared_expense: "#fd7e14" };
+  const typeLabels = { contribution: "Contribution", apartment_expense: "Apartment Expense", shared_expense: "Shared Expense", petty_cash_topup: "Petty Cash Topup" };
+  const typeColors = { contribution: "#198754", apartment_expense: "#dc3545", shared_expense: "#fd7e14", petty_cash_topup: "#4f46e5" };
 
   container.innerHTML = `<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:13px;">
     <thead><tr style="border-bottom:2px solid #000; text-align:left;">
@@ -305,6 +328,7 @@ function renderServiceChargeLedgerTable(container, ledger) {
       <th style="padding:8px 6px;">Category</th>
       <th style="padding:8px 6px;">Notes</th>
       <th style="padding:8px 6px; text-align:right;">Amount</th>
+      <th style="padding:8px 6px;">Paid from Petty Cash</th>
       <th style="padding:8px 6px;"></th>
     </tr></thead>
     <tbody>
@@ -312,6 +336,7 @@ function renderServiceChargeLedgerTable(container, ledger) {
         .map((row) => {
           const canDelete = isEntrySameCalendarDay(row.createdAt);
           const amountDisplay = `${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}`;
+          const paidFromPettyCash = String(row.paidFromPettyCash).toLowerCase() === "yes";
           return `<tr style="border-bottom:1px solid #eee;">
             <td style="padding:6px; font-weight:800;">${escapeHtml(row.entryNumber || "—")}</td>
             <td style="padding:6px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
@@ -320,6 +345,7 @@ function renderServiceChargeLedgerTable(container, ledger) {
             <td style="padding:6px;">${escapeHtml(row.category || "")}</td>
             <td style="padding:6px; color:#555;">${escapeHtml(row.description || "")}</td>
             <td style="padding:6px; text-align:right; font-weight:800; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${amountDisplay}</td>
+            <td style="padding:6px; text-align:center;">${paidFromPettyCash ? '<span style="color:#fd7e14; font-weight:800;">Yes</span>' : '<span style="color:var(--muted);">—</span>'}</td>
             <td style="padding:6px; text-align:right; white-space:nowrap;">
               ${canDelete ? `<button type="button" data-modal-action="delete-service-charge-entry" data-id="${escapeHtml(row.entryId)}" style="background:#fdecea; color:#dc3545; border:0; border-radius:6px; padding:4px 8px; font-size:11px; font-weight:700; cursor:pointer;">Delete</button>` : `<span style="color:var(--muted); font-size:11px;">Locked</span>`}
             </td>
@@ -549,7 +575,7 @@ async function refreshPettyCashSection() {
     container.innerHTML = `<p style="color:var(--muted); font-size:13px;">Loading ledger...</p>`;
   }
 
-  const result = await callApi("getPettyCashLedger", {});
+  const result = await callApiStrict("getPettyCashLedger", {});
   showSyncBadge(containerId, false);
 
   if (!result || !Array.isArray(result)) {
@@ -687,7 +713,7 @@ async function refreshEnergySection() {
     container.innerHTML = `<p style="color:var(--muted); font-size:13px;">Loading ledger...</p>`;
   }
 
-  const result = await callApi("getEnergyLedger", {});
+  const result = await callApiStrict("getEnergyLedger", {});
   showSyncBadge(containerId, false);
 
   if (!result || !Array.isArray(result)) {
@@ -834,9 +860,9 @@ async function refreshInventorySection() {
     container.innerHTML = `<p style="color:var(--muted); font-size:13px;">Loading inventory...</p>`;
   }
 
-  const [items, movements] = await Promise.all([
-    callApi("getInventoryItems", {}),
-    callApi("getInventoryMovements", {}),
+  const [items, movements] = await callApiSequential([
+    ["getInventoryItems", {}],
+    ["getInventoryMovements", {}],
   ]);
   showSyncBadge(containerId, false);
 

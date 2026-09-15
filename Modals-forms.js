@@ -449,7 +449,10 @@ async function openModal(type, editData = null) {
   else if (type === "sharedexpense") {
     title.innerText = "Log Expense";
     const realApts = (cache.apts || []).filter(
-      (a) => a && String(a.type || a.Type || "").toLowerCase() !== "services",
+      (a) =>
+        a &&
+        String(a.type || a.Type || "").toLowerCase() !== "services" &&
+        String(a.status || a.Status || "").toLowerCase() === "occupied",
     );
     body.innerHTML = `
       <div class="form-field span-3"><label ${lbl}>Category</label><select id="sc_se_category" ${ls} onchange="const isTopup = this.value === '${PETTY_CASH_TOPUP_CATEGORY}'; document.getElementById('sc_se_petty_cash_field').style.display = isTopup ? 'none' : 'block'; document.getElementById('sc_se_topup_note').style.display = isTopup ? 'block' : 'none'; document.getElementById('sc_se_apt_section').style.display = isTopup ? 'none' : 'block';">${buildServiceChargeCategoryOptionsHtml("")}</select></div>
@@ -488,7 +491,7 @@ async function openModal(type, editData = null) {
       document.querySelectorAll(".sc_se_apt_cb").forEach((cb) => (cb.checked = false));
     };
 
-    submit.onclick = () => {
+    submit.onclick = async () => {
       const amount = document.getElementById("sc_se_amount").value.replace(/,/g, "");
       const category = document.getElementById("sc_se_category").value;
       const isTopup = category === PETTY_CASH_TOPUP_CATEGORY;
@@ -503,36 +506,41 @@ async function openModal(type, editData = null) {
       }
       submit.disabled = true;
       submit.classList.add("loading");
-      callApi("logSharedExpense", {
-        amount,
-        category,
-        date: document.getElementById("sc_se_date").value,
-        description: sanitizeInput(document.getElementById("sc_se_description").value),
-        fromPettyCash: isTopup ? false : document.getElementById("sc_se_from_petty_cash").checked,
-        selectedApts: isTopup ? [] : selectedApts,
-      })
-        .then((result) => {
-          submit.disabled = false;
-          submit.classList.remove("loading");
-          if (!result || result.status !== "success") {
-            showToast((result && result.message) || "Failed to log expense.", "error");
-            return;
-          }
-          closeModal();
-          showToast(
-            isTopup
-              ? "Petty Cash topped up."
-              : result.splits.length === 1
-                ? `Expense logged to Unit ${result.splits[0].apt}.`
-                : `Expense split across ${result.splits.length} apartment(s).`,
-            "success",
-          );
-          if (typeof refreshServiceChargeSection === "function") refreshServiceChargeSection();
-        })
-        .catch(() => {
-          submit.disabled = false;
-          submit.classList.remove("loading");
+      // [FEATURE] Full-screen overlay (not just the button spinner) —
+      // this can involve several sequential server steps (the expense
+      // itself, an optional Petty Cash link, then a full ledger
+      // refresh), and without it the screen looked idle in between,
+      // inviting a second click or a premature page refresh.
+      setGlobalLoading(true, "Saving expense...");
+      try {
+        const result = await callApi("logSharedExpense", {
+          amount,
+          category,
+          date: document.getElementById("sc_se_date").value,
+          description: sanitizeInput(document.getElementById("sc_se_description").value),
+          fromPettyCash: isTopup ? false : document.getElementById("sc_se_from_petty_cash").checked,
+          selectedApts: isTopup ? [] : selectedApts,
         });
+        if (!result || result.status !== "success") {
+          showToast((result && result.message) || "Failed to log expense.", "error");
+          return;
+        }
+        setGlobalLoading(true, "Refreshing ledger...");
+        if (typeof refreshServiceChargeSection === "function") await refreshServiceChargeSection();
+        closeModal();
+        showToast(
+          isTopup
+            ? "Petty Cash topped up."
+            : result.splits.length === 1
+              ? `Expense logged to Unit ${result.splits[0].apt}.`
+              : `Expense split across ${result.splits.length} apartment(s).`,
+          "success",
+        );
+      } finally {
+        setGlobalLoading(false);
+        submit.disabled = false;
+        submit.classList.remove("loading");
+      }
     };
   }
 

@@ -1212,11 +1212,23 @@ async function compileReportPreview() {
     // the breakdown table below, which was already period-anchored.
     // Selecting the current month naturally converges on today's
     // actual figures anyway, since nothing is dated in the future.
-    function ledgerBalanceAsOf(ledger, asOfDate, positiveDirection) {
+    // excludeRow is optional — when provided, matching rows are
+    // skipped entirely (neither credited nor debited). Used for the
+    // Service Charge pool specifically: a "Paid from Petty Cash"
+    // expense already left the pool once, at the moment it was
+    // transferred into Petty Cash via a Topup — debiting the pool
+    // again here when it's actually spent would double-count that
+    // same outflow. This only affects the pool's own aggregate
+    // balance; per-apartment balances intentionally still include
+    // these rows (see computeServiceChargeBalancesAsOf in
+    // Modals-core.js) since the apartment was genuinely still charged
+    // for the expense, regardless of which till physically paid it.
+    function ledgerBalanceAsOf(ledger, asOfDate, positiveDirection, excludeRow) {
       const cutoff = asOfDate ? new Date(asOfDate).getTime() : null;
       let balance = 0;
       (ledger || []).forEach((r) => {
         if (!r) return;
+        if (excludeRow && excludeRow(r)) return;
         const rowTime = new Date(r.date).getTime();
         if (cutoff !== null && (isNaN(rowTime) || rowTime > cutoff)) return;
         const amt = Number(r.amount) || 0;
@@ -1224,11 +1236,13 @@ async function compileReportPreview() {
       });
       return balance;
     }
-    function monthActivityByDirection(ledger, positiveDirection) {
+    const paidFromPettyCash = (r) => String(r.paidFromPettyCash).toLowerCase() === "yes";
+    function monthActivityByDirection(ledger, positiveDirection, excludeRow) {
       let credit = 0;
       let debit = 0;
       (ledger || []).forEach((r) => {
         if (!r) return;
+        if (excludeRow && excludeRow(r)) return;
         const d = new Date(r.date);
         if (isNaN(d.getTime()) || d < monthStart || d > monthEnd) return;
         const amt = Math.abs(Number(r.amount) || 0);
@@ -1261,7 +1275,7 @@ async function compileReportPreview() {
     const closingOccupancyRate = occupancyLogFailed ? null : occupancyRateAsOf(monthEnd);
     const closingOccupiedCount = occupancyLogFailed ? null : occupiedCountAsOf(monthEnd);
 
-    const scBalance = Array.isArray(scLedger) ? ledgerBalanceAsOf(scLedger, monthEnd, "credit") : null;
+    const scBalance = Array.isArray(scLedger) ? ledgerBalanceAsOf(scLedger, monthEnd, "credit", paidFromPettyCash) : null;
     const pettyCashBalance = Array.isArray(pettyCashLedger) ? ledgerBalanceAsOf(pettyCashLedger, monthEnd, "inflow") : null;
     const energyBalance = Array.isArray(energyLedger) ? ledgerBalanceAsOf(energyLedger, monthEnd, "inflow") : null;
 
@@ -1301,7 +1315,7 @@ async function compileReportPreview() {
     // already computed above for the headline cards — reused here
     // rather than recalculated). A single month is just a range where
     // From and To are the same — no special-casing needed.
-    const openingScBalance = Array.isArray(scLedger) ? ledgerBalanceAsOf(scLedger, dayBeforeStart, "credit") : null;
+    const openingScBalance = Array.isArray(scLedger) ? ledgerBalanceAsOf(scLedger, dayBeforeStart, "credit", paidFromPettyCash) : null;
     const openingPettyCashBalance = Array.isArray(pettyCashLedger) ? ledgerBalanceAsOf(pettyCashLedger, dayBeforeStart, "inflow") : null;
     const openingEnergyBalance = Array.isArray(energyLedger) ? ledgerBalanceAsOf(energyLedger, dayBeforeStart, "inflow") : null;
 
@@ -1348,7 +1362,7 @@ async function compileReportPreview() {
             );
           })()}
           ${(() => {
-            const activity = Array.isArray(scLedger) ? monthActivityByDirection(scLedger, "credit") : null;
+            const activity = Array.isArray(scLedger) ? monthActivityByDirection(scLedger, "credit", paidFromPettyCash) : null;
             return breakdownRow(
               "Service Charge Pool",
               openingScBalance,
@@ -1824,15 +1838,17 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
 
   let totalContributions = 0,
     totalSharedExpense = 0,
-    totalApartmentExpense = 0;
+    totalApartmentExpense = 0,
+    totalPettyCashTopup = 0;
   periodRows.forEach((row) => {
     const amt = Number(row.amount) || 0;
     if (row.type === "contribution") totalContributions += amt;
     else if (row.type === "shared_expense") totalSharedExpense += amt;
     else if (row.type === "apartment_expense") totalApartmentExpense += amt;
+    else if (row.type === "petty_cash_topup") totalPettyCashTopup += amt;
   });
 
-  const typeLabels = { contribution: "Contribution", apartment_expense: "Apartment Expense", shared_expense: "Shared Expense" };
+  const typeLabels = { contribution: "Contribution", apartment_expense: "Apartment Expense", shared_expense: "Shared Expense", petty_cash_topup: "Petty Cash Topup" };
 
   // [FEATURE] Every logged transaction gets one persistent Entry Number
   // (yy/mm/NNN, assigned server-side at logging time — see
@@ -2015,8 +2031,9 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
   const out = `<div style="font-size:13px;">
     <table style="width:100%; border-collapse:collapse; border:2px solid #000; font-size:14px; font-weight:bold; margin-bottom:20px;">
       <tr><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Opening Pooled Balance</td><td style="border:1px solid #000; padding:6px; width:25%;">₦${formatMoney(openingTotal)}</td><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Closing Pooled Balance</td><td style="border:1px solid #000; padding:6px; width:25%;">₦${formatMoney(closingTotal)}</td></tr>
-      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Total Contributions</td><td style="border:1px solid #000; padding:6px; color:#198754;">₦${formatMoney(totalContributions)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Total Expenses</td><td style="border:1px solid #000; padding:6px; color:#dc3545;">₦${formatMoney(totalSharedExpense + totalApartmentExpense)}</td></tr>
+      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Total Contributions</td><td style="border:1px solid #000; padding:6px; color:#198754;">₦${formatMoney(totalContributions)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Total Expenses</td><td style="border:1px solid #000; padding:6px; color:#dc3545;">₦${formatMoney(totalSharedExpense + totalApartmentExpense + totalPettyCashTopup)}</td></tr>
       <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Shared Expenses</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(totalSharedExpense)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Apartment-Specific Expenses</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(totalApartmentExpense)}</td></tr>
+      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Petty Cash Topups</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(totalPettyCashTopup)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;"></td><td style="border:1px solid #000; padding:6px;"></td></tr>
       <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Apartments Occupied This Period</td><td colspan="3" style="border:1px solid #000; padding:6px;">${occupiedDuringPeriod.length} of ${realApartments.length}</td></tr>
     </table>
     <h3 style="font-size:14px; font-weight:900; text-transform:uppercase; margin:0 0 6px 0; text-decoration:underline;">Activity (${escapeHtml(formatDateForDisplay(startDateStr))} &mdash; ${escapeHtml(formatDateForDisplay(endDateStr))})</h3>
