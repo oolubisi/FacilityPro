@@ -335,10 +335,13 @@ function printApartmentServiceChargeBalance(unitId) {
   const printContainer = document.getElementById("report-print-container");
   if (!printContainer) return;
 
+  // Oldest to newest for the printout (screen view stays newest-first
+  // for quick at-a-glance checking) — matches standard ledger/account
+  // statement convention when read top to bottom on paper.
   const unitLedger = sortByDate(
     (lastFetchedServiceChargeLedger || []).filter((row) => row && String(row.apt) === String(unitId)),
     "date",
-    false,
+    true,
   );
   const balance = (computeServiceChargeBalancesAsOf(lastFetchedServiceChargeLedger, null) || {})[unitId] || 0;
   const typeLabels = { contribution: "Contribution", apartment_expense: "Apartment Expense", shared_expense: "Shared Expense" };
@@ -364,13 +367,13 @@ function printApartmentServiceChargeBalance(unitId) {
       <div style="font-size:11px; font-weight:800; text-transform:uppercase;">Current Balance — Unit ${escapeHtml(unitId)}</div>
       <div style="font-size:22px; font-weight:900; color:${balance >= 0 ? "#198754" : "#dc3545"};">${balance >= 0 ? "" : "-"}₦${formatMoney(Math.abs(balance))}</div>
     </div>
-    <table style="width:100%; border-collapse:collapse; font-size:12px; table-layout:fixed;">
+    <table style="width:189mm; border-collapse:collapse; font-size:12px; table-layout:fixed; border:1px solid #000;">
       <colgroup>
-        <col style="width:30mm;">
+        <col style="width:20mm;">
         <col style="width:25mm;">
-        <col style="width:15mm;">
-        <col>
-        <col style="width:35mm;">
+        <col style="width:34mm;">
+        <col style="width:80mm;">
+        <col style="width:30mm;">
       </colgroup>
       <thead><tr style="background:#f4f4f4;">
         <th style="padding:8px 6px; border:1px solid #000;">Date</th>
