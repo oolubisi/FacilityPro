@@ -323,6 +323,69 @@ function renderScApartmentBalanceDetail(unitId) {
   `;
 }
 
+// [FEATURE] Prints exactly the same balance + activity the modal is
+// currently showing, formatted like any other printed report (same
+// letterhead/ref via wrapReportContent) rather than just printing the
+// modal's own screen styling verbatim.
+function printApartmentServiceChargeBalance(unitId) {
+  if (!unitId) {
+    showToast("Select an apartment first.", "warning");
+    return;
+  }
+  const printContainer = document.getElementById("report-print-container");
+  if (!printContainer) return;
+
+  const unitLedger = sortByDate(
+    (lastFetchedServiceChargeLedger || []).filter((row) => row && String(row.apt) === String(unitId)),
+    "date",
+    false,
+  );
+  const balance = (computeServiceChargeBalancesAsOf(lastFetchedServiceChargeLedger, null) || {})[unitId] || 0;
+  const typeLabels = { contribution: "Contribution", apartment_expense: "Apartment Expense", shared_expense: "Shared Expense" };
+
+  const rows = unitLedger.length
+    ? unitLedger
+        .map((row) => {
+          const amountDisplay = `${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}`;
+          const paidFromPettyCash = String(row.paidFromPettyCash).toLowerCase() === "yes";
+          return `<tr>
+            <td style="padding:6px; border:1px solid #000;">${escapeHtml(formatDateForDisplay(row.date))}</td>
+            <td style="padding:6px; border:1px solid #000;">${escapeHtml(typeLabels[row.type] || row.type)}</td>
+            <td style="padding:6px; border:1px solid #000;">${escapeHtml(row.category || "")}</td>
+            <td style="padding:6px; border:1px solid #000;">${escapeHtml(row.description || "")}${paidFromPettyCash ? " (Petty Cash)" : ""}</td>
+            <td style="padding:6px; border:1px solid #000; text-align:right; font-weight:bold; color:${row.direction === "credit" ? "#198754" : "#dc3545"};">${amountDisplay}</td>
+          </tr>`;
+        })
+        .join("")
+    : `<tr><td colspan="5" style="padding:10px; border:1px solid #000; text-align:center;">No activity for this apartment yet.</td></tr>`;
+
+  const content = `
+    <div style="background:#f8f9fa; border:2px solid #000; border-radius:12px; padding:14px; margin-bottom:20px; text-align:center;">
+      <div style="font-size:11px; font-weight:800; text-transform:uppercase;">Current Balance — Unit ${escapeHtml(unitId)}</div>
+      <div style="font-size:22px; font-weight:900; color:${balance >= 0 ? "#198754" : "#dc3545"};">${balance >= 0 ? "" : "-"}₦${formatMoney(Math.abs(balance))}</div>
+    </div>
+    <table style="width:100%; border-collapse:collapse; font-size:12px;">
+      <thead><tr style="background:#f4f4f4;">
+        <th style="padding:8px 6px; border:1px solid #000;">Date</th>
+        <th style="padding:8px 6px; border:1px solid #000;">Type</th>
+        <th style="padding:8px 6px; border:1px solid #000;">Category</th>
+        <th style="padding:8px 6px; border:1px solid #000;">Notes</th>
+        <th style="padding:8px 6px; border:1px solid #000; text-align:right;">Amount</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+
+  const ref = generateReportRef("RPT");
+  printContainer.innerHTML = wrapReportContent(content, `Service Charge Ledger — Unit ${unitId}`, ref);
+  const originalTitle = document.title;
+  document.title = `Unit_${unitId}_Service_Charge_Ledger`;
+  window.print();
+  setTimeout(() => {
+    document.title = originalTitle;
+  }, 1000);
+}
+
 // [FEATURE] apt.status only ever reflects "right now" — a report run
 // today has no way to know whether a unit was occupied during some
 // past period once its status has since changed. This reconstructs

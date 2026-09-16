@@ -692,8 +692,8 @@ async function openModal(type, editData = null) {
   // unit, see its balance and every contribution/expense that's ever
   // touched it, re-rendering live as the selection changes.
   else if (type === "scapartmentbalance") {
-    submit.style.display = "none";
     title.innerText = "Apartment Service Charge Balance";
+    submit.innerText = "Print Ledger";
     body.innerHTML = `
       <div class="form-field span-3"><label ${lbl}>Select Apartment</label>
         <select id="scab_apt" onchange="renderScApartmentBalanceDetail(this.value)" ${ls}></select>
@@ -705,6 +705,10 @@ async function openModal(type, editData = null) {
       const sel = document.getElementById("scab_apt");
       if (sel && sel.value) renderScApartmentBalanceDetail(sel.value);
     }, 0);
+
+    submit.onclick = () => {
+      printApartmentServiceChargeBalance(document.getElementById("scab_apt")?.value);
+    };
   }
 
   else if (type === "reportgroupeditor") {
