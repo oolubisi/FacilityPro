@@ -364,7 +364,14 @@ function printApartmentServiceChargeBalance(unitId) {
       <div style="font-size:11px; font-weight:800; text-transform:uppercase;">Current Balance — Unit ${escapeHtml(unitId)}</div>
       <div style="font-size:22px; font-weight:900; color:${balance >= 0 ? "#198754" : "#dc3545"};">${balance >= 0 ? "" : "-"}₦${formatMoney(Math.abs(balance))}</div>
     </div>
-    <table style="width:100%; border-collapse:collapse; font-size:12px;">
+    <table style="width:100%; border-collapse:collapse; font-size:12px; table-layout:fixed;">
+      <colgroup>
+        <col style="width:30mm;">
+        <col style="width:25mm;">
+        <col style="width:15mm;">
+        <col>
+        <col style="width:35mm;">
+      </colgroup>
       <thead><tr style="background:#f4f4f4;">
         <th style="padding:8px 6px; border:1px solid #000;">Date</th>
         <th style="padding:8px 6px; border:1px solid #000;">Type</th>
