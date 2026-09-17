@@ -2270,7 +2270,11 @@ async function generatePettyCashReport(startDateStr, endDateStr) {
 
   viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading Petty Cash ledger...</p>`;
 
-  const ledger = await callApi("getPettyCashLedger", {});
+  const [ledger, items, movements] = await callApiSequential([
+    ["getPettyCashLedger", {}],
+    ["getInventoryItems", {}],
+    ["getInventoryMovements", {}],
+  ]);
   if (!ledger || !Array.isArray(ledger)) {
     viewport.innerHTML = `<p style="padding:20px; color:#dc3545; font-weight:700;">${escapeHtml((ledger && ledger.message) || "Couldn't load the Petty Cash ledger.")}</p>`;
     return;
@@ -2281,8 +2285,62 @@ async function generatePettyCashReport(startDateStr, endDateStr) {
   endDate.setHours(23, 59, 59, 999);
   const dayBeforeStart = new Date(startDate.getTime() - 1);
 
-  const openingBalance = computePettyCashBalanceAsOf(ledger, dayBeforeStart);
-  const closingBalance = computePettyCashBalanceAsOf(ledger, endDate);
+  // [FEATURE] Tools and consumables are bought using Petty Cash, but
+  // that purchase is never recorded as a Petty Cash outflow (Receive
+  // Stock and tool creation don't link to Petty Cash the way Service
+  // Charge expenses optionally do) — so the ledger-based balance
+  // below is overstated by however much has actually gone out this
+  // way. Tools are a one-time purchase and always count in full.
+  // Consumables only count while still unused/in stock — once issued,
+  // their cost gets charged to Service Charge instead (see
+  // issueStock in Code.gs), so from that point their value is
+  // accounted for there, not here.
+  function toolsValueAsOf(asOfDate) {
+    if (!Array.isArray(items)) return null;
+    const cutoff = asOfDate.getTime();
+    return items
+      .filter((i) => i && i.itemType === "tool")
+      .filter((i) => !i.purchaseDate || new Date(i.purchaseDate).getTime() <= cutoff)
+      .reduce((s, i) => s + (Number(i.currentQty) || 0) * (Number(i.unitCost) || 0), 0);
+  }
+  function unusedConsumablesValueAsOf(asOfDate) {
+    if (!Array.isArray(items) || !Array.isArray(movements)) return null;
+    const cutoff = asOfDate.getTime();
+    let total = 0;
+    items
+      .filter((i) => i && (i.itemType || "consumable") === "consumable")
+      .forEach((item) => {
+        const currentCost = Number(item.unitCost) || 0;
+        const itemMoves = movements
+          .filter((m) => m && m.itemCode === item.itemCode)
+          .map((m) => ({ ...m, _d: new Date(m.date) }))
+          .filter((m) => !isNaN(m._d.getTime()))
+          .sort((a, b) => a._d - b._d);
+        let qty = 0;
+        let lastCost = currentCost;
+        let foundCostBeforeCutoff = false;
+        itemMoves.forEach((m) => {
+          if (m._d.getTime() > cutoff) return;
+          qty += Number(m.quantity) || 0;
+          if (m.unitCostAtTime !== undefined && m.unitCostAtTime !== "") {
+            lastCost = Number(m.unitCostAtTime) || lastCost;
+            foundCostBeforeCutoff = true;
+          }
+        });
+        total += qty * (foundCostBeforeCutoff ? lastCost : currentCost);
+      });
+    return total;
+  }
+
+  const openingToolsValue = toolsValueAsOf(dayBeforeStart);
+  const closingToolsValue = toolsValueAsOf(endDate);
+  const openingUnusedConsumablesValue = unusedConsumablesValueAsOf(dayBeforeStart);
+  const closingUnusedConsumablesValue = unusedConsumablesValueAsOf(endDate);
+
+  const ledgerOpeningBalance = computePettyCashBalanceAsOf(ledger, dayBeforeStart);
+  const ledgerClosingBalance = computePettyCashBalanceAsOf(ledger, endDate);
+  const openingBalance = ledgerOpeningBalance - (openingToolsValue || 0) - (openingUnusedConsumablesValue || 0);
+  const closingBalance = ledgerClosingBalance - (closingToolsValue || 0) - (closingUnusedConsumablesValue || 0);
 
   // Running balance is computed from the FULL ledger chronologically
   // (matching the live ledger table's own logic) so each period row's
@@ -2308,6 +2366,27 @@ async function generatePettyCashReport(startDateStr, endDateStr) {
     if (String(row.direction).toLowerCase() === "inflow") totalInflow += amt;
     else totalOutflow += amt;
   });
+
+  // [FEATURE] Category header table — outflows within the period,
+  // grouped into the categories that actually matter for reconciling
+  // this ledger. Category is free text (not a fixed list) so this
+  // matches on keywords rather than an exact string; "Individual
+  // Apartment" and "Shared Expense" go by the apt field's shape
+  // instead, since that's set consistently by the Service Charge
+  // linking logic regardless of what category text was used.
+  const outflowRows = periodRows.filter((row) => String(row.direction).toLowerCase() === "outflow");
+  const electricityVendingTotal = outflowRows
+    .filter((row) => /electricity|vending/i.test(String(row.category || "")))
+    .reduce((s, row) => s + (Number(row.amount) || 0), 0);
+  const individualApartmentTotal = outflowRows
+    .filter((row) => {
+      const apt = String(row.apt || "");
+      return apt && apt !== "Petty Cash Transfer" && !apt.toLowerCase().startsWith("shared (");
+    })
+    .reduce((s, row) => s + (Number(row.amount) || 0), 0);
+  const sharedExpenseTotal = outflowRows
+    .filter((row) => String(row.apt || "").toLowerCase().startsWith("shared ("))
+    .reduce((s, row) => s + (Number(row.amount) || 0), 0);
 
   const activityTable = periodRows.length
     ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; table-layout:fixed;">
@@ -2349,6 +2428,9 @@ async function generatePettyCashReport(startDateStr, endDateStr) {
     <table style="width:100%; border-collapse:collapse; border:2px solid #000; font-size:14px; font-weight:bold; margin-bottom:20px;">
       <tr><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Opening Balance</td><td style="border:1px solid #000; padding:6px; width:25%; color:${openingBalance >= 0 ? "#000" : "#dc3545"};">₦${formatMoney(openingBalance)}</td><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Closing Balance</td><td style="border:1px solid #000; padding:6px; width:25%; color:${closingBalance >= 0 ? "#000" : "#dc3545"};">₦${formatMoney(closingBalance)}</td></tr>
       <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Total Inflow</td><td style="border:1px solid #000; padding:6px; color:#198754;">₦${formatMoney(totalInflow)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Total Outflow</td><td style="border:1px solid #000; padding:6px; color:#dc3545;">₦${formatMoney(totalOutflow)}</td></tr>
+      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Electricity Vending</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(electricityVendingTotal)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Individual Apartment</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(individualApartmentTotal)}</td></tr>
+      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Shared Expense</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(sharedExpenseTotal)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;"></td><td style="border:1px solid #000; padding:6px;"></td></tr>
+      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Tools (deducted from balance)</td><td style="border:1px solid #000; padding:6px; color:#dc3545;">₦${formatMoney(closingToolsValue || 0)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Unused Consumables (deducted from balance)</td><td style="border:1px solid #000; padding:6px; color:#dc3545;">₦${formatMoney(closingUnusedConsumablesValue || 0)}</td></tr>
     </table>
     <h3 style="font-size:14px; font-weight:900; text-transform:uppercase; margin:0 0 6px 0; text-decoration:underline;">Activity (${escapeHtml(formatDateForDisplay(startDateStr))} &mdash; ${escapeHtml(formatDateForDisplay(endDateStr))})</h3>
     ${activityTable}
@@ -2822,7 +2904,7 @@ async function printConsumablesAsOfDate(asOfDateStr) {
     .sort((a, b) => String(a.item.name || "").localeCompare(String(b.item.name || "")))
     .map(
       (r) =>
-        `<tr><td style="padding:6px; border:1px solid #000; font-weight:bold;">${escapeHtml(r.item.itemCode || "N/A")}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(r.item.name || "N/A")}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(r.item.category || "N/A")}</td><td style="padding:6px; border:1px solid #000; text-align:right;">${r.qty} ${escapeHtml(r.item.unit || "")}</td><td style="padding:6px; border:1px solid #000; text-align:right;">₦${formatMoney(r.cost)}</td><td style="padding:6px; border:1px solid #000; text-align:right; font-weight:bold;">₦${formatMoney(r.value)}</td></tr>`,
+        `<tr><td style="padding:6px; border:1px solid #000; font-weight:bold;">${escapeHtml(r.item.itemCode || "N/A")}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(r.item.name || "N/A")}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(r.item.category || "N/A")}</td><td style="padding:6px; border:1px solid #000; text-align:center;">${r.qty} ${escapeHtml(r.item.unit || "")}</td><td style="padding:6px; border:1px solid #000; text-align:right;">₦${formatMoney(r.cost)}</td><td style="padding:6px; border:1px solid #000; text-align:right; font-weight:bold;">₦${formatMoney(r.value)}</td></tr>`,
     )
     .join("");
 
@@ -2832,7 +2914,7 @@ async function printConsumablesAsOfDate(asOfDateStr) {
       <div style="font-size:11px; font-weight:800; text-transform:uppercase;">Total Consumables Value as of ${escapeHtml(asOfLabel)}</div>
       <div style="font-size:22px; font-weight:900;">₦${formatMoney(totalValue)}</div>
     </div>
-    <table style="width:184mm; border-collapse:collapse; font-size:12px; border:1px solid #000;"><thead><tr style="background:#f4f4f4;"><th style="padding:8px 6px; border:1px solid #000;">Code</th><th style="padding:8px 6px; border:1px solid #000;">Name</th><th style="padding:8px 6px; border:1px solid #000;">Category</th><th style="padding:8px 6px; border:1px solid #000; text-align:right;">Qty</th><th style="padding:8px 6px; border:1px solid #000; text-align:right;">Unit Cost</th><th style="padding:8px 6px; border:1px solid #000; text-align:right;">Value</th></tr></thead><tbody>${rows || `<tr><td colspan="6" style="padding:10px; border:1px solid #000; text-align:center;">No consumables in stock as of this date.</td></tr>`}</tbody></table>
+    <table style="width:189mm; border-collapse:collapse; font-size:12px; border:1px solid #000;"><thead><tr style="background:#f4f4f4;"><th style="padding:8px 6px; border:1px solid #000;">Code</th><th style="padding:8px 6px; border:1px solid #000;">Name</th><th style="padding:8px 6px; border:1px solid #000;">Category</th><th style="padding:8px 6px; border:1px solid #000; text-align:center;">Qty</th><th style="padding:8px 6px; border:1px solid #000; text-align:right;">Unit Cost</th><th style="padding:8px 6px; border:1px solid #000; text-align:right;">Value</th></tr></thead><tbody>${rows || `<tr><td colspan="6" style="padding:10px; border:1px solid #000; text-align:center;">No consumables in stock as of this date.</td></tr>`}</tbody></table>
   `;
 
   const ref = generateReportRef("RPT");
@@ -2873,7 +2955,7 @@ async function printToolsAsOfDate(asOfDateStr) {
       const cost = Number(i.unitCost) || 0;
       const value = qty * cost;
       totalValue += value;
-      return `<tr><td style="padding:6px; border:1px solid #000; font-weight:bold;">${escapeHtml(i.itemCode || "N/A")}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(i.name || "N/A")}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(i.category || "N/A")}</td><td style="padding:6px; border:1px solid #000; text-align:right;">${qty}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(i.custodian || "Unassigned")}</td><td style="padding:6px; border:1px solid #000; text-align:right;">₦${formatMoney(cost)}</td><td style="padding:6px; border:1px solid #000; text-align:right; font-weight:bold;">₦${formatMoney(value)}</td></tr>`;
+      return `<tr><td style="padding:6px; border:1px solid #000; font-weight:bold;">${escapeHtml(i.itemCode || "N/A")}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(i.name || "N/A")}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(i.category || "N/A")}</td><td style="padding:6px; border:1px solid #000; text-align:center;">${qty}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(i.custodian || "Unassigned")}</td><td style="padding:6px; border:1px solid #000; text-align:right;">₦${formatMoney(cost)}</td><td style="padding:6px; border:1px solid #000; text-align:right; font-weight:bold;">₦${formatMoney(value)}</td></tr>`;
     })
     .join("");
 
@@ -2883,7 +2965,7 @@ async function printToolsAsOfDate(asOfDateStr) {
       <div style="font-size:11px; font-weight:800; text-transform:uppercase;">Total Tools / Equipment Value as of ${escapeHtml(asOfLabel)}</div>
       <div style="font-size:22px; font-weight:900;">₦${formatMoney(totalValue)}</div>
     </div>
-    <table style="width:184mm; border-collapse:collapse; font-size:12px; border:1px solid #000;"><thead><tr style="background:#f4f4f4;"><th style="padding:8px 6px; border:1px solid #000;">Code</th><th style="padding:8px 6px; border:1px solid #000;">Name</th><th style="padding:8px 6px; border:1px solid #000;">Category</th><th style="padding:8px 6px; border:1px solid #000; text-align:right;">Qty</th><th style="padding:8px 6px; border:1px solid #000;">Custodian</th><th style="padding:8px 6px; border:1px solid #000; text-align:right;">Unit Price</th><th style="padding:8px 6px; border:1px solid #000; text-align:right;">Value</th></tr></thead><tbody>${rows || `<tr><td colspan="7" style="padding:10px; border:1px solid #000; text-align:center;">No tools/equipment as of this date.</td></tr>`}</tbody></table>
+    <table style="width:189mm; border-collapse:collapse; font-size:12px; border:1px solid #000;"><thead><tr style="background:#f4f4f4;"><th style="padding:8px 6px; border:1px solid #000;">Code</th><th style="padding:8px 6px; border:1px solid #000;">Name</th><th style="padding:8px 6px; border:1px solid #000;">Category</th><th style="padding:8px 6px; border:1px solid #000; text-align:center;">Qty</th><th style="padding:8px 6px; border:1px solid #000;">Custodian</th><th style="padding:8px 6px; border:1px solid #000; text-align:right;">Unit Price</th><th style="padding:8px 6px; border:1px solid #000; text-align:right;">Value</th></tr></thead><tbody>${rows || `<tr><td colspan="7" style="padding:10px; border:1px solid #000; text-align:center;">No tools/equipment as of this date.</td></tr>`}</tbody></table>
   `;
 
   const ref = generateReportRef("RPT");
