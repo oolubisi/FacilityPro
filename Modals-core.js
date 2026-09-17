@@ -345,6 +345,8 @@ function printApartmentServiceChargeBalance(unitId) {
   );
   const balance = (computeServiceChargeBalancesAsOf(lastFetchedServiceChargeLedger, null) || {})[unitId] || 0;
   const typeLabels = { contribution: "Contribution", apartment_expense: "Apartment Expense", shared_expense: "Shared Expense" };
+  const aptRecord = (cache.apts || []).find((a) => a && String(getUnitNumber(a)) === String(unitId));
+  const tenantName = aptRecord ? (aptRecord.tenant || aptRecord.Tenant || "Vacant") : "";
 
   const rows = unitLedger.length
     ? unitLedger
@@ -363,6 +365,7 @@ function printApartmentServiceChargeBalance(unitId) {
     : `<tr><td colspan="5" style="padding:10px; border:1px solid #000; text-align:center;">No activity for this apartment yet.</td></tr>`;
 
   const content = `
+    <p style="text-align:left; text-transform:uppercase; font-size:13px; font-weight:700; margin:0 0 16px 0;">Tenant: ${escapeHtml(tenantName)}</p>
     <div style="background:#f8f9fa; border:2px solid #000; border-radius:12px; padding:14px; margin-bottom:20px; text-align:center;">
       <div style="font-size:11px; font-weight:800; text-transform:uppercase;">Current Balance — Unit ${escapeHtml(unitId)}</div>
       <div style="font-size:22px; font-weight:900; color:${balance >= 0 ? "#198754" : "#dc3545"};">${balance >= 0 ? "" : "-"}₦${formatMoney(Math.abs(balance))}</div>
