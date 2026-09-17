@@ -1164,6 +1164,8 @@ async function compileReportPreview() {
     const pettyCashLedger = bundled ? bundled.pettyCash : null;
     const energyLedger = bundled ? bundled.energy : null;
     const occupancyLog = bundled ? bundled.occupancyLog : null;
+    const inventoryItems = bundled ? bundled.inventoryItems : null;
+    const inventoryMovements = bundled ? bundled.inventoryMovements : null;
 
     // [BUG FIX] The headline cards and Net Position now reflect the
     // END of the selected period, not "right now" — with a range
@@ -1239,14 +1241,18 @@ async function compileReportPreview() {
     const pettyCashBalance = Array.isArray(pettyCashLedger) ? ledgerBalanceAsOf(pettyCashLedger, monthEnd, "inflow") : null;
     const energyBalance = Array.isArray(energyLedger) ? ledgerBalanceAsOf(energyLedger, monthEnd, "inflow") : null;
 
-    // Net Position only sums whichever of the three actually loaded —
-    // one failed fetch (e.g. a transient error) shouldn't make the
-    // other two balances look wrong by folding a silent zero into the
-    // total; it's excluded from the sum entirely, same as it shows
+    // [FEATURE] Net Position deliberately excludes Energy — it's
+    // Service Charge + Petty Cash only. Energy still gets its own
+    // headline card and its own row in the Period Breakdown table
+    // below; it's just not folded into this particular sum. Net
+    // Position only sums whichever of the two actually loaded — one
+    // failed fetch (e.g. a transient error) shouldn't make the other
+    // balance look wrong by folding a silent zero into the total;
+    // it's excluded from the sum entirely, same as it shows
     // "Unavailable" rather than "N0.00" in its own card.
-    const balances = [scBalance, pettyCashBalance, energyBalance];
-    const netPosition = balances.some((v) => v !== null)
-      ? balances.reduce((s, v) => s + (v || 0), 0)
+    const netPositionBalances = [scBalance, pettyCashBalance];
+    const netPosition = netPositionBalances.some((v) => v !== null)
+      ? netPositionBalances.reduce((s, v) => s + (v || 0), 0)
       : null;
 
     const balanceCard = (label, value, color) =>
@@ -1265,7 +1271,7 @@ async function compileReportPreview() {
     </div>`;
 
     out += `<div style="display:grid; grid-template-columns:1fr; gap:12px; margin-bottom:20px;">
-      <div style="background:#e8f5e9; border:2px solid #198754; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; color:#198754; text-transform:uppercase;">Net Position as of ${escapeHtml(asOfLabel)} (Service Charge + Petty Cash + Energy)</div><div style="font-size:24px; font-weight:900; color:${netPosition === null ? "#999" : netPosition >= 0 ? "#198754" : "#dc3545"};">${netPosition === null ? "Unavailable" : `${netPosition >= 0 ? "" : "-"}N${formatMoney(Math.abs(netPosition))}`}</div></div>
+      <div style="background:#e8f5e9; border:2px solid #198754; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; color:#198754; text-transform:uppercase;">Net Position as of ${escapeHtml(asOfLabel)} (Service Charge + Petty Cash)</div><div style="font-size:24px; font-weight:900; color:${netPosition === null ? "#999" : netPosition >= 0 ? "#198754" : "#dc3545"};">${netPosition === null ? "Unavailable" : `${netPosition >= 0 ? "" : "-"}N${formatMoney(Math.abs(netPosition))}`}</div></div>
     </div>`;
 
     // [FEATURE] Period breakdown — Opening (balance/rate at the start
@@ -1278,6 +1284,83 @@ async function compileReportPreview() {
     const openingScBalance = Array.isArray(scLedger) ? ledgerBalanceAsOf(scLedger, dayBeforeStart, "credit", paidFromPettyCash) : null;
     const openingPettyCashBalance = Array.isArray(pettyCashLedger) ? ledgerBalanceAsOf(pettyCashLedger, dayBeforeStart, "inflow") : null;
     const openingEnergyBalance = Array.isArray(energyLedger) ? ledgerBalanceAsOf(energyLedger, dayBeforeStart, "inflow") : null;
+
+    // [FEATURE] Tools/Consumables value — same "reconstruct value as
+    // of a date" approach as the Inventory Stock Valuation report and
+    // the Inventory section's own Print Report feature, computed here
+    // so they can appear as their own rows in this same breakdown
+    // table rather than requiring a separate report.
+    function inventoryValueAsOf(itemTypeFilter, asOfDate) {
+      if (!Array.isArray(inventoryItems)) return null;
+      const cutoff = asOfDate.getTime();
+      let total = 0;
+      inventoryItems
+        .filter((i) => i && (itemTypeFilter === "tool" ? i.itemType === "tool" : (i.itemType || "consumable") === "consumable"))
+        .forEach((item) => {
+          const currentCost = Number(item.unitCost) || 0;
+          if (itemTypeFilter === "tool") {
+            // No movement history for tools — included if purchased
+            // on or before the cutoff (or has no recorded purchase
+            // date at all, treated as always having existed).
+            if (item.purchaseDate && new Date(item.purchaseDate).getTime() > cutoff) return;
+            total += (Number(item.currentQty) || 0) * currentCost;
+            return;
+          }
+          // Consumables: walk movement history up to the cutoff to
+          // recover quantity and the cost in effect at that point.
+          const itemMoves = (inventoryMovements || [])
+            .filter((m) => m && m.itemCode === item.itemCode)
+            .map((m) => ({ ...m, _d: new Date(m.date) }))
+            .filter((m) => !isNaN(m._d.getTime()))
+            .sort((a, b) => a._d - b._d);
+          let qty = 0;
+          let lastCost = currentCost;
+          let foundCostBeforeCutoff = false;
+          itemMoves.forEach((m) => {
+            if (m._d.getTime() > cutoff) return;
+            qty += Number(m.quantity) || 0;
+            if (m.unitCostAtTime !== undefined && m.unitCostAtTime !== "") {
+              lastCost = Number(m.unitCostAtTime) || lastCost;
+              foundCostBeforeCutoff = true;
+            }
+          });
+          total += qty * (foundCostBeforeCutoff ? lastCost : currentCost);
+        });
+      return total;
+    }
+
+    function inventoryActivityInPeriod(itemTypeFilter) {
+      if (itemTypeFilter === "tool") {
+        // Tools have no disposal tracking — "activity" is just the
+        // value of tools newly purchased within the period.
+        const credit = Array.isArray(inventoryItems)
+          ? inventoryItems
+              .filter((i) => i && i.itemType === "tool" && i.purchaseDate)
+              .filter((i) => {
+                const d = new Date(i.purchaseDate);
+                return !isNaN(d.getTime()) && d >= monthStart && d <= monthEnd;
+              })
+              .reduce((s, i) => s + (Number(i.currentQty) || 0) * (Number(i.unitCost) || 0), 0)
+          : null;
+        return { credit, debit: credit === null ? null : 0 };
+      }
+      if (!Array.isArray(inventoryMovements)) return { credit: null, debit: null };
+      const periodMoves = inventoryMovements.filter((m) => {
+        if (!m) return false;
+        const d = new Date(m.date);
+        return !isNaN(d.getTime()) && d >= monthStart && d <= monthEnd;
+      });
+      const credit = periodMoves.filter((m) => m.movementType === "receive").reduce((s, m) => s + (Number(m.totalValue) || 0), 0);
+      const debit = periodMoves.filter((m) => m.movementType === "issue").reduce((s, m) => s + Math.abs(Number(m.totalValue) || 0), 0);
+      return { credit, debit };
+    }
+
+    const openingToolsValue = Array.isArray(inventoryItems) ? inventoryValueAsOf("tool", dayBeforeStart) : null;
+    const closingToolsValue = Array.isArray(inventoryItems) ? inventoryValueAsOf("tool", monthEnd) : null;
+    const toolsActivity = inventoryActivityInPeriod("tool");
+    const openingConsumablesValue = Array.isArray(inventoryItems) ? inventoryValueAsOf("consumable", dayBeforeStart) : null;
+    const closingConsumablesValue = Array.isArray(inventoryItems) ? inventoryValueAsOf("consumable", monthEnd) : null;
+    const consumablesActivity = inventoryActivityInPeriod("consumable");
 
     const breakdownRow = (label, opening, credit, debit, closing, isPercent) => {
       const fmt = (v) => {
@@ -1295,7 +1378,7 @@ async function compileReportPreview() {
         <td style="padding:8px 6px; text-align:right;">${fmt(opening)}</td>
         <td style="padding:8px 6px; text-align:right; color:#198754;">${fmtSigned(credit)}</td>
         <td style="padding:8px 6px; text-align:right; color:#dc3545;">${fmtSigned(debit)}</td>
-        <td style="padding:8px 6px; text-align:right; font-weight:700;">${fmt(closing)}</td>
+        <td style="padding:8px 6px; text-align:right; font-weight:700; color:#dc3545;">${fmt(closing)}</td>
       </tr>`;
     };
 
@@ -1354,6 +1437,8 @@ async function compileReportPreview() {
               false,
             );
           })()}
+          ${breakdownRow("Tools / Equipment Value", openingToolsValue, toolsActivity.credit, toolsActivity.debit, closingToolsValue, false)}
+          ${breakdownRow("Consumables Value", openingConsumablesValue, consumablesActivity.credit, consumablesActivity.debit, closingConsumablesValue, false)}
         </tbody>
       </table>
     </div>`;
@@ -2673,6 +2758,142 @@ async function generateInventoryValuationReport(startDateStr, endDateStr) {
   window.currentReportRef = ref;
   window.currentReportRawContent = out;
   setOnscreenPreviewCardDisplay("block");
+}
+
+// =========================================================
+// § INVENTORY: PRINT AS-OF-DATE REPORTS (Consumables / Tools)
+// Triggered directly from the Inventory section's own "Print Report"
+// button, not the report builder — prints straight to
+// report-print-container rather than going through the on-screen
+// report-preview-viewport, since there's no report-builder page
+// context to update here.
+// =========================================================
+async function printConsumablesAsOfDate(asOfDateStr) {
+  const printContainer = document.getElementById("report-print-container");
+  if (!printContainer) return;
+
+  const [items, movements] = await callApiSequential([
+    ["getInventoryItems", {}],
+    ["getInventoryMovements", {}],
+  ]);
+  if (!items || !Array.isArray(items) || !movements || !Array.isArray(movements)) {
+    showToast("Couldn't load inventory data.", "error");
+    return;
+  }
+
+  const asOfDate = new Date(asOfDateStr);
+  asOfDate.setHours(23, 59, 59, 999);
+  const consumables = items.filter((i) => i && (i.itemType || "consumable") === "consumable");
+
+  // Same reconstruction logic as the Inventory Stock Valuation report
+  // — walk every movement for the item up to the cutoff date to
+  // recover quantity and the cost that was in effect at that point,
+  // rather than assuming today's current quantity/cost applied then.
+  function valueAsOf(itemCode, currentCost) {
+    const itemMoves = movements
+      .filter((m) => m && m.itemCode === itemCode)
+      .map((m) => ({ ...m, _d: new Date(m.date) }))
+      .filter((m) => !isNaN(m._d.getTime()))
+      .sort((a, b) => a._d - b._d);
+    let qty = 0;
+    let lastCost = currentCost;
+    let foundCostBeforeCutoff = false;
+    itemMoves.forEach((m) => {
+      if (m._d > asOfDate) return;
+      qty += Number(m.quantity) || 0;
+      if (m.unitCostAtTime !== undefined && m.unitCostAtTime !== "") {
+        lastCost = Number(m.unitCostAtTime) || lastCost;
+        foundCostBeforeCutoff = true;
+      }
+    });
+    return { qty, cost: foundCostBeforeCutoff ? lastCost : currentCost };
+  }
+
+  let totalValue = 0;
+  const rows = consumables
+    .map((item) => {
+      const currentCost = Number(item.unitCost) || 0;
+      const { qty, cost } = valueAsOf(item.itemCode, currentCost);
+      const value = qty * cost;
+      totalValue += value;
+      return { item, qty, cost, value };
+    })
+    .filter((r) => r.qty !== 0)
+    .sort((a, b) => String(a.item.name || "").localeCompare(String(b.item.name || "")))
+    .map(
+      (r) =>
+        `<tr><td style="padding:6px; border:1px solid #000; font-weight:bold;">${escapeHtml(r.item.itemCode || "N/A")}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(r.item.name || "N/A")}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(r.item.category || "N/A")}</td><td style="padding:6px; border:1px solid #000; text-align:right;">${r.qty} ${escapeHtml(r.item.unit || "")}</td><td style="padding:6px; border:1px solid #000; text-align:right;">₦${formatMoney(r.cost)}</td><td style="padding:6px; border:1px solid #000; text-align:right; font-weight:bold;">₦${formatMoney(r.value)}</td></tr>`,
+    )
+    .join("");
+
+  const asOfLabel = asOfDate.toLocaleDateString("en-GB");
+  const content = `
+    <div style="background:#f8f9fa; border:2px solid #000; border-radius:12px; padding:14px; margin-bottom:20px; text-align:center;">
+      <div style="font-size:11px; font-weight:800; text-transform:uppercase;">Total Consumables Value as of ${escapeHtml(asOfLabel)}</div>
+      <div style="font-size:22px; font-weight:900;">₦${formatMoney(totalValue)}</div>
+    </div>
+    <table style="width:184mm; border-collapse:collapse; font-size:12px; border:1px solid #000;"><thead><tr style="background:#f4f4f4;"><th style="padding:8px 6px; border:1px solid #000;">Code</th><th style="padding:8px 6px; border:1px solid #000;">Name</th><th style="padding:8px 6px; border:1px solid #000;">Category</th><th style="padding:8px 6px; border:1px solid #000; text-align:right;">Qty</th><th style="padding:8px 6px; border:1px solid #000; text-align:right;">Unit Cost</th><th style="padding:8px 6px; border:1px solid #000; text-align:right;">Value</th></tr></thead><tbody>${rows || `<tr><td colspan="6" style="padding:10px; border:1px solid #000; text-align:center;">No consumables in stock as of this date.</td></tr>`}</tbody></table>
+  `;
+
+  const ref = generateReportRef("RPT");
+  printContainer.innerHTML = wrapReportContent(content, `Consumables — As of ${asOfLabel}`, ref);
+  const originalTitle = document.title;
+  document.title = `Consumables_As_Of_${asOfDateStr}`;
+  window.print();
+  setTimeout(() => {
+    document.title = originalTitle;
+  }, 1000);
+}
+
+async function printToolsAsOfDate(asOfDateStr) {
+  const printContainer = document.getElementById("report-print-container");
+  if (!printContainer) return;
+
+  const items = await callApiStrict("getInventoryItems", {});
+  if (!items || !Array.isArray(items)) {
+    showToast("Couldn't load inventory data.", "error");
+    return;
+  }
+
+  const asOfDate = new Date(asOfDateStr);
+  asOfDate.setHours(23, 59, 59, 999);
+
+  // Tools have no movement history to reconstruct a past quantity
+  // from — a tool that existed as of the cutoff is one whose purchase
+  // date falls on or before it (or has no recorded purchase date at
+  // all, treated as always having existed rather than silently
+  // excluded for missing data).
+  let totalValue = 0;
+  const rows = items
+    .filter((i) => i && i.itemType === "tool")
+    .filter((i) => !i.purchaseDate || new Date(i.purchaseDate) <= asOfDate)
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")))
+    .map((i) => {
+      const qty = Number(i.currentQty) || 0;
+      const cost = Number(i.unitCost) || 0;
+      const value = qty * cost;
+      totalValue += value;
+      return `<tr><td style="padding:6px; border:1px solid #000; font-weight:bold;">${escapeHtml(i.itemCode || "N/A")}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(i.name || "N/A")}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(i.category || "N/A")}</td><td style="padding:6px; border:1px solid #000; text-align:right;">${qty}</td><td style="padding:6px; border:1px solid #000;">${escapeHtml(i.custodian || "Unassigned")}</td><td style="padding:6px; border:1px solid #000; text-align:right;">₦${formatMoney(cost)}</td><td style="padding:6px; border:1px solid #000; text-align:right; font-weight:bold;">₦${formatMoney(value)}</td></tr>`;
+    })
+    .join("");
+
+  const asOfLabel = asOfDate.toLocaleDateString("en-GB");
+  const content = `
+    <div style="background:#f8f9fa; border:2px solid #000; border-radius:12px; padding:14px; margin-bottom:20px; text-align:center;">
+      <div style="font-size:11px; font-weight:800; text-transform:uppercase;">Total Tools / Equipment Value as of ${escapeHtml(asOfLabel)}</div>
+      <div style="font-size:22px; font-weight:900;">₦${formatMoney(totalValue)}</div>
+    </div>
+    <table style="width:184mm; border-collapse:collapse; font-size:12px; border:1px solid #000;"><thead><tr style="background:#f4f4f4;"><th style="padding:8px 6px; border:1px solid #000;">Code</th><th style="padding:8px 6px; border:1px solid #000;">Name</th><th style="padding:8px 6px; border:1px solid #000;">Category</th><th style="padding:8px 6px; border:1px solid #000; text-align:right;">Qty</th><th style="padding:8px 6px; border:1px solid #000;">Custodian</th><th style="padding:8px 6px; border:1px solid #000; text-align:right;">Unit Price</th><th style="padding:8px 6px; border:1px solid #000; text-align:right;">Value</th></tr></thead><tbody>${rows || `<tr><td colspan="7" style="padding:10px; border:1px solid #000; text-align:center;">No tools/equipment as of this date.</td></tr>`}</tbody></table>
+  `;
+
+  const ref = generateReportRef("RPT");
+  printContainer.innerHTML = wrapReportContent(content, `Tools / Equipment — As of ${asOfLabel}`, ref);
+  const originalTitle = document.title;
+  document.title = `Tools_Equipment_As_Of_${asOfDateStr}`;
+  window.print();
+  setTimeout(() => {
+    document.title = originalTitle;
+  }, 1000);
 }
 
 // =========================================================

@@ -711,6 +711,63 @@ async function openModal(type, editData = null) {
     };
   }
 
+  // ── INVENTORY: PRINT REPORT (Tools/Equipment or Consumables, as of a date) ──
+  // A single "as of" date covers "monthly", "annual", or any other
+  // period — end of this month/year are just quick shortcuts that
+  // fill the same date field, since valuing stock only ever needs one
+  // cutoff, not a start+end range.
+  else if (type === "printinventoryreport") {
+    title.innerText = "Print Inventory Report";
+    submit.innerText = "Print";
+    const today = getLocalDateString();
+    body.innerHTML = `
+      <div class="form-field span-3"><label ${lbl}>Report</label>
+        <select id="pir_type" ${ls}>
+          <option value="consumables">Consumables</option>
+          <option value="tools">Tools / Equipment</option>
+        </select>
+      </div>
+      <div class="form-field span-3"><label ${lbl}>As Of Date</label>
+        <input type="date" id="pir_asof" value="${today}" ${ls}>
+      </div>
+      <div class="form-field span-3" style="display:flex; gap:8px;">
+        <button type="button" id="pir_end_of_month" style="background:#f0f0f0; color:#333; border:0; border-radius:6px; padding:6px 12px; font-size:12px; font-weight:700; cursor:pointer;">End of This Month</button>
+        <button type="button" id="pir_end_of_year" style="background:#f0f0f0; color:#333; border:0; border-radius:6px; padding:6px 12px; font-size:12px; font-weight:700; cursor:pointer;">End of This Year</button>
+      </div>
+    `;
+    document.getElementById("pir_end_of_month").onclick = () => {
+      const now = new Date();
+      const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      document.getElementById("pir_asof").value = lastDay.toISOString().split("T")[0];
+    };
+    document.getElementById("pir_end_of_year").onclick = () => {
+      const now = new Date();
+      document.getElementById("pir_asof").value = `${now.getFullYear()}-12-31`;
+    };
+
+    submit.onclick = async () => {
+      const reportType = document.getElementById("pir_type").value;
+      const asOfDate = document.getElementById("pir_asof").value;
+      if (!asOfDate) {
+        showToast("Select an as-of date.", "error");
+        return;
+      }
+      submit.disabled = true;
+      submit.classList.add("loading");
+      try {
+        if (reportType === "consumables") {
+          await printConsumablesAsOfDate(asOfDate);
+        } else {
+          await printToolsAsOfDate(asOfDate);
+        }
+        closeModal();
+      } finally {
+        submit.disabled = false;
+        submit.classList.remove("loading");
+      }
+    };
+  }
+
   else if (type === "reportgroupeditor") {
     title.innerText = isEdit ? "Edit Report Group" : "New Report Group";
     const selectedKeys = isEdit ? editData.reportKeys || [] : [];

@@ -1123,6 +1123,7 @@ function renderInventoryShortcuts() {
         <button class="action-btn" style="width:auto; background:var(--green);" onclick="openModal('receivestock')"><i class="fas fa-arrow-down"></i> Receive Stock</button>
         <button class="action-btn" style="width:auto; background:var(--red);" onclick="openModal('issuestock')"><i class="fas fa-arrow-up"></i> Issue Stock</button>
         <button class="action-btn" style="width:auto; background:#fd7e14;" onclick="openModal('adjuststock')"><i class="fas fa-sliders"></i> Stock Adjustment</button>
+        <button class="action-btn" style="width:auto;" onclick="openModal('printinventoryreport')"><i class="fas fa-print"></i> Print Report</button>
       </div>
     </div>
     <div class="desktop-form-card" style="grid-column:1/-1;">

@@ -396,9 +396,15 @@ async function submitLogin(pin, submitBtn) {
 
   submitBtn.disabled = true;
   submitBtn.classList.add("loading");
+  // [FEATURE] Full-screen overlay, not just the button spinner — a
+  // slow Apps Script round-trip on login otherwise looked identical
+  // to the app being frozen, with nothing on screen confirming
+  // anything was actually happening.
+  setGlobalLoading(true, "Logging in...");
 
   const result = await callApi("login", { userId: loginPickedUserId, pin });
 
+  setGlobalLoading(false);
   submitBtn.disabled = false;
   submitBtn.classList.remove("loading");
 
