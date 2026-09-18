@@ -31,7 +31,11 @@ async function bootMobileApp() {
   setupKeyboardHandlers();
   setupPullToRefresh();
 
-  await Promise.all([loadApplicationSettingsData(), bootstrapDataRegistriesPipeline(hadCache)]);
+  // [BUG FIX] Sequential, not Promise.all — firing getSettings and
+  // getAllData simultaneously risked exactly the queued-request 404
+  // documented on callApiSequential in Core.js, right at app startup.
+  await loadApplicationSettingsData();
+  await bootstrapDataRegistriesPipeline(hadCache);
 }
 
 // generateNextId / generateNextRecordId / populateUnitDropdown /
@@ -50,7 +54,7 @@ async function loadApplicationSettingsData() {
   }
   applySettingsToUIHeaders();
   try {
-    const cloudSettings = await callApi("getSettings", {});
+    const cloudSettings = await callApiStrict("getSettings", {});
     if (
       cloudSettings &&
       typeof cloudSettings === "object" &&

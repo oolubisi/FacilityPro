@@ -311,7 +311,7 @@ async function compileAndDownloadUnifiedPDF(
       const fileId = extractDriveFileId(url);
       if (!fileId) continue;
       try {
-        const fileData = await callApi("getFileBase64", { id: fileId });
+        const fileData = await callApiStrict("getFileBase64", { id: fileId });
         if (fileData?.status === "success" && fileData.base64) {
           const bytes = Uint8Array.from(
             atob(fileData.base64.replace(/\s/g, "")),

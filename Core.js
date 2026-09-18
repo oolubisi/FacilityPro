@@ -550,6 +550,11 @@ async function callApi(action, data = {}, options = {}) {
         data,
         token: API_TOKEN,
         sessionToken: currentUser?.sessionToken || null,
+        // [FEATURE] Set once per modal session (see openModal in
+        // Modals-forms.js) and reused across every retry of the same
+        // save — harmless for reads and any action the server doesn't
+        // specifically check, since it's simply ignored there.
+        clientRequestId: window.currentModalRequestId || null,
       }),
     });
     if (!response.ok) throw new Error("HTTP_ERROR_" + response.status);
@@ -633,7 +638,19 @@ async function callApi(action, data = {}, options = {}) {
     if (syncStatus) syncStatus.style.display = "block";
     updateStatusBarSync();
     showToast("Saved locally. Will sync when online.", "warning");
-    return { status: "queued" };
+    // [BUG FIX] status: "success" (with queued: true as a flag for any
+    // caller that specifically wants to know) instead of a distinct
+    // "queued" status — every save form's submit handler across the
+    // app checks result.status !== "success" to decide whether to
+    // close its modal, and "queued" failed that check everywhere,
+    // leaving the modal open after what genuinely was a successful
+    // (if deferred) save. That looked exactly like a failed save, so
+    // people re-clicked Save — and if the original request had
+    // actually reached the server and just lost its response on the
+    // way back (the same redirect quirk documented elsewhere in this
+    // file), that re-click plus the queue's own later retry could
+    // create two or three copies of one entry.
+    return { status: "success", queued: true };
   }
 }
 
@@ -704,7 +721,7 @@ async function processSyncQueue() {
   for (const item of queue) {
     try {
       const result = await callApi(item.action, item.data);
-      if (result?.status === "queued") remaining.push(item);
+      if (result?.queued) remaining.push(item);
       else if (result?.status === "error") {
         if (result.code === "CONFLICT") {
           // [FEATURE] Don't just drop this — the record changed on the
@@ -1006,7 +1023,7 @@ function hydrateCacheFromLocalBackup() {
 
 // Single network round-trip that refreshes every registry at once.
 async function loadAllDataFromServer() {
-  const result = await callApi("getAllData", {});
+  const result = await callApiStrict("getAllData", {});
   return applyAllDataPayload(result);
 }
 

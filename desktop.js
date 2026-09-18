@@ -303,7 +303,7 @@ async function loadDesktopSettings() {
   }
 
   try {
-    const cloudSettings = await callApi("getSettings", {});
+    const cloudSettings = await callApiStrict("getSettings", {});
     if (cloudSettings && typeof cloudSettings === "object") {
       appSettings = { ...appSettings, ...cloudSettings };
       localStorage.setItem("facility_pro_config_meta", JSON.stringify(appSettings));

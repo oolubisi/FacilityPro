@@ -46,7 +46,8 @@ function buildInventoryCategoryOptionsHtml(selectedValue) {
 // recurring-style costs like staff salary or generator diesel).
 const SERVICE_CHARGE_CATEGORIES = [
   "Staff Salary",
-  "Generator/Diesel",
+  "Generator",
+  "Electricity Vending",
   "Security",
   "Cleaning",
   "Utilities",
@@ -64,6 +65,21 @@ const SERVICE_CHARGE_CATEGORIES = [
 // the till, not paying for something using cash already in the till.
 // See logSharedExpense in Code.gs, which checks for this exact string.
 const PETTY_CASH_TOPUP_CATEGORY = "Petty Cash Topup";
+
+// [FEATURE] Fixed list for manual Petty Cash outflows — Miscellaneous
+// deliberately last, as the catch-all for anything not covered above.
+// Entries linked to a Service Charge expense (via "Pay from Petty
+// Cash") keep that expense's own category instead of this list, since
+// this dropdown is only shown on the standalone Outflow form.
+const PETTY_CASH_OUTFLOW_CATEGORIES = [
+  "Electricity Vending",
+  "Fuel / Diesel",
+  "Transport",
+  "Repairs & Maintenance",
+  "Office Supplies",
+  "Refreshments",
+  "Miscellaneous",
+];
 
 function buildServiceChargeCategoryOptionsHtml(selectedValue) {
   return SERVICE_CHARGE_CATEGORIES.map(
@@ -271,6 +287,15 @@ async function openModal(type, editData = null) {
   submit.style.display = "block";
   submit.innerText = isEdit ? "Update" : "Save";
   submit.classList.remove("loading");
+
+  // [FEATURE] One ID per modal session, reused across every retry of
+  // this same save (a manual re-click, or the offline sync queue's
+  // automatic retry) — callApi attaches it to every write request
+  // below. The server checks this before creating a new record, so a
+  // save that actually succeeded but lost its response on the way
+  // back can be safely retried without producing a duplicate. See
+  // requireIdempotent/recordIdempotent in Code.gs for the server side.
+  window.currentModalRequestId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
   const ls = 'style="font-size: 19px; padding: 12px; margin-bottom: 6px;"';
   const lbl =
@@ -869,7 +894,7 @@ async function openModal(type, editData = null) {
     body.innerHTML = `
       <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="pc_out_amount" type="text" inputmode="numeric" oninput="maskCurrencyInput(this)" ${ls}></div>
       <div class="form-field"><label ${lbl}>Date</label><input id="pc_out_date" type="date" value="${getLocalDateString()}" ${ls}></div>
-      <div class="form-field"><label ${lbl}>Category</label><input id="pc_out_category" placeholder="e.g. Office Supplies" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Category</label><select id="pc_out_category" ${ls}>${PETTY_CASH_OUTFLOW_CATEGORIES.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("")}</select></div>
       <div class="form-field"><label ${lbl}>Apartment</label><select id="pc_out_apt" ${ls}></select></div>
       <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="pc_out_description" ${ls}></div>
     `;
@@ -2271,6 +2296,7 @@ function closeModal() {
       document.getElementById("modalBody").innerHTML = "";
     }, 200);
   }
+  window.currentModalRequestId = null;
   if (lastFocusedElement) lastFocusedElement.focus();
   // [BUG FIX] This used to unconditionally call
   // bootstrapDataRegistriesPipeline() — a full reload of all 12 sheets,

@@ -301,7 +301,23 @@ async function loadLoginUserList(screen) {
   const listEl = document.getElementById("login-user-list");
   if (!listEl) return;
 
-  const result = await callApi("getUsersForLogin", {});
+  const result = await callApiStrict("getUsersForLogin", {});
+
+  // [BUG FIX] A null result (callApiStrict exhausted its retries on a
+  // genuine network/redirect failure) used to fall through to the
+  // same "no accounts set up yet" empty state as an error-shaped
+  // response below — actively misleading here, since it points
+  // someone at running setupFirstAdmin() in Apps Script when the real
+  // problem is just a fetch that never got through.
+  if (result === null) {
+    listEl.innerHTML = `
+      <div class="login-empty-state" style="color: var(--danger);">
+        Couldn't reach the server.<br>
+        <span style="font-weight:700;">Please check your connection and try again.</span>
+      </div>
+    `;
+    return;
+  }
 
   // [BUG FIX] An error-shaped response ({status:'error', message:...})
   // used to fall through to the "no accounts set up yet" empty state
