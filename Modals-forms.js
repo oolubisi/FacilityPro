@@ -456,7 +456,8 @@ async function openModal(type, editData = null) {
           }
           closeModal();
           showToast("Contribution logged.", "success");
-          if (typeof refreshServiceChargeSection === "function") refreshServiceChargeSection();
+          if (result.entry && typeof patchLocalServiceChargeEntries === "function") patchLocalServiceChargeEntries([result.entry]);
+          else if (typeof refreshServiceChargeSection === "function") refreshServiceChargeSection();
         })
         .catch(() => {
           submit.disabled = false;
@@ -550,8 +551,15 @@ async function openModal(type, editData = null) {
           showToast((result && result.message) || "Failed to log expense.", "error");
           return;
         }
-        setGlobalLoading(true, "Refreshing ledger...");
-        if (typeof refreshServiceChargeSection === "function") await refreshServiceChargeSection();
+        if (Array.isArray(result.entries) && typeof patchLocalServiceChargeEntries === "function") {
+          patchLocalServiceChargeEntries(result.entries);
+          if (result.pettyCashEntry && typeof patchLocalPettyCashEntry === "function") {
+            patchLocalPettyCashEntry(result.pettyCashEntry);
+          }
+        } else if (typeof refreshServiceChargeSection === "function") {
+          setGlobalLoading(true, "Refreshing ledger...");
+          await refreshServiceChargeSection();
+        }
         closeModal();
         showToast(
           isTopup
@@ -879,7 +887,8 @@ async function openModal(type, editData = null) {
           }
           closeModal();
           showToast("Petty cash inflow logged.", "success");
-          if (typeof refreshPettyCashSection === "function") refreshPettyCashSection();
+          if (result.entry && typeof patchLocalPettyCashEntry === "function") patchLocalPettyCashEntry(result.entry);
+          else if (typeof refreshPettyCashSection === "function") refreshPettyCashSection();
         })
         .catch(() => {
           submit.disabled = false;
@@ -938,7 +947,8 @@ async function openModal(type, editData = null) {
           }
           closeModal();
           showToast("Petty cash outflow logged.", "success");
-          if (typeof refreshPettyCashSection === "function") refreshPettyCashSection();
+          if (result.entry && typeof patchLocalPettyCashEntry === "function") patchLocalPettyCashEntry(result.entry);
+          else if (typeof refreshPettyCashSection === "function") refreshPettyCashSection();
         })
         .catch(() => {
           submit.disabled = false;
@@ -990,7 +1000,8 @@ async function openModal(type, editData = null) {
           }
           closeModal();
           showToast(isEdit ? "Entry updated." : "Transaction logged.", "success");
-          if (typeof refreshEnergySection === "function") refreshEnergySection();
+          if (result.entry && typeof patchLocalEnergyEntry === "function") patchLocalEnergyEntry(result.entry);
+          else if (typeof refreshEnergySection === "function") refreshEnergySection();
         })
         .catch(() => {
           submit.disabled = false;
@@ -1474,7 +1485,8 @@ async function openModal(type, editData = null) {
           }
           closeModal();
           showToast(isEdit ? "Item updated." : `Item ${result.itemCode} created.`, "success");
-          if (typeof refreshInventorySection === "function") refreshInventorySection();
+          if (result.item && typeof patchLocalInventoryItem === "function") patchLocalInventoryItem(result.item);
+          else if (typeof refreshInventorySection === "function") refreshInventorySection();
         })
         .catch(() => {
           submit.disabled = false;
@@ -1549,7 +1561,8 @@ async function openModal(type, editData = null) {
           }
           closeModal();
           showToast(isEdit ? "Updated." : `${result.itemCode} created.`, "success");
-          if (typeof refreshInventorySection === "function") refreshInventorySection();
+          if (result.item && typeof patchLocalInventoryItem === "function") patchLocalInventoryItem(result.item);
+          else if (typeof refreshInventorySection === "function") refreshInventorySection();
         })
         .catch(() => {
           submit.disabled = false;

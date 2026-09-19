@@ -534,29 +534,52 @@ async function callApi(action, data = {}, options = {}) {
   const isAuthAction = action === "login" || action === "logout";
 
   try {
-    const response = await fetch(GAS_URL, {
-      method: "POST",
-      // [BUG FIX] Explicit Content-Type avoids the browser's default
-      // CORS preflight for cross-origin JSON POSTs, which is where
-      // Apps Script's POST-then-302-redirect can get mishandled and
-      // silently downgraded to a GET (losing the body — the request
-      // then lands on an unrelated Google page and 404s, never
-      // reaching doPost() at all). text/plain works fine here since
-      // Apps Script reads e.postData.contents as a raw string
-      // regardless of the declared content-type.
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({
-        action,
-        data,
-        token: API_TOKEN,
-        sessionToken: currentUser?.sessionToken || null,
-        // [FEATURE] Set once per modal session (see openModal in
-        // Modals-forms.js) and reused across every retry of the same
-        // save — harmless for reads and any action the server doesn't
-        // specifically check, since it's simply ignored there.
-        clientRequestId: window.currentModalRequestId || null,
-      }),
-    });
+    // [BUG FIX] An explicit timeout on the fetch itself — without one,
+    // a request caught in the redirect-downgrade quirk (landing on an
+    // unrelated Google page instead of doPost()) had no bound on how
+    // long the browser would wait before the eventual 404 surfaced.
+    // Traced in DevTools to one such request taking 24.8 seconds
+    // before failing. First set to 10s, but that turned out to be too
+    // short for this deployment's actual baseline latency — it started
+    // firing routinely on ordinary requests (loadAllDataFromServer,
+    // section refreshes) that were just slow, not stuck, forcing
+    // unnecessary retries on top of a request that likely would have
+    // succeeded if left alone. 30s gives real margin above the known
+    // 24.8s failure case (25s felt too close to risk not catching it
+    // reliably) while still bounding the worst case to something
+    // finite, and matches the same 30s used for PDF generation in
+    // pdf.js.
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(() => timeoutController.abort(), 30000);
+    let response;
+    try {
+      response = await fetch(GAS_URL, {
+        method: "POST",
+        // [BUG FIX] Explicit Content-Type avoids the browser's default
+        // CORS preflight for cross-origin JSON POSTs, which is where
+        // Apps Script's POST-then-302-redirect can get mishandled and
+        // silently downgraded to a GET (losing the body — the request
+        // then lands on an unrelated Google page and 404s, never
+        // reaching doPost() at all). text/plain works fine here since
+        // Apps Script reads e.postData.contents as a raw string
+        // regardless of the declared content-type.
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({
+          action,
+          data,
+          token: API_TOKEN,
+          sessionToken: currentUser?.sessionToken || null,
+          // [FEATURE] Set once per modal session (see openModal in
+          // Modals-forms.js) and reused across every retry of the same
+          // save — harmless for reads and any action the server doesn't
+          // specifically check, since it's simply ignored there.
+          clientRequestId: window.currentModalRequestId || null,
+        }),
+        signal: timeoutController.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
     if (!response.ok) throw new Error("HTTP_ERROR_" + response.status);
 
     const text = await response.text();
@@ -586,10 +609,19 @@ async function callApi(action, data = {}, options = {}) {
     console.warn("Network Error / Offline:", err);
 
     if (err.message && err.message.startsWith("HTTP_ERROR_")) {
-      showToast(
-        "Server error: " + err.message.replace("HTTP_ERROR_", ""),
-        "error",
-      );
+      // [BUG FIX] Suppressed on intermediate callApiStrict attempts
+      // (see options.suppressErrorToast there) — this used to fire on
+      // every single attempt, including ones about to be retried and
+      // succeed, showing a "Server error: 404" toast for a failure the
+      // user never actually experienced. Still shown normally for a
+      // direct callApi call with no retry wrapper, and for
+      // callApiStrict's own final, exhausted attempt.
+      if (!options.suppressErrorToast) {
+        showToast(
+          "Server error: " + err.message.replace("HTTP_ERROR_", ""),
+          "error",
+        );
+      }
       return { status: "error", message: err.message };
     }
 
@@ -661,12 +693,35 @@ async function callApi(action, data = {}, options = {}) {
 // than immediately falling back to callApi's normal stale-backup/[]
 // behavior, which a caller checking Array.isArray() can't tell apart
 // from a real, successful, genuinely-empty result.
+// [BUG FIX] Genuine, fundamental gap this fixes: a result of {status:
+// 'error', message: 'HTTP_ERROR_404'} — a real, completed HTTP
+// response, not a timeout or thrown network error — used to make this
+// loop return immediately without retrying at all, because it isn't
+// strictly === null. That's exactly the shape a redirect-downgrade
+// 404 produces (the request DID complete, just against the wrong
+// page), which is precisely the transient failure this function
+// exists to survive. The retry logic was silently never engaging for
+// the most common real-world failure mode it was built for. Now
+// retries on both: no response at all (null, from a timeout or thrown
+// fetch error) or a completed-but-HTTP-error response — anything else
+// (a real success, or a business-logic error like "Item name is
+// required" that no retry would fix) still returns immediately.
 async function callApiStrict(action, data = {}, retries = 2, delayMs = 1500) {
   for (let attempt = 0; attempt <= retries; attempt++) {
-    const result = await callApi(action, data, { strict: true });
-    if (result !== null) return result;
-    if (attempt < retries)
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    const isFinalAttempt = attempt === retries;
+    const result = await callApi(action, data, {
+      strict: true,
+      // Suppressed here so an about-to-be-retried failure doesn't
+      // show the user an error toast for something they never
+      // actually experienced — only the final, truly-exhausted
+      // attempt (if it also fails) shows one.
+      suppressErrorToast: !isFinalAttempt,
+    });
+    const isRetryableHttpError =
+      result && result.status === "error" && typeof result.message === "string" && result.message.startsWith("HTTP_ERROR_");
+    if (result !== null && !isRetryableHttpError) return result;
+    if (!isFinalAttempt) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    else return result;
   }
   return null;
 }
@@ -1142,16 +1197,30 @@ function generateNextId(prefix, list, idKey) {
 
 async function generateNextRecordId(prefix, sheetName, idKey, fallbackList) {
   try {
-    const response = await fetch(GAS_URL, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({
-        action: "generateId",
-        data: { prefix, sheetName, idKey },
-        token: API_TOKEN,
-        sessionToken: currentUser?.sessionToken || null,
-      }),
-    });
+    // [BUG FIX] Same explicit timeout as callApi in this file (30s —
+    // see the reasoning there) — a request stuck in the redirect-
+    // downgrade quirk shouldn't hang the ID lookup indefinitely; the
+    // catch below already has a local fallback ready, so cutting this
+    // short just gets to that fallback sooner instead of waiting on a
+    // request going nowhere.
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(() => timeoutController.abort(), 30000);
+    let response;
+    try {
+      response = await fetch(GAS_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({
+          action: "generateId",
+          data: { prefix, sheetName, idKey },
+          token: API_TOKEN,
+          sessionToken: currentUser?.sessionToken || null,
+        }),
+        signal: timeoutController.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
     if (!response.ok) throw new Error("ID_HTTP_" + response.status);
     const result = await response.json();
     if (result?.status === "success" && result.id) return result.id;

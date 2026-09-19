@@ -148,6 +148,27 @@ let lastFetchedServiceChargeLedger = [];
 let lastFetchedServiceChargeBudgets = [];
 let lastFetchedRecurringTemplates = [];
 
+// [FEATURE] Same "feels faster without the risk" pattern as
+// patchLocalInventoryItem/patchLocalPettyCashEntry/patchLocalEnergyEntry
+// above — appends server-confirmed entries straight into the cached
+// ledger and re-renders, instead of re-fetching the whole ledger.
+// Takes an array since a single Service Charge expense can write
+// several rows at once (one per apartment it's split across).
+function patchLocalServiceChargeEntries(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) return;
+  lastFetchedServiceChargeLedger.push(...entries);
+  setLedgerCache("servicecharge", {
+    result: lastFetchedServiceChargeLedger,
+    budgets: lastFetchedServiceChargeBudgets,
+    templates: lastFetchedRecurringTemplates,
+  });
+  renderServiceChargeSummary();
+  const containerId = isDesktopShell() ? "desktop-sc-ledger" : "mobile-sc-ledger";
+  const container = document.getElementById(containerId);
+  if (container) renderServiceChargeLedgerTable(container, lastFetchedServiceChargeLedger);
+  renderRecurringExpensesDue();
+}
+
 async function refreshServiceChargeSection() {
   const containerId = isDesktopShell() ? "desktop-sc-ledger" : "mobile-sc-ledger";
   const container = document.getElementById(containerId);
@@ -700,6 +721,21 @@ function confirmRecurringExpenseEntry(templateId) {
 // ─────────────────────────────────────────────
 let lastFetchedPettyCashLedger = [];
 
+// [FEATURE] Same "feels faster without the risk" pattern as
+// patchLocalInventoryItem above — appends a server-confirmed entry
+// straight into the cached ledger and re-renders, instead of
+// re-fetching the whole ledger just to see the one row already
+// returned in the save's own response.
+function patchLocalPettyCashEntry(entry) {
+  if (!entry || !entry.entryId) return;
+  lastFetchedPettyCashLedger.push(entry);
+  setLedgerCache("pettycash", { result: lastFetchedPettyCashLedger, items: lastFetchedInventoryItems, movements: lastFetchedInventoryMovements });
+  renderPettyCashSummary();
+  const containerId = isDesktopShell() ? "desktop-pc-ledger" : "mobile-pc-ledger";
+  const container = document.getElementById(containerId);
+  if (container) renderPettyCashLedgerTable(container, lastFetchedPettyCashLedger);
+}
+
 async function refreshPettyCashSection() {
   const containerId = isDesktopShell() ? "desktop-pc-ledger" : "mobile-pc-ledger";
   const container = document.getElementById(containerId);
@@ -933,6 +969,22 @@ function deletePettyCashLedgerEntry(entryId) {
 // ─────────────────────────────────────────────
 let lastFetchedEnergyLedger = [];
 
+// [FEATURE] Same "feels faster without the risk" pattern as
+// patchLocalInventoryItem/patchLocalPettyCashEntry above — handles
+// both a brand-new entry (appended) and an edit to an existing one
+// (replaced in place, not appended as a second copy).
+function patchLocalEnergyEntry(entry) {
+  if (!entry || !entry.entryId) return;
+  const idx = lastFetchedEnergyLedger.findIndex((r) => r && r.entryId === entry.entryId);
+  if (idx === -1) lastFetchedEnergyLedger.push(entry);
+  else lastFetchedEnergyLedger[idx] = entry;
+  setLedgerCache("energy", { result: lastFetchedEnergyLedger });
+  renderEnergySummary();
+  const containerId = isDesktopShell() ? "desktop-energy-ledger" : "mobile-energy-ledger";
+  const container = document.getElementById(containerId);
+  if (container) renderEnergyLedgerTable(container, lastFetchedEnergyLedger);
+}
+
 async function refreshEnergySection() {
   const containerId = isDesktopShell() ? "desktop-energy-ledger" : "mobile-energy-ledger";
   const container = document.getElementById(containerId);
@@ -1078,6 +1130,32 @@ function deleteEnergyLedgerEntry(entryId) {
 // ─────────────────────────────────────────────
 let lastFetchedInventoryItems = [];
 let lastFetchedInventoryMovements = [];
+
+// [FEATURE] "Feels faster without the risk" — patches a single
+// server-confirmed record straight into the already-cached inventory
+// list and re-renders from it, instead of re-fetching the entire list
+// from the server again just to see the one row that was already
+// returned in the save's own response. This only ever runs on data
+// the server has already confirmed (never a local guess shown before
+// the request completes), so it can't show something that doesn't
+// match what actually got saved — see the write-side idempotency
+// system in Code.gs for why a full local-first approach (showing
+// something before the server confirms it) was deliberately not
+// pursued instead.
+function patchLocalInventoryItem(item) {
+  if (!item || !item.itemCode) return;
+  const idx = lastFetchedInventoryItems.findIndex((i) => i && i.itemCode === item.itemCode);
+  if (idx === -1) {
+    lastFetchedInventoryItems.push(item);
+  } else {
+    lastFetchedInventoryItems[idx] = item;
+  }
+  setLedgerCache("inventory", { items: lastFetchedInventoryItems, movements: lastFetchedInventoryMovements });
+  renderInventoryDashboard();
+  const containerId = isDesktopShell() ? "desktop-inv-list" : "mobile-inv-list";
+  const container = document.getElementById(containerId);
+  if (container) renderInventoryItemList(container, lastFetchedInventoryItems);
+}
 
 async function refreshInventorySection() {
   const containerId = isDesktopShell() ? "desktop-inv-list" : "mobile-inv-list";

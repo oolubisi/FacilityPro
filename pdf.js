@@ -278,11 +278,24 @@ async function compileAndDownloadUnifiedPDF(
       </style>
     </head><body>${sanitizedHtml}</body></html>`;
 
-    const response = await fetch(GAS_URL, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ action: "generatePDF", html: cleanHTML, token: API_TOKEN, sessionToken: currentUser?.sessionToken || null }),
-    });
+    // [BUG FIX] Same protection as callApi's timeout, but longer —
+    // PDF generation genuinely takes several seconds server-side for a
+    // large document, so the same 10s used for normal data requests
+    // would risk aborting a legitimately slow-but-working generation,
+    // not just a stuck redirect.
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(() => timeoutController.abort(), 30000);
+    let response;
+    try {
+      response = await fetch(GAS_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ action: "generatePDF", html: cleanHTML, token: API_TOKEN, sessionToken: currentUser?.sessionToken || null }),
+        signal: timeoutController.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
     const text = await response.text();
     let result;
     try {
