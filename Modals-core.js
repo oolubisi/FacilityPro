@@ -252,6 +252,14 @@ function computeServiceChargeBalancesAsOf(ledger, asOfDate) {
   const balances = {};
   (ledger || []).forEach((row) => {
     if (!row || !row.apt) return;
+    // [BUG FIX] A "Petty Cash Topup" entry uses apt: "Petty Cash
+    // Transfer" — a placeholder, not a real unit — since it isn't
+    // charged to any specific apartment. Left ungrouped, it was
+    // counted as its own "apartment" here, inflating both this
+    // balance map and anything that reads Object.keys(...).length off
+    // it (the Service Charge summary's "Apartments With Activity"
+    // count) by one for every topup ever logged.
+    if (row.type === "petty_cash_topup") return;
     const rowTime = new Date(row.date).getTime();
     if (cutoff !== null && (isNaN(rowTime) || rowTime > cutoff)) return;
     const amt = Number(row.amount) || 0;
@@ -1290,6 +1298,7 @@ function renderInventoryItemList(container, items) {
       <th style="padding:8px 6px;">Code</th>
       <th style="padding:8px 6px;">Item</th>
       <th style="padding:8px 6px;">Category</th>
+      <th style="padding:8px 6px;">Assigned</th>
       <th style="padding:8px 6px; text-align:right;">Qty</th>
       <th style="padding:8px 6px; text-align:right;">Unit Cost</th>
       <th style="padding:8px 6px;">Status</th>
@@ -1312,10 +1321,14 @@ function renderInventoryItemList(container, items) {
           if (!isTool && item.onOrder === "Yes") {
             stockBadge += `<br><span style="color:#856404; font-weight:800; font-size:10px;">ON ORDER</span>`;
           }
+          // Assigned/custodian only applies to tools — a consumable
+          // is issued and consumed, not held long-term by one person.
+          const assignedLabel = isTool ? escapeHtml(item.custodian || "Unassigned") : "—";
           return `<tr style="border-bottom:1px solid #eee; cursor:pointer;" data-modal-action="view-inventory-item-timeline" data-id="${escapeHtml(item.itemCode)}">
             <td style="padding:6px; font-weight:800;">${escapeHtml(item.itemCode)}</td>
             <td style="padding:6px;">${escapeHtml(item.name || "")}${isTool ? ` <span style="color:var(--muted); font-size:11px;">(Tool)</span>` : ""}</td>
             <td style="padding:6px;">${escapeHtml(item.category || "")}</td>
+            <td style="padding:6px;">${assignedLabel}</td>
             <td style="padding:6px; text-align:right; font-weight:700;">${isTool ? (item.currentQty || 0) : qty + " " + escapeHtml(item.unit || "")}</td>
             <td style="padding:6px; text-align:right;">₦${formatMoney(item.unitCost || 0)}</td>
             <td style="padding:6px;">${stockBadge}</td>
