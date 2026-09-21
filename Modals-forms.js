@@ -290,6 +290,21 @@ const MOBILE_READONLY_DETAIL_TITLES = {
   utility: "Utility Details", generator: "Plant Log Details",
 };
 
+// [FEATURE] Fields never worth showing in the generic detail view —
+// photos is a raw list of Drive links, not useful as plain text here,
+// and notes2 is a secondary/duplicate notes field. Matched
+// case-insensitively since the same field can appear under different
+// casings on different records (see the dedup step below).
+const MOBILE_READONLY_DETAIL_EXCLUDED_FIELDS = new Set(["photos", "notes2"]);
+
+// Substring match, case-insensitive, against the field's own key —
+// covers rent/deposit/amount/cost/price/budget/fee/charge across every
+// record type this view needs to handle, without hardcoding a
+// different field list per type (Apartments' "rent" and
+// "serviceChargeDeposit", Payments' "amount", Assets' "cost", a
+// Recurring Template's "defaultAmount", etc. all match one of these).
+const MOBILE_READONLY_MONEY_KEY_PATTERN = /rent|deposit|amount|cost|price|budget|fee|charge/i;
+
 // [FEATURE] Generic, record-type-agnostic detail view for the mobile
 // read-only viewer — every field on the record, label/value, no
 // inputs, no save button. Reuses the same "just list every non-empty
@@ -313,15 +328,33 @@ function showReadOnlyRecordDetails(type, record) {
   title.innerText = MOBILE_READONLY_DETAIL_TITLES[type] || "Record Details";
   submit.style.display = "none";
 
-  const rowsHtml = Object.entries(record || {})
-    .filter(([, value]) => value !== "" && value !== null && value !== undefined)
-    .map(
-      ([key, value]) =>
-        `<div class="form-field span-3" style="display:flex; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid #eee;">
+  // [BUG FIX] Some records carry the same field under more than one
+  // casing (e.g. both "type" and "Type" with the same value) — likely
+  // left over from records created at different points in the app's
+  // history. Left un-deduped, the generic field list below showed
+  // both as separate rows. Keeps the first non-empty value seen for
+  // each case-insensitive key, in the record's own field order.
+  const seen = new Map();
+  Object.entries(record || {}).forEach(([key, value]) => {
+    if (value === "" || value === null || value === undefined) return;
+    const normalizedKey = key.toLowerCase();
+    if (MOBILE_READONLY_DETAIL_EXCLUDED_FIELDS.has(normalizedKey)) return;
+    if (!seen.has(normalizedKey)) seen.set(normalizedKey, { key, value });
+  });
+
+  const rowsHtml = Array.from(seen.values())
+    .map(({ key, value }) => {
+      let displayValue = String(value);
+      if (MOBILE_READONLY_MONEY_KEY_PATTERN.test(key) && !isNaN(parseFloat(value))) {
+        displayValue = "₦" + formatMoney(value);
+      } else if (/^\d{4}-\d{2}-\d{2}/.test(displayValue)) {
+        displayValue = formatDateForDisplay(displayValue);
+      }
+      return `<div class="form-field span-3" style="display:flex; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid #eee;">
           <span style="color:var(--muted); font-size:13px;">${escapeHtml(labelize(key))}</span>
-          <strong style="text-align:right; word-break:break-word;">${escapeHtml(String(value))}</strong>
-        </div>`,
-    )
+          <strong style="text-align:right; word-break:break-word;">${escapeHtml(displayValue)}</strong>
+        </div>`;
+    })
     .join("");
 
   body.innerHTML = rowsHtml || `<p style="color:var(--muted);">No details available.</p>`;
