@@ -1,10 +1,27 @@
-const { app, BrowserWindow, shell, ipcMain } = require("electron");
+const { app, BrowserWindow, shell, ipcMain, dialog, protocol, net } = require("electron");
 const fs = require("fs");
 const http = require("http");
 const path = require("path");
+const db = require("./db");
+const localApi = require("./local-api");
+const migration = require("./migration");
+const mobileSync = require("./mobile-sync");
 
 const appRoot = path.join(__dirname, "..");
 const indexPath = path.join(appRoot, "index.html");
+
+// [FEATURE] A custom protocol for serving locally-saved attachments to
+// the renderer — plain file:// URLs are blocked by default under the
+// contextIsolation/sandbox settings this app already uses, and
+// loosening that just to show images would weaken security for
+// everything else too. Must be registered as "privileged" (so it
+// behaves like https:// for CORS/fetch purposes, letting an <img> tag
+// load from it normally) before the app is ready; the actual request
+// handler is wired up in app.whenReady() below, once db.js knows
+// where the attachments folder actually is.
+protocol.registerSchemesAsPrivileged([
+  { scheme: "attachment", privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
+]);
 
 const mimeTypes = {
   ".css": "text/css; charset=utf-8",
@@ -193,7 +210,103 @@ ipcMain.handle("open-record-window", (event, payload) => {
   return true;
 });
 
+// [FEATURE] Local data store — replaces Google Sheets as the desktop
+// app's storage. See db.js for the full reasoning (a single JSON file,
+// not SQLite, so Code.gs's existing array-based logic in local-api.js
+// ports directly rather than needing a rewrite into SQL). Initialized
+// before the window loads so the very first renderer request has a
+// database ready to answer it.
+db.initDatabase(app.getPath("userData"));
+
+// [FEATURE] The local equivalent of Apps Script's doPost — every
+// callApi(...) call the renderer makes now arrives here instead of
+// going out over the network. See preload.js for what's exposed to
+// the renderer, and Core.js's callApi for the transport-level switch
+// between this and the old fetch(GAS_URL, ...) path.
+ipcMain.handle("local-api-call", (event, { action, data, sessionToken }) => {
+  try {
+    return localApi.handleAction(action, data || {}, sessionToken);
+  } catch (err) {
+    return { status: "error", message: err && err.stack ? err.stack : String(err) };
+  }
+});
+
+// [FEATURE] One-time import from the existing cloud backend — see
+// migration.js. Exposed as its own IPC channel (not routed through
+// local-api-call/handleAction) since it isn't a normal app action:
+// it's the one and only thing here that still talks to Apps Script,
+// and only ever runs once, deliberately triggered from Settings
+// rather than automatically.
+ipcMain.handle("run-migration", async () => {
+  try {
+    return await migration.runMigration();
+  } catch (err) {
+    return { status: "error", message: err && err.stack ? err.stack : String(err) };
+  }
+});
+
+// [FEATURE] Pushes a read-only snapshot to the mobile relay — see
+// mobile-sync.js. Triggered from the renderer's "Sync Now" button and
+// automatically on app exit (below), so mobile stays reasonably
+// current without needing a manual export/transfer step.
+ipcMain.handle("sync-mobile-snapshot", async () => {
+  try {
+    return await mobileSync.syncMobileSnapshot();
+  } catch (err) {
+    return { status: "error", message: err && err.stack ? err.stack : String(err) };
+  }
+});
+
+// [FEATURE] Lets the person choose where attachments are stored,
+// exposed via the Settings screen — see preload.js/desktop.js.
+ipcMain.handle("select-attachments-folder", async () => {
+  const result = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] });
+  if (result.canceled || !result.filePaths[0]) return { status: "cancelled" };
+  const chosen = result.filePaths[0];
+  const settings = db.getCollection("Settings");
+  settings.attachmentsFolder = chosen;
+  db.persist();
+  return { status: "success", path: chosen };
+});
+
+// [FEATURE] Serves files from the attachments folder to the renderer
+// under the attachment:// scheme registered above — e.g. a photo
+// saved as "img_1234_photo.jpg" is requested by the renderer as
+// attachment://img_1234_photo.jpg. Only ever reads from the
+// configured folder itself (path.basename strips any directory
+// components from the requested name), so this can't be used to read
+// arbitrary files elsewhere on disk. Registered inside whenReady()
+// rather than alongside registerSchemesAsPrivileged() above — that
+// one call must happen before app is ready, but the actual request
+// handler is safest wired up afterward, once the app (and so
+// getAttachmentsFolder's use of app.getPath) is fully initialized.
+app.whenReady().then(() => {
+  protocol.handle("attachment", (request) => {
+    const requestedName = decodeURIComponent(new URL(request.url).hostname + new URL(request.url).pathname);
+    const safeName = path.basename(requestedName);
+    const fullPath = path.join(db.getAttachmentsFolder(), safeName);
+    return net.fetch("file://" + fullPath);
+  });
+});
+
 app.whenReady().then(createWindow);
+
+// [FEATURE] Best-effort automatic push to the mobile relay on exit —
+// see mobile-sync.js. Delays quitting just long enough to attempt the
+// upload (capped at 8s so a slow or unreachable network never turns
+// "close the app" into a multi-second hang), then quits regardless of
+// whether the sync actually succeeded — a failed background sync on
+// exit should never trap someone who's trying to close the app.
+let hasAttemptedExitSync = false;
+app.on("before-quit", (event) => {
+  if (hasAttemptedExitSync) return;
+  hasAttemptedExitSync = true;
+  event.preventDefault();
+  Promise.race([
+    mobileSync.syncMobileSnapshot().catch(() => {}),
+    new Promise((resolve) => setTimeout(resolve, 8000)),
+  ]).finally(() => app.quit());
+});
 
 app.on("window-all-closed", () => {
   if (staticServer) {

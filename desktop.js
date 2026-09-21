@@ -197,6 +197,19 @@ function wireDesktopEvents() {
   document.getElementById("sync-now").addEventListener("click", async () => {
     await processSyncQueue();
     await loadAndRender();
+    // [FEATURE] Also pushes the latest data to the mobile relay when
+    // running locally — see mobile-sync.js (main process) and
+    // Code.gs's uploadMobileSnapshot. Not shown as a separate button;
+    // "Sync Now" already reads to the user as "make sure everything
+    // is up to date", which this is now also part of.
+    if (window.localApi) {
+      const result = await window.localApi.syncMobileSnapshot();
+      if (result && result.status === "success") {
+        showToast("Synced. Mobile view updated too.", "success");
+      } else {
+        showToast("Synced locally, but couldn't reach the mobile relay: " + ((result && result.message) || "unknown error"), "warning");
+      }
+    }
   });
   document.getElementById("new-record").addEventListener("click", openNewRecord);
 
@@ -967,17 +980,51 @@ function renderSettingsShortcuts() {
       <input type="text" id="cfg-fm-address" />
       <label>COMPANY LOGO URL</label>
       <input type="text" id="cfg-logo-url" />
-      <small style="display: block; color: #888; margin-top: -8px; margin-bottom: 12px;">
+      ${
+        window.localApi
+          ? `<small style="display: block; color: #888; margin-top: -8px; margin-bottom: 12px;">
+        A web link (https://...) to an image, or an attachment:// address from a photo already uploaded elsewhere in the app.
+      </small>`
+          : `<small style="display: block; color: #888; margin-top: -8px; margin-bottom: 12px;">
         If using a Google Drive link, the file's sharing setting must be
         "Anyone with the link" (Viewer) — otherwise the logo will fail to
         load with a 401 error.
-      </small>
-      <label>MAIN GOOGLE DRIVE FOLDER NAME</label>
-      <input type="text" id="cfg-main-folder" />
+      </small>`
+      }
+      ${
+        window.localApi
+          ? ""
+          : `<label>MAIN GOOGLE DRIVE FOLDER NAME</label>
+      <input type="text" id="cfg-main-folder" />`
+      }
       <button class="action-btn success" id="desktop-save-settings">
         <i class="fas fa-save"></i> Save Settings
       </button>
     </div>
+    ${
+      window.localApi
+        ? `<div class="desktop-form-card">
+      <h3 style="margin:0 0 8px; font-size:15px;">Attachments Folder</h3>
+      <p style="margin:0 0 12px; font-size:12px; color:var(--muted);">Where photos and PDF attachments uploaded throughout the app are saved on this computer.</p>
+      <p id="desktop-attachments-folder-path" style="margin:0 0 12px; font-size:13px; font-weight:700; word-break:break-all;">Loading...</p>
+      <button class="action-btn" id="desktop-choose-attachments-folder-btn" style="width:auto; background:#0d6efd;">
+        <i class="fas fa-folder-open"></i> Choose Folder
+      </button>
+    </div>`
+        : ""
+    }
+    ${
+      window.localApi
+        ? `<div class="desktop-form-card">
+      <h3 style="margin:0 0 8px; font-size:15px;">Migrate from Cloud</h3>
+      <p style="margin:0 0 12px; font-size:12px; color:var(--muted);">One-time import of your existing Apartments, ledgers, Inventory and everything else from the old cloud backend into this app's local data. Safe to run more than once if needed — it always replaces local data with the latest cloud copy rather than duplicating anything, so only do this if you're sure the cloud copy is the one you want to keep.</p>
+      <button class="action-btn" id="desktop-run-migration-btn" style="width:auto; background:#6f42c1;">
+        <i class="fas fa-cloud-download-alt"></i> Import from Cloud
+      </button>
+      <div id="desktop-migration-status" style="margin-top:10px; font-size:13px;"></div>
+    </div>`
+        : ""
+    }
     <div class="desktop-form-card">
       <h3 style="margin:0 0 8px; font-size:15px;">Sync Conflicts</h3>
       <p style="margin:0 0 4px; font-size:12px; color:var(--muted);">Changes made offline that couldn't be applied because someone else edited the same record first.</p>
@@ -1000,6 +1047,69 @@ function renderSettingsShortcuts() {
     .getElementById("desktop-new-user-btn")
     .addEventListener("click", () => openModal("user"));
   renderUsersList("desktop-user-list");
+
+  const migrationBtn = document.getElementById("desktop-run-migration-btn");
+  if (migrationBtn) migrationBtn.addEventListener("click", runCloudMigration);
+
+  const chooseFolderBtn = document.getElementById("desktop-choose-attachments-folder-btn");
+  if (chooseFolderBtn) {
+    displayCurrentAttachmentsFolder();
+    chooseFolderBtn.addEventListener("click", async () => {
+      const result = await window.localApi.selectAttachmentsFolder();
+      if (result && result.status === "success") {
+        showToast("Attachments folder updated.", "success");
+        displayCurrentAttachmentsFolder();
+      } else if (result && result.status !== "cancelled") {
+        showToast((result && result.message) || "Could not update the attachments folder.", "error");
+      }
+    });
+  }
+}
+
+// [FEATURE] Shows the folder attachments currently save to — read
+// fresh from Settings each time rather than cached, since it can also
+// change via the picker without a full page reload.
+async function displayCurrentAttachmentsFolder() {
+  const el = document.getElementById("desktop-attachments-folder-path");
+  if (!el) return;
+  const settings = await callApi("getSettings", {});
+  el.textContent = (settings && settings.attachmentsFolder) || "Not yet set — using the default location.";
+}
+
+// [FEATURE] One-time (or re-run-if-needed) import from the existing
+// cloud backend into this app's local data store — see migration.js
+// in the Electron main process for what actually happens. This is the
+// last place in the app that ever talks to Apps Script.
+async function runCloudMigration() {
+  const btn = document.getElementById("desktop-run-migration-btn");
+  const statusEl = document.getElementById("desktop-migration-status");
+  if (!btn || !statusEl) return;
+
+  if (!confirm("This will replace all local data with a fresh copy from the cloud backend. Any local-only changes not yet reflected in the cloud will be lost. Continue?")) {
+    return;
+  }
+
+  btn.disabled = true;
+  statusEl.style.color = "var(--muted)";
+  statusEl.textContent = "Importing from cloud — this can take a moment...";
+
+  try {
+    const result = await window.localApi.runMigration();
+    if (!result || result.status !== "success") {
+      statusEl.style.color = "#dc3545";
+      statusEl.textContent = (result && result.message) || "Import failed.";
+      return;
+    }
+    const total = Object.values(result.counts || {}).reduce((s, n) => s + n, 0);
+    statusEl.style.color = "#198754";
+    statusEl.textContent = `Imported ${total} records across ${Object.keys(result.counts || {}).length} collections. Reloading...`;
+    setTimeout(() => window.location.reload(), 1500);
+  } catch (err) {
+    statusEl.style.color = "#dc3545";
+    statusEl.textContent = "Import failed: " + String(err && err.message ? err.message : err);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function openNewRecord() {

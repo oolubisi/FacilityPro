@@ -526,7 +526,67 @@ function currentUserMeetsRole(minRole) {
 // ─────────────────────────────────────────────
 // § API LAYER
 // ─────────────────────────────────────────────
+// [FEATURE] Maps a read action name to the matching key in the
+// snapshot the desktop app pushes (see mobile-sync.js's
+// SNAPSHOT_COLLECTIONS — these names match exactly on purpose).
+// getAllData and getSettings are handled separately in the callApi
+// branch below since they need a reshaped/bundled result rather than
+// one collection returned as-is.
+const MOBILE_SNAPSHOT_READ_MAP = {
+  getApartments: "Apartments", getAssets: "Assets", getMaintenance: "Maintenance",
+  getStaff: "Staff", getVendors: "Vendors", getUtilities: "Utilities",
+  getPayments: "Payments", getMaintenanceLog: "MaintenanceLog",
+  getServiceChargeLedger: "ServiceChargeLedger", getPettyCashLedger: "PettyCash",
+  getEnergyLedger: "EnergyLedger", getInventoryItems: "InventoryItems",
+  getInventoryMovements: "InventoryMovements", getServiceChargeBudgets: "ServiceChargeBudgets",
+  getRecurringExpenseTemplates: "RecurringExpenseTemplates",
+};
+
 async function callApi(action, data = {}, options = {}) {
+  // [FEATURE] Local desktop data bridge — when running inside
+  // Electron, window.localApi is exposed by preload.js and every call
+  // goes straight to the local JSON store (db.js/local-api.js)
+  // instead of over the network to Apps Script. None of the
+  // network-specific handling below (timeouts, retries, the offline
+  // sync queue) applies here — an IPC call to a local file isn't
+  // subject to the redirect quirk or real network latency, so there's
+  // nothing for those mechanisms to protect against. Only the plain
+  // PWA (window.localApi undefined) still uses the fetch(GAS_URL,...)
+  // path beneath this.
+  if (window.localApi) {
+    try {
+      return await window.localApi.call(action, data, currentUser?.sessionToken || null);
+    } catch (err) {
+      return { status: "error", message: "Local data error: " + String(err && err.message ? err.message : err) };
+    }
+  }
+
+  // [FEATURE] Mobile read-only viewer — every read comes back out of
+  // the snapshot already loaded in memory (see bootMobileReadOnlyViewer
+  // in Login.js) instead of the network, and every write is blocked
+  // outright rather than silently doing nothing: someone filling out a
+  // form on mobile should see a clear "read-only" message, not a save
+  // button that appears to work but never actually persists anything.
+  // getMobileSnapshot itself bypasses this (it's what loads the
+  // snapshot in the first place, before this flag is ever set), and
+  // logout is allowed through as a no-op so the button doesn't error.
+  if (window.isMobileReadOnly) {
+    if (action === "logout") return { status: "success" };
+    const collectionName = MOBILE_SNAPSHOT_READ_MAP[action];
+    if (collectionName) return window.mobileSnapshot[collectionName] || [];
+    if (action === "getAllData") {
+      const s = window.mobileSnapshot;
+      return {
+        apartments: s.Apartments || [], assets: s.Assets || [], maintenance: s.Maintenance || [],
+        inventory: s.InventoryItems || [], staff: s.Staff || [], vendors: s.Vendors || [],
+        payments: s.Payments || [], utilities: s.Utilities || [], maintenanceLog: s.MaintenanceLog || [],
+        settings: s.Settings || {},
+      };
+    }
+    if (action === "getSettings") return window.mobileSnapshot.Settings || {};
+    return { status: "error", message: "This is a read-only view of data from the desktop app. Make changes there instead." };
+  }
+
   // Auth actions can't be queued for later — there's nothing meaningful
   // to "sync" about a login attempt once the caller has moved on, and
   // retrying it blind from the offline queue would silently discard

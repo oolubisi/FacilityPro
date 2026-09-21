@@ -17,6 +17,32 @@ let loginPickedUserId = null;
 window.addEventListener("DOMContentLoaded", () => {
   wireLogoutButtons();
 
+  // [SIMPLIFICATION] Running against the local desktop data store
+  // (window.localApi, set by preload.js) — no PIN/session system
+  // exists there anymore (see LOCAL_ACTOR in local-api.js), so there's
+  // nothing to log into. Goes straight into the app as the one fixed
+  // local user, skipping both the stored-session check below and the
+  // login screen entirely.
+  if (window.localApi) {
+    currentUser = { sessionToken: "local", userId: "local", name: "Admin", role: "admin" };
+    bootAuthenticatedApp();
+    return;
+  }
+
+  // [FEATURE] Mobile is now a read-only viewer of a snapshot the
+  // desktop app pushes to a small Apps Script relay (see mobile-sync.js
+  // and Code.gs's uploadMobileSnapshot/getMobileSnapshot) — not a
+  // second write-capable client of its own. No PIN, no session: the
+  // whole login system this file otherwise owns simply doesn't apply
+  // here anymore, the same way it stopped applying to desktop once
+  // that went local-only. isDesktopShell() (see below) is what
+  // distinguishes "mobile" from "desktop" here, since both shells
+  // load this exact file.
+  if (!isDesktopShell()) {
+    bootMobileReadOnlyViewer();
+    return;
+  }
+
   const stored = getStoredSession();
   if (stored && stored.sessionToken) {
     // Trust the stored session optimistically — if it's actually expired
@@ -37,6 +63,34 @@ window.addEventListener("DOMContentLoaded", () => {
 // ─────────────────────────────────────────────
 function isDesktopShell() {
   return document.body.classList.contains("desktop-shell");
+}
+
+// [FEATURE] Fetches the snapshot the desktop app last pushed and
+// enters read-only mode — see the callApi branch in Core.js that
+// window.isMobileReadOnly switches on. Order matters here: this
+// specific call must go out over the real network via the normal
+// callApiStrict path BEFORE window.isMobileReadOnly is set, since
+// setting that flag first would make callApi try to answer this very
+// request out of a snapshot that doesn't exist yet.
+async function bootMobileReadOnlyViewer() {
+  const screen = document.getElementById("login-screen");
+  if (screen) {
+    screen.hidden = false;
+    screen.innerHTML = `<div class="login-empty-state" style="padding:40px 20px; text-align:center;"><i class="fas fa-spinner fa-spin" style="font-size:32px; margin-bottom:16px; color:var(--primary);"></i><p>Loading latest data...</p></div>`;
+  }
+
+  const result = await callApiStrict("getMobileSnapshot", {});
+  if (!result || result.status !== "success" || !result.snapshot) {
+    if (screen) {
+      screen.innerHTML = `<div class="login-empty-state" style="padding:40px 20px; text-align:center; color:var(--danger);"><i class="fas fa-triangle-exclamation" style="font-size:32px; margin-bottom:16px;"></i><p style="font-weight:700;">Couldn't load data.</p><p style="font-size:13px; color:var(--muted);">${escapeHtml((result && result.message) || "Make sure the desktop app has synced at least once, then try again.")}</p><button class="action-btn" style="margin-top:16px; width:auto;" onclick="window.location.reload()">Retry</button></div>`;
+    }
+    return;
+  }
+
+  window.mobileSnapshot = result.snapshot;
+  window.isMobileReadOnly = true;
+  currentUser = { sessionToken: "mobile-readonly", userId: "mobile-viewer", name: "Mobile Viewer", role: "admin" };
+  bootAuthenticatedApp();
 }
 
 function bootAuthenticatedApp() {

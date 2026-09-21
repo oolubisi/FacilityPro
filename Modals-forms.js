@@ -269,7 +269,27 @@ async function submitModalRecord(action, data, sourceRecord, listRefreshKey) {
   return result;
 }
 
+// [FEATURE] Mobile read-only viewer — every "New X"/edit modal in the
+// app funnels through this one function regardless of which button
+// triggered it (a static "New Contribution" button, a dynamically
+// rendered list row's edit action, anything), so blocking here is the
+// single chokepoint that catches all of them at once, rather than
+// hunting down and hiding dozens of individual buttons across every
+// screen (including ones rendered dynamically inside other modals,
+// which a purely CSS-based approach would miss). Anything not in this
+// allowlist is treated as a write and blocked outright; the allowlist
+// itself only needs to name the handful of modals that are actually
+// pure viewing/printing, not data entry.
+const MOBILE_READONLY_ALLOWED_MODALS = new Set([
+  "inventorytimeline", "printinventoryreport", "scapartmentbalance", "reportgroupeditor",
+]);
+
 async function openModal(type, editData = null) {
+  if (window.isMobileReadOnly && !MOBILE_READONLY_ALLOWED_MODALS.has(type)) {
+    showToast("This is a read-only view of data from the desktop app. Make changes there instead.", "warning");
+    return;
+  }
+
   lastFocusedElement = document.activeElement;
   const body = document.getElementById("modalBody");
   const submit = document.getElementById("modalSubmit");
@@ -1519,7 +1539,7 @@ async function openModal(type, editData = null) {
       </div>
     `;
     const custodianSel = document.getElementById("it_custodian");
-    custodianSel.innerHTML = '<option value="">-- Unassigned --</option>';
+    custodianSel.innerHTML = '<option value="">-- Unassigned --</option><option value="Security">Security</option>';
     (cache.staff || []).forEach((s) => {
       if (!s) return;
       const staffName = s.name || s.Name;
@@ -1530,6 +1550,7 @@ async function openModal(type, editData = null) {
       if (isEdit && editData.custodian === staffName) o.selected = true;
       custodianSel.appendChild(o);
     });
+    if (isEdit && editData.custodian === "Security") custodianSel.value = "Security";
 
     submit.onclick = () => {
       const name = sanitizeInput(document.getElementById("it_name").value);

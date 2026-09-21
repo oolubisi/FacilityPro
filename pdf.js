@@ -227,6 +227,21 @@ async function compileAndDownloadUnifiedPDF(
     );
     const sanitizedHtml = sanitizeHtmlForServer(rawHtml);
 
+    // [FEATURE] Desktop/local mode uses the system print dialog
+    // instead of sending HTML to Apps Script for server-side PDF
+    // conversion — "Save as PDF" in that dialog covers the PDF case,
+    // and an actual printer covers physical printing, so one path now
+    // serves both instead of two separate ones. See
+    // printViaSystemDialog below for the one thing this can't
+    // preserve: attachment merging (combining linked photos/PDFs into
+    // one file), since the OS dialog has no way to merge in outside
+    // files the way the PDFLib pipeline below does.
+    if (window.localApi) {
+      loadingScreen.remove();
+      printViaSystemDialog(sanitizedHtml, filename, attachmentUrls, orientation);
+      return;
+    }
+
     const cleanHTML = `<!DOCTYPE html><html><head><meta charset="UTF-8">
       <style>
         @page { size: A4 ${orientation === "landscape" ? "landscape" : "portrait"}; margin: 12mm 10mm 12mm 10mm; }
@@ -412,6 +427,62 @@ async function compileAndDownloadUnifiedPDF(
       if (screen) screen.remove();
     }, 2500);
   }
+}
+
+// [FEATURE] Desktop/local-mode replacement for the Apps Script PDF
+// pipeline above — injects into #report-print-container (the same
+// element printSinglePaymentSystem already uses) and calls
+// window.print(), reusing the app's existing @media print CSS rather
+// than rebuilding a separate styled document from scratch. "Save as
+// PDF" in the OS dialog covers the PDF case; an actual printer covers
+// physical printing — one path for both.
+//
+// What this can't do that the old pipeline could: merge linked
+// attachments (photos, other PDFs) into the same file, since the OS
+// print dialog has no concept of combining outside files into one
+// print job. Rather than silently dropping those attachments with no
+// trace, their filenames are listed at the end of the printed
+// document so it's clear something was linked even though it isn't
+// physically included — open and print those separately if needed.
+function printViaSystemDialog(sanitizedHtml, filename, attachmentUrls, orientation) {
+  const container = document.getElementById("report-print-container");
+  if (!container) {
+    showToast("Print container not found on this page.", "error");
+    return;
+  }
+
+  const attachmentNames = (attachmentUrls || [])
+    .filter(Boolean)
+    .map((url) => decodeURIComponent(String(url).split("/").pop() || url));
+  const attachmentsNote = attachmentNames.length
+    ? `<div style="margin-top:24px; padding-top:12px; border-top:1px solid #999; font-size:11px; color:#555;">
+        <strong>Linked attachments (not included in this printout — open separately):</strong><br>
+        ${attachmentNames.map((n) => escapeHtml(n)).join("<br>")}
+      </div>`
+    : "";
+
+  container.innerHTML = sanitizedHtml + attachmentsNote;
+
+  // The app's own @media print CSS hardcodes A4 portrait — this
+  // temporary override wins for landscape reports since it's added
+  // after that stylesheet in the DOM, then removed once printing is
+  // done so it doesn't affect anything else.
+  let landscapeStyle = null;
+  if (orientation === "landscape") {
+    landscapeStyle = document.createElement("style");
+    landscapeStyle.id = "temp-print-landscape-override";
+    landscapeStyle.textContent = "@media print { @page { size: A4 landscape; } }";
+    document.head.appendChild(landscapeStyle);
+  }
+
+  const originalTitle = document.title;
+  document.title = filename;
+  document.getElementById("pdf-loading-screen")?.remove();
+  window.print();
+  setTimeout(() => {
+    document.title = originalTitle;
+    landscapeStyle?.remove();
+  }, 1000);
 }
 
 // ─────────────────────────────────────────────
