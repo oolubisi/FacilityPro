@@ -90,6 +90,13 @@ async function bootMobileReadOnlyViewer() {
   window.mobileSnapshot = result.snapshot;
   window.isMobileReadOnly = true;
   currentUser = { sessionToken: "mobile-readonly", userId: "mobile-viewer", name: "Mobile Viewer", role: "admin" };
+  // [BUG FIX] Every other path that shows #login-screen (the normal
+  // PIN-submit flow, the idle-lock screen) calls hideLoginScreen()
+  // before handing off to the rest of the app — this one didn't, so
+  // the "Loading latest data..." overlay stayed on screen forever
+  // even after the snapshot loaded successfully and the app rendered
+  // underneath it.
+  hideLoginScreen();
   bootAuthenticatedApp();
 }
 
