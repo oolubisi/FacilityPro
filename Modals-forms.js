@@ -284,9 +284,64 @@ const MOBILE_READONLY_ALLOWED_MODALS = new Set([
   "inventorytimeline", "printinventoryreport", "scapartmentbalance", "reportgroupeditor",
 ]);
 
+const MOBILE_READONLY_DETAIL_TITLES = {
+  apartment: "Apartment Details", asset: "Asset Details", maintenance: "Ticket Details",
+  staff: "Staff Details", vendor: "Vendor Details", payment: "Payment Details",
+  utility: "Utility Details", generator: "Plant Log Details",
+};
+
+// [FEATURE] Generic, record-type-agnostic detail view for the mobile
+// read-only viewer — every field on the record, label/value, no
+// inputs, no save button. Reuses the same "just list every non-empty
+// field" approach as desktop's existing multi-window snapshot feature
+// (openRecordInNewWindow), since both solve the same underlying
+// problem: showing a record's full detail without needing separate,
+// hand-built layouts for apartments vs. vendors vs. staff vs. every
+// other type this needs to cover.
+function showReadOnlyRecordDetails(type, record) {
+  const body = document.getElementById("modalBody");
+  const submit = document.getElementById("modalSubmit");
+  const title = document.getElementById("modalTitle");
+  const overlay = document.getElementById("modalOverlay");
+  if (!body || !submit || !title || !overlay) return;
+
+  lastFocusedElement = document.activeElement;
+  overlay.style.display = "flex";
+  void overlay.offsetWidth;
+  overlay.classList.add("active");
+
+  title.innerText = MOBILE_READONLY_DETAIL_TITLES[type] || "Record Details";
+  submit.style.display = "none";
+
+  const rowsHtml = Object.entries(record || {})
+    .filter(([, value]) => value !== "" && value !== null && value !== undefined)
+    .map(
+      ([key, value]) =>
+        `<div class="form-field span-3" style="display:flex; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid #eee;">
+          <span style="color:var(--muted); font-size:13px;">${escapeHtml(labelize(key))}</span>
+          <strong style="text-align:right; word-break:break-word;">${escapeHtml(String(value))}</strong>
+        </div>`,
+    )
+    .join("");
+
+  body.innerHTML = rowsHtml || `<p style="color:var(--muted);">No details available.</p>`;
+}
+
 async function openModal(type, editData = null) {
   if (window.isMobileReadOnly && !MOBILE_READONLY_ALLOWED_MODALS.has(type)) {
-    showToast("This is a read-only view of data from the desktop app. Make changes there instead.", "warning");
+    // [FEATURE] Tapping an existing apartment/vendor/staff/etc. row
+    // and tapping "New X" both used to funnel through here identically
+    // — but only one of them has anything to actually view. editData
+    // present means an existing record was tapped (openRecordRow in
+    // Records.js always passes the full record it found), so show its
+    // fields read-only instead of just refusing outright. No editData
+    // means this is a "New X" create attempt, which has nothing to
+    // view and stays blocked exactly as before.
+    if (editData) {
+      showReadOnlyRecordDetails(type, editData);
+    } else {
+      showToast("This is a read-only view of data from the desktop app. Make changes there instead.", "warning");
+    }
     return;
   }
 

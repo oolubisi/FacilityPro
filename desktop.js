@@ -1381,13 +1381,6 @@ function startOfToday() {
   return today;
 }
 
-function labelize(key) {
-  return String(key)
-    .replace(/([A-Z])/g, " $1")
-    .replace(/[_-]/g, " ")
-    .trim();
-}
-
 // § MULTI-WINDOW SUPPORT
 // Opens a small, independent read-only window with a snapshot of the
 // record's fields via the Electron bridge exposed in preload.js. This is

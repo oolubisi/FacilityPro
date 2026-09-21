@@ -65,6 +65,16 @@ const escapeHtml = (unsafe) => {
     .replace(/'/g, "&#039;");
 };
 
+// [FEATURE] Moved here from desktop.js — needed by the shared mobile
+// read-only record-detail view (Records.js) too now, not just
+// desktop's multi-window snapshot feature that originally owned it.
+function labelize(key) {
+  return String(key)
+    .replace(/([A-Z])/g, " $1")
+    .replace(/[_-]/g, " ")
+    .trim();
+}
+
 const sanitizeInput = (str) => {
   if (!str) return "";
   return String(str).trim().replace(/[<>]/g, "");
