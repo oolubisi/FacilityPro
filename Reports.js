@@ -1415,13 +1415,22 @@ async function compileReportPreview() {
         <td style="padding:8px 6px; text-align:right;">${fmt(opening)}</td>
         <td style="padding:8px 6px; text-align:right; color:#198754;">${fmtSigned(credit)}</td>
         <td style="padding:8px 6px; text-align:right; color:#dc3545;">${fmtSigned(debit)}</td>
-        <td style="padding:8px 6px; text-align:right; font-weight:700; color:#dc3545;">${fmt(closing)}</td>
+        <td style="padding:8px 6px; text-align:right; font-weight:700; ${isPercent ? "" : "color:#dc3545;"}">${fmt(closing)}</td>
       </tr>`;
     };
 
-    out += `<div style="background:#fff; border:2px solid #000; border-radius:12px; padding:16px; margin-top:12px;">
-      <h3 style="font-size:13px; font-weight:900; text-transform:uppercase; margin:0 0 12px 0; border-bottom:1px solid #ccc; padding-bottom:4px;">Period Breakdown — ${escapeHtml(monthStart.toLocaleString("en-US", { month: "short", year: "numeric" }))}${monthStart.getFullYear() === monthEnd.getFullYear() && monthStart.getMonth() === monthEnd.getMonth() ? "" : ` – ${escapeHtml(monthEnd.toLocaleString("en-US", { month: "short", year: "numeric" }))}`}</h3>
-      <table style="width:100%; border-collapse:collapse; font-size:13px;">
+    // [FEATURE] Split into two separate boxes — Occupancy/Service
+    // Charge/Petty Cash (the estate's core financial position) in one,
+    // Energy/Tools/Consumables (asset and utility tracking, a
+    // different kind of number) in a second box below it — rather
+    // than one long table mixing both kinds of rows together.
+    const periodLabel = `${escapeHtml(monthStart.toLocaleString("en-US", { month: "short", year: "numeric" }))}${monthStart.getFullYear() === monthEnd.getFullYear() && monthStart.getMonth() === monthEnd.getMonth() ? "" : ` – ${escapeHtml(monthEnd.toLocaleString("en-US", { month: "short", year: "numeric" }))}`}`;
+    // [BUG FIX] width:189mm (not 100%) — same fix already applied to
+    // the Inventory print tables earlier this session: a percentage
+    // width stretches to fill the page based on content-sized columns,
+    // which clips the left/right borders when this prints. An explicit
+    // width avoids that mismatch.
+    const breakdownTableHeader = `<table style="width:189mm; border-collapse:collapse; font-size:13px; border:1px solid #000;">
         <thead><tr style="border-bottom:2px solid #000; text-align:left;">
           <th style="padding:8px 6px;">Item</th>
           <th style="padding:8px 6px; text-align:right;">Opening Balance</th>
@@ -1429,18 +1438,11 @@ async function compileReportPreview() {
           <th style="padding:8px 6px; text-align:right;">Debit</th>
           <th style="padding:8px 6px; text-align:right;">Closing Balance</th>
         </tr></thead>
-        <tbody>
-          ${(() => {
-            const occDelta = closingOccupancyRate === null || openingOccupancyRate === null ? null : closingOccupancyRate - openingOccupancyRate;
-            return breakdownRow(
-              "Occupancy Rate",
-              openingOccupancyRate,
-              occDelta === null ? null : occDelta > 0 ? occDelta : 0,
-              occDelta === null ? null : occDelta < 0 ? Math.abs(occDelta) : 0,
-              closingOccupancyRate,
-              true,
-            );
-          })()}
+        <tbody>`;
+
+    out += `<div style="background:#fff; border:2px solid #000; border-radius:12px; padding:16px; margin-top:12px;">
+      <h3 style="font-size:13px; font-weight:900; text-transform:uppercase; margin:0 0 12px 0; border-bottom:1px solid #ccc; padding-bottom:4px;">Period Breakdown — ${periodLabel}</h3>
+      ${breakdownTableHeader}
           ${(() => {
             const activity = Array.isArray(scLedger) ? monthActivityByDirection(scLedger, "credit", paidFromPettyCash) : null;
             return breakdownRow(
@@ -1454,15 +1456,46 @@ async function compileReportPreview() {
           })()}
           ${(() => {
             const activity = Array.isArray(pettyCashLedger) ? monthActivityByDirection(pettyCashLedger, "inflow") : null;
+            // [FEATURE] The normal ledger-based debit only reflects
+            // recorded Petty Cash outflows — it has no way to see
+            // Tools/Consumables purchases, since those were never
+            // recorded as Petty Cash ledger entries in the first
+            // place (see the Opening/Closing balance adjustment
+            // above). The increase in Tools+Consumables value across
+            // this period represents exactly that much additional
+            // Petty Cash spent on inventory that the ledger itself
+            // has no record of, so it's added to the debit shown here
+            // — this is what keeps Opening + Credit - Debit = Closing
+            // holding true for the already-adjusted balances above,
+            // rather than the debit column alone under-explaining the
+            // change.
+            const openingInventoryValue =
+              openingToolsValueForPettyCash === null || openingConsumablesValueForPettyCash === null
+                ? null
+                : openingToolsValueForPettyCash + openingConsumablesValueForPettyCash;
+            const closingInventoryValue =
+              closingToolsValueForPettyCash === null || closingConsumablesValueForPettyCash === null
+                ? null
+                : closingToolsValueForPettyCash + closingConsumablesValueForPettyCash;
+            const inventorySpendThisPeriod =
+              openingInventoryValue === null || closingInventoryValue === null ? null : closingInventoryValue - openingInventoryValue;
+            const adjustedDebit =
+              !activity || inventorySpendThisPeriod === null ? null : activity.debit + inventorySpendThisPeriod;
             return breakdownRow(
               "Petty Cash",
               openingPettyCashBalance,
               activity ? activity.credit : null,
-              activity ? activity.debit : null,
+              adjustedDebit,
               pettyCashBalance,
               false,
             );
           })()}
+        </tbody>
+      </table>
+    </div>
+    <div style="background:#fff; border:2px solid #000; border-radius:12px; padding:16px; margin-top:12px;">
+      <h3 style="font-size:13px; font-weight:900; text-transform:uppercase; margin:0 0 12px 0; border-bottom:1px solid #ccc; padding-bottom:4px;">Energy &amp; Inventory — ${periodLabel}</h3>
+      ${breakdownTableHeader}
           ${(() => {
             const activity = Array.isArray(energyLedger) ? monthActivityByDirection(energyLedger, "inflow") : null;
             return breakdownRow(
