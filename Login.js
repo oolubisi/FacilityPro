@@ -97,6 +97,26 @@ async function bootMobileReadOnlyViewer() {
   // even after the snapshot loaded successfully and the app rendered
   // underneath it.
   hideLoginScreen();
+  // [BUG FIX] Team Access (Reset PIN / New User) is dead functionality
+  // once there's no login system left to manage — same fix already
+  // applied to desktop's Settings screen. Mobile's own Settings markup
+  // is static HTML (not dynamically generated like desktop's), so this
+  // hides it via JS rather than a template-literal conditional.
+  const teamAccessCard = document.getElementById("mobile-team-access-card");
+  if (teamAccessCard) teamAccessCard.style.display = "none";
+
+  // [FEATURE] The one piece of information that actually matters for
+  // a read-only viewer of a snapshot someone else pushed: how current
+  // is what I'm looking at right now. Shown persistently on the
+  // dashboard rather than as a one-time toast, since staleness is an
+  // ongoing fact about the whole session, not a one-off event.
+  const statusEl = document.getElementById("mobile-snapshot-status");
+  if (statusEl && window.mobileSnapshot && window.mobileSnapshot.generatedAt) {
+    const generated = new Date(window.mobileSnapshot.generatedAt);
+    statusEl.textContent = "Data as of " + formatDateForDisplay(window.mobileSnapshot.generatedAt) + " at " + generated.toLocaleTimeString();
+    statusEl.style.display = "block";
+  }
+
   bootAuthenticatedApp();
 }
 

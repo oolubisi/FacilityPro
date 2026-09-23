@@ -38,6 +38,27 @@ function buildSnapshot() {
 // Never throws — every failure path returns an error result instead,
 // since this can be invoked over IPC (needs a result to show) or
 // silently on app exit (needs to not crash the quit sequence).
+// [FEATURE] Records the outcome of every sync attempt — success
+// timestamp or failure reason — directly in Settings, so both the
+// desktop Settings screen and the next app launch can tell someone
+// how current (or how stale) the mobile view actually is, rather than
+// syncing being an entirely invisible background action. Automatic
+// exit-syncs in particular fail completely silently otherwise (see
+// main.js's before-quit handler, which quits regardless of the
+// result) — this is what makes that failure visible the next time the
+// app opens, instead of mobile just quietly going stale with no trace
+// of why.
+function recordSyncOutcome(result) {
+  const settings = db.getCollection('Settings');
+  if (result.status === 'success') {
+    settings.lastSyncAt = new Date().toISOString();
+    settings.lastSyncError = '';
+  } else {
+    settings.lastSyncError = result.message || 'Sync failed.';
+  }
+  db.persist();
+}
+
 async function syncMobileSnapshot() {
   const snapshot = buildSnapshot();
   let response;
@@ -48,24 +69,34 @@ async function syncMobileSnapshot() {
       body: JSON.stringify({ action: 'uploadMobileSnapshot', data: { snapshot }, token: API_TOKEN }),
     });
   } catch (err) {
-    return { status: 'error', message: 'Could not reach the cloud relay: ' + String(err && err.message ? err.message : err) };
+    const result = { status: 'error', message: 'Could not reach the cloud relay: ' + String(err && err.message ? err.message : err) };
+    recordSyncOutcome(result);
+    return result;
   }
 
   if (!response.ok) {
-    return { status: 'error', message: 'Cloud relay returned HTTP ' + response.status + '.' };
+    const result = { status: 'error', message: 'Cloud relay returned HTTP ' + response.status + '.' };
+    recordSyncOutcome(result);
+    return result;
   }
 
   let result;
   try {
     result = await response.json();
   } catch (err) {
-    return { status: 'error', message: 'Cloud relay returned an unreadable response.' };
+    const failResult = { status: 'error', message: 'Cloud relay returned an unreadable response.' };
+    recordSyncOutcome(failResult);
+    return failResult;
   }
 
   if (!result || result.status !== 'success') {
-    return { status: 'error', message: (result && result.message) || 'Snapshot upload failed.' };
+    const failResult = { status: 'error', message: (result && result.message) || 'Snapshot upload failed.' };
+    recordSyncOutcome(failResult);
+    return failResult;
   }
-  return { status: 'success', timestamp: result.timestamp };
+  const successResult = { status: 'success', timestamp: result.timestamp };
+  recordSyncOutcome(successResult);
+  return successResult;
 }
 
 module.exports = { syncMobileSnapshot };

@@ -236,7 +236,15 @@ async function compileAndDownloadUnifiedPDF(
     // preserve: attachment merging (combining linked photos/PDFs into
     // one file), since the OS dialog has no way to merge in outside
     // files the way the PDFLib pipeline below does.
-    if (window.localApi) {
+    // [BUG FIX] Also covers window.isMobileReadOnly, not just desktop's
+    // window.localApi — this used to only check for desktop, so a
+    // mobile "Download PDF"/"Print Payment" tap fell through to the
+    // old Apps Script generatePDF call below, which no longer exists
+    // now that Code.gs has been stripped down to just the mobile
+    // snapshot relay. Printing/PDF is a harmless, read-only action
+    // either way, so mobile gets the exact same system-print path as
+    // desktop rather than being blocked or hitting a dead endpoint.
+    if (window.localApi || window.isMobileReadOnly) {
       loadingScreen.remove();
       printViaSystemDialog(sanitizedHtml, filename, attachmentUrls, orientation);
       return;

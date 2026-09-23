@@ -550,6 +550,10 @@ const MOBILE_SNAPSHOT_READ_MAP = {
   getEnergyLedger: "EnergyLedger", getInventoryItems: "InventoryItems",
   getInventoryMovements: "InventoryMovements", getServiceChargeBudgets: "ServiceChargeBudgets",
   getRecurringExpenseTemplates: "RecurringExpenseTemplates",
+  // [BUG FIX] Missing entirely, same gap as local-api.js's READ_MAP —
+  // Reports.js's Service Charge report needs this for its
+  // weighted-split reconciliation.
+  getOccupancyLog: "OccupancyLog",
 };
 
 async function callApi(action, data = {}, options = {}) {
@@ -594,6 +598,24 @@ async function callApi(action, data = {}, options = {}) {
       };
     }
     if (action === "getSettings") return window.mobileSnapshot.Settings || {};
+    // [BUG FIX] Missing entirely — the Executive KPI Dashboard has
+    // called this bundled action since before mobile became a
+    // read-only snapshot viewer, but it fell through the gap between
+    // this file's per-action read map and the getAllData special case
+    // right above. Left unfixed, every card on that dashboard showed
+    // "Unavailable" on mobile even with a perfectly good snapshot
+    // loaded — the six collections it needs (see mobile-sync.js's
+    // SNAPSHOT_COLLECTIONS) are all already in the snapshot; they just
+    // weren't being bundled under the specific key names that screen
+    // expects.
+    if (action === "getKpiDashboardData") {
+      const s = window.mobileSnapshot;
+      return {
+        serviceCharge: s.ServiceChargeLedger || [], pettyCash: s.PettyCash || [],
+        energy: s.EnergyLedger || [], occupancyLog: s.OccupancyLog || [],
+        inventoryItems: s.InventoryItems || [], inventoryMovements: s.InventoryMovements || [],
+      };
+    }
     return { status: "error", message: "This is a read-only view of data from the desktop app. Make changes there instead." };
   }
 

@@ -116,6 +116,29 @@ function getAllData() {
   };
 }
 
+// [BUG FIX] Missing entirely — the Executive KPI Dashboard (Reports.js)
+// has called this bundled action since before the local-data
+// migration, but it was never ported to local-api.js at any point in
+// that process, since it wasn't part of any specific feature's
+// porting checklist (Service Charge, Petty Cash, Energy, Inventory
+// were each ported as their own sections; this bundle straddles all
+// of them and fell through the gap between them). The result: the
+// entire KPI Dashboard has been silently broken — every card showing
+// "Unavailable" — since the migration, on both desktop and mobile,
+// until this cross-check against Reports.js's actual action calls
+// caught it. Same collections as getAllData above, just bundled under
+// the specific key names that screen expects.
+function getKpiDashboardData() {
+  return {
+    serviceCharge: db.getCollection('ServiceChargeLedger'),
+    pettyCash: db.getCollection('PettyCash'),
+    energy: db.getCollection('EnergyLedger'),
+    occupancyLog: db.getCollection('OccupancyLog'),
+    inventoryItems: db.getCollection('InventoryItems'),
+    inventoryMovements: db.getCollection('InventoryMovements'),
+  };
+}
+
 // ─────────────────────────────────────────────
 // § INVENTORY — ported first as the proof-of-concept slice
 // ─────────────────────────────────────────────
@@ -182,6 +205,47 @@ function updateInventoryItem(data, actor) {
   Object.assign(existing, update);
   db.persist();
   return { status: 'success', item: existing };
+}
+
+// [BUG FIX] Missing entirely — the "Mark as On Order" / "Cancel
+// Order" modal (Modals-forms.js) calls these two actions, but neither
+// was ported when Inventory's other actions (save/update/receive/
+// issue/adjust) were. Direct field manipulation on the matching item,
+// same onOrder/onOrderQty/onOrderDate fields receiveStock already
+// knows to clear automatically once stock actually arrives.
+function markItemOnOrder(data, actor) {
+  const itemCode = String(data.itemCode || '').trim();
+  const qty = parseFloat(data.quantity);
+  if (!itemCode || !qty || qty <= 0) {
+    return { status: 'error', message: 'Item and a positive order quantity are required.' };
+  }
+  const items = db.getCollection('InventoryItems');
+  const item = findByPK(items, 'itemCode', itemCode);
+  if (!item) return { status: 'error', message: 'Item not found.' };
+
+  item.onOrder = 'Yes';
+  item.onOrderQty = qty;
+  item.onOrderDate = data.date || new Date().toISOString();
+  item.updatedAt = new Date().toISOString();
+  item.updatedBy = actor.name;
+  db.persist();
+  return { status: 'success', item };
+}
+
+function cancelOnOrder(data, actor) {
+  const itemCode = String(data.itemCode || '').trim();
+  if (!itemCode) return { status: 'error', message: 'Missing itemCode.' };
+  const items = db.getCollection('InventoryItems');
+  const item = findByPK(items, 'itemCode', itemCode);
+  if (!item) return { status: 'error', message: 'Item not found.' };
+
+  item.onOrder = 'No';
+  item.onOrderQty = '';
+  item.onOrderDate = '';
+  item.updatedAt = new Date().toISOString();
+  item.updatedBy = actor.name;
+  db.persist();
+  return { status: 'success', item };
 }
 
 function receiveStock(data, actor) {
@@ -762,6 +826,14 @@ const READ_MAP = {
   getApartments: 'Apartments', getAssets: 'Assets', getMaintenance: 'Maintenance',
   getStaff: 'Staff', getVendors: 'Vendors', getUtilities: 'Utilities',
   getPayments: 'Payments', getMaintenanceLog: 'MaintenanceLog',
+  // [BUG FIX] Missing entirely — Reports.js's Service Charge report
+  // calls this (via callApiSequential alongside getServiceChargeLedger)
+  // to determine which apartments were occupied on a given date for
+  // its weighted-split reconciliation, but it fell through the same
+  // kind of gap as getKpiDashboardData: not part of any single
+  // feature's porting checklist since it's a cross-cutting read, not
+  // its own ledger.
+  getOccupancyLog: 'OccupancyLog',
 };
 
 const SHEET_MAP = {
@@ -1127,9 +1199,12 @@ function handleAction(action, data, sessionToken) {
 
   const actor = LOCAL_ACTOR;
   if (action === 'getAllData') return getAllData();
+  if (action === 'getKpiDashboardData') return getKpiDashboardData();
   if (action === 'saveInventoryItem') return saveInventoryItem(data, actor);
   if (action === 'updateInventoryItem') return updateInventoryItem(data, actor);
   if (action === 'receiveStock') return receiveStock(data, actor);
+  if (action === 'markItemOnOrder') return markItemOnOrder(data, actor);
+  if (action === 'cancelOnOrder') return cancelOnOrder(data, actor);
   if (action === 'issueStock') return issueStock(data, actor);
   if (action === 'adjustStock') return adjustStock(data, actor);
   if (action === 'getInventoryItems') return db.getCollection('InventoryItems');

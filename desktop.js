@@ -135,6 +135,16 @@ async function initDesktop() {
   await loadDesktopSettings();
   await loadDesktopData(hadCache);
   renderDesktop();
+
+  // [FEATURE] The automatic exit-sync to the mobile relay (see
+  // mobile-sync.js/main.js's before-quit handler) fails completely
+  // silently otherwise — the app just quits either way. This is what
+  // actually surfaces that failure, the next time the app opens after
+  // it happened, rather than mobile just quietly going stale with no
+  // visible trace of why.
+  if (window.localApi && appSettings.lastSyncError) {
+    showToast("Last sync to mobile failed: " + appSettings.lastSyncError + " — try \"Sync Now\" in Settings.", "warning");
+  }
 }
 
 function installDesktopCompatibilityShims() {
@@ -208,6 +218,17 @@ function wireDesktopEvents() {
         showToast("Synced. Mobile view updated too.", "success");
       } else {
         showToast("Synced locally, but couldn't reach the mobile relay: " + ((result && result.message) || "unknown error"), "warning");
+      }
+      // The sync attempt just wrote lastSyncAt/lastSyncError directly
+      // to disk (see mobile-sync.js's recordSyncOutcome), but the
+      // renderer's own appSettings is a separate cached copy that
+      // won't reflect that on its own — re-fetch it so the Settings
+      // screen's status card (if currently open) shows the result of
+      // what just happened, not stale information from before this click.
+      const freshSettings = await callApi("getSettings", {});
+      if (freshSettings && typeof freshSettings === "object") {
+        appSettings = { ...appSettings, ...freshSettings };
+        if (desktopState.view === "settings") renderSettingsShortcuts();
       }
     }
   });
@@ -1016,6 +1037,24 @@ function renderSettingsShortcuts() {
     ${
       window.localApi
         ? `<div class="desktop-form-card">
+      <h3 style="margin:0 0 8px; font-size:15px;">Mobile Sync</h3>
+      <p style="margin:0 0 8px; font-size:12px; color:var(--muted);">Pushed automatically when you close the app, or any time via "Sync Now" in the sidebar.</p>
+      ${
+        appSettings.lastSyncError
+          ? `<p style="margin:0; font-size:13px; font-weight:700; color:#dc3545;">Last attempt failed: ${escapeHtml(appSettings.lastSyncError)}</p>`
+          : ""
+      }
+      <p style="margin:0; font-size:13px; font-weight:700;">${
+        appSettings.lastSyncAt
+          ? "Last synced: " + escapeHtml(formatDateForDisplay(appSettings.lastSyncAt)) + " at " + escapeHtml(new Date(appSettings.lastSyncAt).toLocaleTimeString())
+          : "Never synced yet."
+      }</p>
+    </div>`
+        : ""
+    }
+    ${
+      window.localApi
+        ? `<div class="desktop-form-card">
       <h3 style="margin:0 0 8px; font-size:15px;">Migrate from Cloud</h3>
       <p style="margin:0 0 12px; font-size:12px; color:var(--muted);">One-time import of your existing Apartments, ledgers, Inventory and everything else from the old cloud backend into this app's local data. Safe to run more than once if needed — it always replaces local data with the latest cloud copy rather than duplicating anything, so only do this if you're sure the cloud copy is the one you want to keep.</p>
       <button class="action-btn" id="desktop-run-migration-btn" style="width:auto; background:#6f42c1;">
@@ -1030,23 +1069,33 @@ function renderSettingsShortcuts() {
       <p style="margin:0 0 4px; font-size:12px; color:var(--muted);">Changes made offline that couldn't be applied because someone else edited the same record first.</p>
       ${getSyncConflictsHtml()}
     </div>
-    <div class="desktop-form-card">
+    ${
+      window.localApi
+        ? ""
+        : `<div class="desktop-form-card">
       <h3 style="margin:0 0 8px; font-size:15px;">Team Access</h3>
       <p style="margin:0 0 12px; font-size:12px; color:var(--muted);">Manage who can log in and what they're allowed to do. Only admins can see this.</p>
       <div id="desktop-user-list"></div>
       <button class="action-btn" id="desktop-new-user-btn" style="width:auto; margin-top:12px;">
         <i class="fas fa-user-plus"></i> New User
       </button>
-    </div>
+    </div>`
+    }
   `;
   syncSettingsInputsToUIFields();
   document
     .getElementById("desktop-save-settings")
     .addEventListener("click", commitApplicationSettingsData);
-  document
-    .getElementById("desktop-new-user-btn")
-    .addEventListener("click", () => openModal("user"));
-  renderUsersList("desktop-user-list");
+  // [BUG FIX] Team Access — login/PINs/user management — is dead
+  // functionality once running locally (LOCAL_ACTOR in local-api.js
+  // replaced the whole concept), so the card above isn't rendered at
+  // all in that case. Guard here too since this listener wiring runs
+  // either way and the button/list it targets won't exist.
+  const newUserBtn = document.getElementById("desktop-new-user-btn");
+  if (newUserBtn) {
+    newUserBtn.addEventListener("click", () => openModal("user"));
+    renderUsersList("desktop-user-list");
+  }
 
   const migrationBtn = document.getElementById("desktop-run-migration-btn");
   if (migrationBtn) migrationBtn.addEventListener("click", runCloudMigration);

@@ -585,7 +585,10 @@ function showPage(p) {
   } else if (p === "reports") initReportsEngine();
   else if (p === "settings") {
     syncSettingsInputsToUIFields();
-    renderUsersList("mobile-user-list");
+    // [BUG FIX] Team Access is hidden entirely in read-only mode (see
+    // bootMobileReadOnlyViewer in Login.js) — no reason to still spend
+    // a network call fetching a user list nobody can see.
+    if (!window.isMobileReadOnly) renderUsersList("mobile-user-list");
   } else if (p === "servicecharge") {
     refreshServiceChargeSection();
   } else if (p === "pettycash") {
