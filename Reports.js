@@ -1238,7 +1238,31 @@ async function compileReportPreview() {
     const closingOccupiedCount = occupancyLogFailed ? null : occupiedCountAsOf(monthEnd);
 
     const scBalance = Array.isArray(scLedger) ? ledgerBalanceAsOf(scLedger, monthEnd, "credit", paidFromPettyCash) : null;
-    const pettyCashBalance = Array.isArray(pettyCashLedger) ? ledgerBalanceAsOf(pettyCashLedger, monthEnd, "inflow") : null;
+    // [BUG FIX] Same fix already applied to the live Petty Cash
+    // summary and the printed Petty Cash Ledger report, now also
+    // applied here: Tools and Consumables are bought using Petty Cash,
+    // but that purchase is never recorded as a Petty Cash ledger
+    // outflow (Receive Stock/tool creation don't link to Petty Cash
+    // the way Service Charge expenses optionally do), so the raw
+    // ledger balance alone overstates what's actually left. Tools
+    // count in full (a one-time purchase, permanently converted to a
+    // physical asset); Consumables only count while still unused/in
+    // stock, since once issued their cost gets charged to Service
+    // Charge instead. inventoryValueAsOf is defined further down this
+    // function as a function declaration, so it's hoisted and callable
+    // here already, before its own textual definition.
+    const pettyCashLedgerBalance = Array.isArray(pettyCashLedger) ? ledgerBalanceAsOf(pettyCashLedger, monthEnd, "inflow") : null;
+    const closingToolsValueForPettyCash = inventoryValueAsOf("tool", monthEnd);
+    const closingConsumablesValueForPettyCash = inventoryValueAsOf("consumable", monthEnd);
+    // A null from either call means inventoryItems itself failed to
+    // load (see inventoryValueAsOf below) — not "no tools/consumables
+    // exist", which would come back as a real 0. Treating a failed
+    // fetch as a 0 deduction would silently overstate this balance
+    // instead of correctly showing it as unavailable.
+    const pettyCashBalance =
+      pettyCashLedgerBalance === null || closingToolsValueForPettyCash === null || closingConsumablesValueForPettyCash === null
+        ? null
+        : pettyCashLedgerBalance - closingToolsValueForPettyCash - closingConsumablesValueForPettyCash;
     const energyBalance = Array.isArray(energyLedger) ? ledgerBalanceAsOf(energyLedger, monthEnd, "inflow") : null;
 
     // [FEATURE] Net Position deliberately excludes Energy — it's
@@ -1266,7 +1290,7 @@ async function compileReportPreview() {
     out += `<div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:12px; margin-bottom:20px;">
       <div style="background:#e8f4fd; border:2px solid #0d6efd; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; color:#0d6efd; text-transform:uppercase;">Occupancy Rate</div><div style="font-size:28px; font-weight:900; color:${closingOccupancyRate === null ? "#999" : "inherit"};">${closingOccupancyRate === null ? "Unavailable" : closingOccupancyRate.toFixed(1) + "%"}</div><div style="font-size:12px; color:#666;">${closingOccupancyRate === null ? "Couldn't load occupancy data" : `${closingOccupiedCount} / ${totalApts} units as of ${escapeHtml(asOfLabel)}`}</div></div>
       ${balanceCard("Service Charge Pool", scBalance, "#198754")}
-      ${balanceCard("Petty Cash", pettyCashBalance, "#198754")}
+      ${balanceCard("Petty Cash (net of Tools/Consumables)", pettyCashBalance, "#198754")}
       ${balanceCard("Energy", energyBalance, "#198754")}
     </div>`;
 
@@ -1282,7 +1306,15 @@ async function compileReportPreview() {
     // rather than recalculated). A single month is just a range where
     // From and To are the same — no special-casing needed.
     const openingScBalance = Array.isArray(scLedger) ? ledgerBalanceAsOf(scLedger, dayBeforeStart, "credit", paidFromPettyCash) : null;
-    const openingPettyCashBalance = Array.isArray(pettyCashLedger) ? ledgerBalanceAsOf(pettyCashLedger, dayBeforeStart, "inflow") : null;
+    // Same Tools/Unused-Consumables deduction as pettyCashBalance
+    // above, applied as of the period's start instead of its end.
+    const openingPettyCashLedgerBalance = Array.isArray(pettyCashLedger) ? ledgerBalanceAsOf(pettyCashLedger, dayBeforeStart, "inflow") : null;
+    const openingToolsValueForPettyCash = inventoryValueAsOf("tool", dayBeforeStart);
+    const openingConsumablesValueForPettyCash = inventoryValueAsOf("consumable", dayBeforeStart);
+    const openingPettyCashBalance =
+      openingPettyCashLedgerBalance === null || openingToolsValueForPettyCash === null || openingConsumablesValueForPettyCash === null
+        ? null
+        : openingPettyCashLedgerBalance - openingToolsValueForPettyCash - openingConsumablesValueForPettyCash;
     const openingEnergyBalance = Array.isArray(energyLedger) ? ledgerBalanceAsOf(energyLedger, dayBeforeStart, "inflow") : null;
 
     // [FEATURE] Tools/Consumables value — same "reconstruct value as
@@ -1355,11 +1387,16 @@ async function compileReportPreview() {
       return { credit, debit };
     }
 
-    const openingToolsValue = Array.isArray(inventoryItems) ? inventoryValueAsOf("tool", dayBeforeStart) : null;
-    const closingToolsValue = Array.isArray(inventoryItems) ? inventoryValueAsOf("tool", monthEnd) : null;
+    // Reuses the exact same values already computed above for the
+    // Petty Cash balance deduction, rather than calling
+    // inventoryValueAsOf a second time for the same (type, date) pairs
+    // — guarantees this table always agrees with that deduction
+    // instead of the two ever silently drifting apart.
+    const openingToolsValue = openingToolsValueForPettyCash;
+    const closingToolsValue = closingToolsValueForPettyCash;
     const toolsActivity = inventoryActivityInPeriod("tool");
-    const openingConsumablesValue = Array.isArray(inventoryItems) ? inventoryValueAsOf("consumable", dayBeforeStart) : null;
-    const closingConsumablesValue = Array.isArray(inventoryItems) ? inventoryValueAsOf("consumable", monthEnd) : null;
+    const openingConsumablesValue = openingConsumablesValueForPettyCash;
+    const closingConsumablesValue = closingConsumablesValueForPettyCash;
     const consumablesActivity = inventoryActivityInPeriod("consumable");
 
     const breakdownRow = (label, opening, credit, debit, closing, isPercent) => {
