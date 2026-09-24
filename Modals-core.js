@@ -1285,59 +1285,94 @@ function populateInventoryItemDropdown(selectId, currentValue) {
     });
 }
 
+// [FEATURE] Consumables and Tools shown as two separate tables rather
+// than one combined list — they're different enough in practice (a
+// consumable has stock-status/reorder tracking that means nothing for
+// a tool, a tool has a custodian assignment that means nothing for a
+// consumable) that mixing them together, distinguished only by a
+// small "(Tool)" label next to the name, made the list harder to scan
+// than it needed to be.
 function renderInventoryItemList(container, items) {
-  const sorted = [...items].sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
-
-  if (sorted.length === 0) {
+  if (!items || items.length === 0) {
     container.innerHTML = `<p style="color:var(--muted); font-size:13px;">No items yet.</p>`;
     return;
   }
 
-  container.innerHTML = `<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:13px;">
-    <thead><tr style="border-bottom:2px solid #000; text-align:left;">
-      <th style="padding:8px 6px;">Code</th>
-      <th style="padding:8px 6px;">Item</th>
-      <th style="padding:8px 6px;">Category</th>
-      <th style="padding:8px 6px;">Assigned</th>
-      <th style="padding:8px 6px; text-align:right;">Qty</th>
-      <th style="padding:8px 6px; text-align:right;">Unit Cost</th>
-      <th style="padding:8px 6px;">Status</th>
-      <th style="padding:8px 6px;"></th>
-    </tr></thead>
-    <tbody>
-      ${sorted
-        .map((item) => {
-          const qty = Number(item.currentQty) || 0;
-          const min = Number(item.minQty) || 0;
-          const level = Number(item.reorderLevel) || 0;
-          const isTool = (item.itemType || "consumable") === "tool";
-          let stockBadge = "";
-          if (!isTool) {
-            if (qty <= 0) stockBadge = `<span style="color:#dc3545; font-weight:800; font-size:11px;">OUT OF STOCK</span>`;
-            else if (qty <= min) stockBadge = `<span style="color:#fd7e14; font-weight:800; font-size:11px;">LOW</span>`;
-            else if (level > 0 && qty <= level) stockBadge = `<span style="color:#dc3545; font-weight:800; font-size:11px;">REORDER</span>`;
-            else stockBadge = `<span style="color:#198754; font-weight:800; font-size:11px;">OK</span>`;
-          }
-          if (!isTool && item.onOrder === "Yes") {
-            stockBadge += `<br><span style="color:#856404; font-weight:800; font-size:10px;">ON ORDER</span>`;
-          }
-          // Assigned/custodian only applies to tools — a consumable
-          // is issued and consumed, not held long-term by one person.
-          const assignedLabel = isTool ? escapeHtml(item.custodian || "Unassigned") : "—";
-          return `<tr style="border-bottom:1px solid #eee; cursor:pointer;" data-modal-action="view-inventory-item-timeline" data-id="${escapeHtml(item.itemCode)}">
-            <td style="padding:6px; font-weight:800;">${escapeHtml(item.itemCode)}</td>
-            <td style="padding:6px;">${escapeHtml(item.name || "")}${isTool ? ` <span style="color:var(--muted); font-size:11px;">(Tool)</span>` : ""}</td>
-            <td style="padding:6px;">${escapeHtml(item.category || "")}</td>
-            <td style="padding:6px;">${assignedLabel}</td>
-            <td style="padding:6px; text-align:right; font-weight:700;">${isTool ? (item.currentQty || 0) : qty + " " + escapeHtml(item.unit || "")}</td>
-            <td style="padding:6px; text-align:right;">₦${formatMoney(item.unitCost || 0)}</td>
-            <td style="padding:6px;">${stockBadge}</td>
-            <td style="padding:6px; text-align:right;"><i class="fas fa-chevron-right" style="color:var(--muted);"></i></td>
-          </tr>`;
-        })
-        .join("")}
-    </tbody>
-  </table></div>`;
+  const sortByName = (a, b) => String(a.name || "").localeCompare(String(b.name || ""));
+  const consumables = items.filter((i) => (i.itemType || "consumable") !== "tool").sort(sortByName);
+  const tools = items.filter((i) => (i.itemType || "consumable") === "tool").sort(sortByName);
+
+  const consumableRow = (item) => {
+    const qty = Number(item.currentQty) || 0;
+    const min = Number(item.minQty) || 0;
+    const level = Number(item.reorderLevel) || 0;
+    let stockBadge = "";
+    if (qty <= 0) stockBadge = `<span style="color:#dc3545; font-weight:800; font-size:11px;">OUT OF STOCK</span>`;
+    else if (qty <= min) stockBadge = `<span style="color:#fd7e14; font-weight:800; font-size:11px;">LOW</span>`;
+    else if (level > 0 && qty <= level) stockBadge = `<span style="color:#dc3545; font-weight:800; font-size:11px;">REORDER</span>`;
+    else stockBadge = `<span style="color:#198754; font-weight:800; font-size:11px;">OK</span>`;
+    if (item.onOrder === "Yes") {
+      stockBadge += `<br><span style="color:#856404; font-weight:800; font-size:10px;">ON ORDER</span>`;
+    }
+    return `<tr style="border-bottom:1px solid #eee; cursor:pointer;" data-modal-action="view-inventory-item-timeline" data-id="${escapeHtml(item.itemCode)}">
+        <td style="padding:6px; font-weight:800;">${escapeHtml(item.itemCode)}</td>
+        <td style="padding:6px;">${escapeHtml(item.name || "")}</td>
+        <td style="padding:6px;">${escapeHtml(item.category || "")}</td>
+        <td style="padding:6px; text-align:right; font-weight:700;">${qty} ${escapeHtml(item.unit || "")}</td>
+        <td style="padding:6px; text-align:right;">₦${formatMoney(item.unitCost || 0)}</td>
+        <td style="padding:6px;">${stockBadge}</td>
+        <td style="padding:6px; text-align:right;"><i class="fas fa-chevron-right" style="color:var(--muted);"></i></td>
+      </tr>`;
+  };
+
+  const toolRow = (item) => {
+    const assignedLabel = escapeHtml(item.custodian || "Unassigned");
+    return `<tr style="border-bottom:1px solid #eee; cursor:pointer;" data-modal-action="view-inventory-item-timeline" data-id="${escapeHtml(item.itemCode)}">
+        <td style="padding:6px; font-weight:800;">${escapeHtml(item.itemCode)}</td>
+        <td style="padding:6px;">${escapeHtml(item.name || "")}</td>
+        <td style="padding:6px;">${escapeHtml(item.category || "")}</td>
+        <td style="padding:6px;">${assignedLabel}</td>
+        <td style="padding:6px; text-align:right; font-weight:700;">${item.currentQty || 0}</td>
+        <td style="padding:6px; text-align:right;">₦${formatMoney(item.unitCost || 0)}</td>
+        <td style="padding:6px; text-align:right;"><i class="fas fa-chevron-right" style="color:var(--muted);"></i></td>
+      </tr>`;
+  };
+
+  const consumablesSection =
+    consumables.length === 0
+      ? ""
+      : `<h4 style="font-weight:800; text-transform:uppercase; font-size:12px; color:var(--muted); margin:0 0 8px;">Consumables (${consumables.length})</h4>
+    <div style="overflow-x:auto; margin-bottom:20px;"><table style="width:100%; border-collapse:collapse; font-size:13px;">
+      <thead><tr style="border-bottom:2px solid #000; text-align:left;">
+        <th style="padding:8px 6px;">Code</th>
+        <th style="padding:8px 6px;">Item</th>
+        <th style="padding:8px 6px;">Category</th>
+        <th style="padding:8px 6px; text-align:right;">Qty</th>
+        <th style="padding:8px 6px; text-align:right;">Unit Cost</th>
+        <th style="padding:8px 6px;">Status</th>
+        <th style="padding:8px 6px;"></th>
+      </tr></thead>
+      <tbody>${consumables.map(consumableRow).join("")}</tbody>
+    </table></div>`;
+
+  const toolsSection =
+    tools.length === 0
+      ? ""
+      : `<h4 style="font-weight:800; text-transform:uppercase; font-size:12px; color:var(--muted); margin:0 0 8px;">Tools / Equipment (${tools.length})</h4>
+    <div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:13px;">
+      <thead><tr style="border-bottom:2px solid #000; text-align:left;">
+        <th style="padding:8px 6px;">Code</th>
+        <th style="padding:8px 6px;">Item</th>
+        <th style="padding:8px 6px;">Category</th>
+        <th style="padding:8px 6px;">Assigned</th>
+        <th style="padding:8px 6px; text-align:right;">Qty</th>
+        <th style="padding:8px 6px; text-align:right;">Unit Cost</th>
+        <th style="padding:8px 6px;"></th>
+      </tr></thead>
+      <tbody>${tools.map(toolRow).join("")}</tbody>
+    </table></div>`;
+
+  container.innerHTML = consumablesSection + toolsSection || `<p style="color:var(--muted); font-size:13px;">No items yet.</p>`;
 }
 
 function viewInventoryItemTimeline(itemCode) {
