@@ -427,7 +427,11 @@ function renderDesktop() {
   if (desktopState.view === "energy") return renderEnergyShortcuts();
   if (desktopState.view === "inventory") return renderInventoryShortcuts();
 
-  const records = sortRecords(desktopState.view, filterRecords(cache[meta.key] || []));
+  // [FEATURE] Archived assets/staff/vendors live only in the Archive
+  // view — they no longer appear in (or count toward) these live lists.
+  const archivableType = { assets: "asset", staff: "staff", vendors: "vendor" }[desktopState.view];
+  const liveSource = (cache[meta.key] || []).filter((item) => !archivableType || !isRecordArchived(archivableType, item));
+  const records = sortRecords(desktopState.view, filterRecords(liveSource));
   desktopState.lastRecords = records;
   document.getElementById("record-count").textContent = `${records.length} ${records.length === 1 ? "record" : "records"}`;
   const sectionedConfig = sectionedViewConfig[desktopState.view];
@@ -477,7 +481,7 @@ function renderOverdueDigest() {
   if (!banner) return;
 
   const dueAssets = (cache.assets || []).filter(
-    (a) => a && (String(a.status || a.Status || "") === "Faulty" || isMaintenanceDueSoon(a)),
+    (a) => a && !isRecordArchived("asset", a) && (String(a.status || a.Status || "") === "Faulty" || isMaintenanceDueSoon(a)),
   ).length;
   const openTickets = (cache.tickets || []).filter(
     (t) => t && String(t.status || t.Status || "") !== "Resolved",
@@ -543,7 +547,6 @@ const sectionedViewConfig = {
   assets: {
     classify: (item) => {
       const s = String(item.status || item.Status || "");
-      if (s === "Archived") return "archived";
       if (s === "Faulty" || s === "Under Repair") return "faulty";
       if (isMaintenanceDueSoon(item)) return "duesoon";
       return "operational";
@@ -552,7 +555,6 @@ const sectionedViewConfig = {
       { key: "faulty", label: "Faulty" },
       { key: "duesoon", label: "Maintenance Due (7 Days)" },
       { key: "operational", label: "Operational" },
-      { key: "archived", label: "Archived" },
     ],
   },
   tickets: {
@@ -750,7 +752,7 @@ function updateMetrics() {
     (a) => a && String(a.type || a.Type || "").toLowerCase() !== "services",
   );
   setText("metric-apartments", activeCount(realApartments));
-  setText("metric-assets", activeCount(cache.assets));
+  setText("metric-assets", activeCount((cache.assets || []).filter((a) => !isRecordArchived("asset", a))));
   setText(
     "metric-tickets",
     (cache.tickets || []).filter((item) => !isClosedStatus(item.status || item.Status)).length,

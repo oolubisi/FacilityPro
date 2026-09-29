@@ -134,6 +134,9 @@ function handleRecordListClick(event) {
     case "open-record":
       openRecordRow(actionEl.dataset.recordType, id);
       break;
+    case "delete-archived-record":
+      confirmDeleteArchivedRecord(actionEl.dataset.recordType, id);
+      break;
     case "toggle-payment-request":
       togglePaymentRequestVisibility(id, actionEl);
       break;
@@ -262,10 +265,13 @@ function refreshData(p) {
       setGlobalLoading(true, "Loading archive...");
     }
 
-    Promise.all([
-      callApi("getAssets", {}),
-      callApi("getStaff", {}),
-      callApi("getVendors", {}),
+    // [BUG FIX] Sequential, not Promise.all — see callApiSequential in
+    // Core.js for why firing these simultaneously risked a 404 that
+    // never reaches Code.gs at all.
+    callApiSequential([
+      ["getAssets", {}],
+      ["getStaff", {}],
+      ["getVendors", {}],
     ])
       .then(([assets, staff, vendors]) => {
         if (Array.isArray(assets)) cache.assets = assets;
@@ -360,6 +366,13 @@ function refreshData(p) {
     if (p === "payments") {
       cache.payments = displayData;
       renderTotalBalance();
+    }
+    // Restoring a record (or otherwise changing its archived state) from
+    // the Archive view saves through here, so keep that list in step
+    // rather than leaving a card for something that's no longer archived.
+    if (p === "assets" || p === "staff" || p === "vendors") {
+      const archivedListEl = document.getElementById("archived-list");
+      if (archivedListEl) renderArchiveBinDashboardView(archivedListEl);
     }
 
     // Apply local filters
@@ -591,38 +604,86 @@ function renderListCard(p, item, isMaintPage) {
   return `<div class="card"><div style="font-size:16px; font-weight:700;">Unit ${unitId}</div></div>`;
 }
 
+// [FEATURE] Archive cards open the normal edit form on click (so an
+// archived record can be un-archived by flipping its Archive State/
+// status back — archived records no longer appear in any live list, so
+// this is the only way back) and carry their own Delete button. Delete
+// is hidden in the read-only mobile viewer; the server still refuses
+// unless the record is archived AND nothing else is connected to it.
 function renderArchiveBinDashboardView(targetContainerElement) {
   if (!targetContainerElement) return;
   const selectedFilter =
     document.getElementById("archive-segment-filter")?.value || "ALL";
+
+  const archiveCardHtml = (typeKey, id, borderColor, headline, detail) => {
+    const safeId = escapeHtml(String(id || ""));
+    const deleteButton = window.isMobileReadOnly
+      ? ""
+      : `<br><button class="action-btn" style="width:auto; background:var(--danger); margin-top:8px; padding:6px 14px; font-size:12px;" data-action="delete-archived-record" data-record-type="${typeKey}" data-id="${safeId}"><i class="fas fa-trash"></i> Delete</button>`;
+    return `<div class="card" style="border-left:5px solid ${borderColor}; cursor:pointer;" data-action="open-record" data-record-type="${typeKey}" data-id="${safeId}"><strong>${headline}</strong><br><small>${detail}</small>${deleteButton}</div>`;
+  };
+
   let html = "";
   if (selectedFilter === "ALL" || selectedFilter === "assets") {
     (cache.assets || [])
-      .filter(
-        (a) =>
-          a &&
-          (String(a.status || a.Status || "") === "Archived" ||
-            String(a.archived || a.Archived || "") === "Yes"),
-      )
+      .filter((a) => isRecordArchived("asset", a))
       .forEach((a) => {
-        html += `<div class="card" style="border-left:5px solid var(--danger)"><strong>[ASSET] ${escapeHtml(a.type || "Asset")}</strong><br><small>Tag: ${escapeHtml(a.tag || a.Tag)} | Unit ${escapeHtml(getUnitNumber(a))}</small></div>`;
+        html += archiveCardHtml(
+          "asset",
+          a.tag || a.Tag,
+          "var(--danger)",
+          `[ASSET] ${escapeHtml(a.type || "Asset")}`,
+          `Tag: ${escapeHtml(a.tag || a.Tag)} | Unit ${escapeHtml(getUnitNumber(a))}`,
+        );
       });
   }
   if (selectedFilter === "ALL" || selectedFilter === "staff") {
     (cache.staff || [])
-      .filter((s) => s && String(s.archived || s.Archived || "") === "Yes")
+      .filter((s) => isRecordArchived("staff", s))
       .forEach((s) => {
-        html += `<div class="card" style="border-left:5px solid var(--primary)"><strong>[STAFF] ${escapeHtml(s.name || s.Name || "")}</strong><br><small>Role: ${escapeHtml(s.role || s.Role)} | ID: ${escapeHtml(s.rowId || s.RowId)}</small></div>`;
+        html += archiveCardHtml(
+          "staff",
+          s.rowId || s.RowId,
+          "var(--primary)",
+          `[STAFF] ${escapeHtml(s.name || s.Name || "")}`,
+          `Role: ${escapeHtml(s.role || s.Role)} | ID: ${escapeHtml(s.rowId || s.RowId)}`,
+        );
       });
   }
   if (selectedFilter === "ALL" || selectedFilter === "vendors") {
     (cache.vendors || [])
-      .filter((v) => v && String(v.archived || v.Archived || "") === "Yes")
+      .filter((v) => isRecordArchived("vendor", v))
       .forEach((v) => {
-        html += `<div class="card" style="border-left:5px solid var(--success)"><strong>[VENDOR] ${escapeHtml(v.company || v.Company || "")}</strong><br><small>Trade: ${escapeHtml(v.trade || v.Trade)}</small></div>`;
+        html += archiveCardHtml(
+          "vendor",
+          v.rowId || v.RowId,
+          "var(--success)",
+          `[VENDOR] ${escapeHtml(v.company || v.Company || "")}`,
+          `Trade: ${escapeHtml(v.trade || v.Trade)}`,
+        );
       });
   }
   targetContainerElement.innerHTML =
     html ||
     `<p style="text-align:center; padding:30px; font-weight:700; color:var(--muted)">No archived items match this selection.</p>`;
+}
+
+async function confirmDeleteArchivedRecord(type, id) {
+  const labels = { asset: "asset", staff: "staff member", vendor: "vendor" };
+  const cacheKeys = { asset: "assets", staff: "staff", vendor: "vendors" };
+  if (!labels[type] || !id) return;
+  if (!window.confirm(`Permanently delete this ${labels[type]} (${id})? This can't be undone.`)) return;
+
+  const result = await callApi("deleteArchivedRecord", { type, id });
+  if (!result || result.status !== "success") {
+    showToast((result && result.message) || "Couldn't delete this record.", "error");
+    return;
+  }
+
+  const pkOf = (item) => (type === "asset" ? item.tag || item.Tag : item.rowId || item.RowId);
+  const key = cacheKeys[type];
+  cache[key] = (cache[key] || []).filter((item) => !item || String(pkOf(item)) !== String(id));
+  showToast("Deleted.", "success");
+  const listEl = document.getElementById("archived-list");
+  if (listEl) renderArchiveBinDashboardView(listEl);
 }

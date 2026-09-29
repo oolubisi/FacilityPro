@@ -847,6 +847,95 @@ const SHEET_MAP = {
   saveMaintenanceLog: 'MaintenanceLog', updateMaintenanceLog: 'MaintenanceLog',
 };
 
+// ─────────────────────────────────────────────
+// § DELETE ARCHIVED RECORDS (assets / staff / vendors)
+//
+// A record can only be deleted once it's archived AND nothing else in
+// the system still points at it. There are no foreign keys here —
+// staff and vendors are referenced purely by NAME (a payment's party,
+// a petty cash entry's payee, a tool's custodian), and an asset by its
+// tag in maintenance-log entries — so "connected" means one of those
+// name/tag matches (case-insensitive, trimmed). That errs on the side
+// of refusing: a false "still connected" just leaves something in the
+// Archive, whereas a false "safe to delete" would silently orphan
+// history.
+// ─────────────────────────────────────────────
+const ARCHIVABLE_TYPES = {
+  asset: { collection: 'Assets', pk: 'tag', label: 'asset' },
+  staff: { collection: 'Staff', pk: 'rowId', label: 'staff member' },
+  vendor: { collection: 'Vendors', pk: 'rowId', label: 'vendor' },
+};
+
+function normalizeForMatch(value) {
+  return String(value == null ? '' : value).trim().toLowerCase();
+}
+
+function isRecordArchived(collection, record) {
+  const status = normalizeForMatch(record.status || record.Status);
+  const archived = normalizeForMatch(record.archived || record.Archived);
+  if (collection === 'Assets') return status === 'archived' || archived === 'yes';
+  return archived === 'yes';
+}
+
+// Returns a list of human-readable descriptions of what still points at
+// this record, e.g. ["2 payment records", "1 petty cash entry"] — empty
+// means nothing does and it's safe to delete.
+function findConnectedRecords(type, record) {
+  const found = [];
+  const add = (n, singular, plural) => {
+    if (n > 0) found.push(n + ' ' + (n === 1 ? singular : plural));
+  };
+  const matching = (collectionName, field, needle) =>
+    db.getCollection(collectionName).filter((r) => r && normalizeForMatch(r[field]) === needle).length;
+
+  if (type === 'asset') {
+    const tag = normalizeForMatch(record.tag || record.Tag);
+    if (tag) add(matching('MaintenanceLog', 'assetTag', tag), 'maintenance log entry', 'maintenance log entries');
+  } else if (type === 'staff') {
+    const name = normalizeForMatch(record.name || record.Name);
+    if (name) {
+      add(matching('Payments', 'party', name), 'payment record', 'payment records');
+      add(matching('PettyCash', 'apt', name), 'petty cash entry', 'petty cash entries');
+      add(matching('InventoryItems', 'custodian', name), 'inventory item assigned to them', 'inventory items assigned to them');
+      add(matching('InventoryMovements', 'recipient', name), 'stock movement record', 'stock movement records');
+    }
+  } else if (type === 'vendor') {
+    const company = normalizeForMatch(record.company || record.Company);
+    if (company) {
+      add(matching('Payments', 'party', company), 'payment record', 'payment records');
+      add(matching('PettyCash', 'apt', company), 'petty cash entry', 'petty cash entries');
+      add(matching('InventoryItems', 'preferredSupplier', company), 'inventory item listing them as supplier', 'inventory items listing them as supplier');
+    }
+  }
+  return found;
+}
+
+function deleteArchivedRecord(data) {
+  const cfg = ARCHIVABLE_TYPES[String((data && data.type) || '')];
+  const id = String((data && data.id) || '').trim();
+  if (!cfg || !id) return { status: 'error', message: 'Missing record type or id.' };
+
+  const rows = db.getCollection(cfg.collection);
+  const record = findByPK(rows, cfg.pk, id);
+  if (!record) return { status: 'error', message: 'Record not found.' };
+
+  if (!isRecordArchived(cfg.collection, record)) {
+    return { status: 'error', message: 'Only archived records can be deleted.' };
+  }
+
+  const connections = findConnectedRecords(data.type, record);
+  if (connections.length > 0) {
+    return {
+      status: 'error',
+      message: "Can't delete this " + cfg.label + " — it's still connected to " + connections.join(', ') + '. It stays in the Archive.',
+    };
+  }
+
+  rows.splice(rows.indexOf(record), 1);
+  db.persist();
+  return { status: 'success' };
+}
+
 const PRIMARY_KEY_MAP = {
   Apartments: 'apt', Assets: 'tag', Maintenance: 'ticketId', Staff: 'rowId',
   Vendors: 'rowId', Payments: 'paymentId', Utilities: 'rowId', MaintenanceLog: 'logId',
@@ -1225,6 +1314,7 @@ function handleAction(action, data, sessionToken) {
   if (action === 'logEnergyTransaction') return logEnergyTransaction(data, actor);
   if (action === 'updateEnergyEntry') return updateEnergyEntry(data, actor);
   if (action === 'deleteEnergyEntry') return deleteEnergyEntry(data, actor);
+  if (action === 'deleteArchivedRecord') return deleteArchivedRecord(data);
 
   if (action === 'generateId') return generateId(data);
   if (action === 'getSettings') return getSettings();

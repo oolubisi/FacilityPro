@@ -130,6 +130,21 @@ function formatMoney(amount) {
   });
 }
 
+// [FEATURE] The one definition of "is this record archived" for the
+// three archivable record types, so every live list/dropdown that must
+// hide archived records asks the same question the Archive view and the
+// server (isRecordArchived in local-api.js) do. Assets can be archived
+// either by status or by the archived flag; staff and vendors only by
+// the flag.
+function isRecordArchived(type, item) {
+  if (!item) return false;
+  const archivedFlag = String(item.archived || item.Archived || "").toLowerCase() === "yes";
+  if (type === "asset") {
+    return archivedFlag || String(item.status || item.Status || "").toLowerCase() === "archived";
+  }
+  return archivedFlag;
+}
+
 // [FEATURE] Live currency mask for text inputs — treats the last two
 // typed digits as cents as you go, so the field always reads as a
 // proper amount (e.g. typing "150000" progressively shows "1.50",

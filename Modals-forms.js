@@ -1334,9 +1334,11 @@ async function openModal(type, editData = null) {
     });
     let outflowPartyOpts = "";
     (cache.vendors || []).forEach((v) => {
+      if (isRecordArchived("vendor", v)) return;
       if (v?.company) outflowPartyOpts += `<option value="${escapeHtml(v.company)}">`;
     });
     (cache.staff || []).forEach((s) => {
+      if (isRecordArchived("staff", s)) return;
       const sName = s?.name || s?.Name;
       if (sName) outflowPartyOpts += `<option value="${escapeHtml(sName)}">`;
     });
@@ -1632,6 +1634,10 @@ async function openModal(type, editData = null) {
       if (!s) return;
       const staffName = s.name || s.Name;
       if (!staffName) return;
+      // Archived staff can't be newly assigned a tool — but when editing
+      // a tool that's ALREADY assigned to someone since archived, keep
+      // them listed so the form doesn't silently blank out the custodian.
+      if (isRecordArchived("staff", s) && !(isEdit && editData.custodian === staffName)) return;
       const o = document.createElement("option");
       o.value = staffName;
       o.textContent = staffName;
@@ -1685,7 +1691,7 @@ async function openModal(type, editData = null) {
     title.innerText = "Receive Stock";
     body.innerHTML = `
       <div class="form-field span-3"><label ${lbl}>Item</label><select id="rs_item" ${ls}></select></div>
-      <div class="form-field"><label ${lbl}>Quantity</label><input id="rs_qty" type="number" min="0" step="0.01" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Quantity</label><input id="rs_qty" type="number" min="0" step="1" ${ls}></div>
       <div class="form-field"><label ${lbl}>Unit Cost (₦)</label><input id="rs_cost" type="number" min="0" step="0.01" ${ls}></div>
       <div class="form-field"><label ${lbl}>Date</label><input id="rs_date" type="date" value="${getLocalDateString()}" ${ls}></div>
       <div class="form-field"><label ${lbl}>Delivery Note</label><input id="rs_delivery" ${ls}></div>
@@ -1738,7 +1744,7 @@ async function openModal(type, editData = null) {
         <small style="font-weight:700; color:#4f46e5;"><i class="fas fa-diagram-project"></i> This item's cost is automatically moved into Service Charge — debited to the chosen apartment, or split by weight across occupied units if issued to Shared.</small>
       </div>
       <div class="form-field span-3"><label ${lbl}>Item</label><select id="is_item" ${ls}></select></div>
-      <div class="form-field"><label ${lbl}>Quantity</label><input id="is_qty" type="number" min="0" step="0.01" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Quantity</label><input id="is_qty" type="number" min="0" step="1" ${ls}></div>
       <div class="form-field"><label ${lbl}>Apartment</label><select id="is_apt" ${ls}></select></div>
       <div class="form-field"><label ${lbl}>Date</label><input id="is_date" type="date" value="${getLocalDateString()}" ${ls}></div>
       <div class="form-field"><label ${lbl}>Department</label><input id="is_department" placeholder="e.g. Maintenance" ${ls}></div>

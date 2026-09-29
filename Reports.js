@@ -1579,6 +1579,7 @@ function buildDataQualityIssues() {
     if (!a.type && !a.Type) add("Apartments", unit, "Missing unit type");
   });
   (cache.assets || []).forEach((a) => {
+    if (isRecordArchived("asset", a)) return;
     const tag = a.tag || a.Tag;
     if (!tag) add("Assets", getUnitNumber(a), "Missing asset tag", "High");
     if (!getUnitNumber(a)) add("Assets", tag, "Missing linked unit/service area");
