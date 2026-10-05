@@ -1176,15 +1176,14 @@ async function compileReportPreview() {
     // actual figures anyway, since nothing is dated in the future.
     // excludeRow is optional — when provided, matching rows are
     // skipped entirely (neither credited nor debited). Used for the
-    // Service Charge pool specifically: a "Paid from Petty Cash"
-    // expense already left the pool once, at the moment it was
-    // transferred into Petty Cash via a Topup — debiting the pool
-    // again here when it's actually spent would double-count that
-    // same outflow. This only affects the pool's own aggregate
-    // balance; per-apartment balances intentionally still include
-    // these rows (see computeServiceChargeBalancesAsOf in
-    // Modals-core.js) since the apartment was genuinely still charged
-    // for the expense, regardless of which till physically paid it.
+    // Service Charge pool here: the pool is the cash the estate still
+    // holds OUTSIDE Petty Cash, so a transfer into Petty Cash (a Topup)
+    // is deducted from it, and an expense later paid FROM Petty Cash is
+    // left out — that money already left the pool when it was
+    // transferred, and deducting it again would count it twice. (This
+    // deliberately differs from the live Service Charge screen, which
+    // treats a topup as a pure transfer and so still counts cash held
+    // in Petty Cash as part of the pool.)
     function ledgerBalanceAsOf(ledger, asOfDate, positiveDirection, excludeRow) {
       const cutoff = asOfDate ? new Date(asOfDate).getTime() : null;
       let balance = 0;
@@ -1238,31 +1237,11 @@ async function compileReportPreview() {
     const closingOccupiedCount = occupancyLogFailed ? null : occupiedCountAsOf(monthEnd);
 
     const scBalance = Array.isArray(scLedger) ? ledgerBalanceAsOf(scLedger, monthEnd, "credit", paidFromPettyCash) : null;
-    // [BUG FIX] Same fix already applied to the live Petty Cash
-    // summary and the printed Petty Cash Ledger report, now also
-    // applied here: Tools and Consumables are bought using Petty Cash,
-    // but that purchase is never recorded as a Petty Cash ledger
-    // outflow (Receive Stock/tool creation don't link to Petty Cash
-    // the way Service Charge expenses optionally do), so the raw
-    // ledger balance alone overstates what's actually left. Tools
-    // count in full (a one-time purchase, permanently converted to a
-    // physical asset); Consumables only count while still unused/in
-    // stock, since once issued their cost gets charged to Service
-    // Charge instead. inventoryValueAsOf is defined further down this
-    // function as a function declaration, so it's hoisted and callable
-    // here already, before its own textual definition.
-    const pettyCashLedgerBalance = Array.isArray(pettyCashLedger) ? ledgerBalanceAsOf(pettyCashLedger, monthEnd, "inflow") : null;
-    const closingToolsValueForPettyCash = inventoryValueAsOf("tool", monthEnd);
-    const closingConsumablesValueForPettyCash = inventoryValueAsOf("consumable", monthEnd);
-    // A null from either call means inventoryItems itself failed to
-    // load (see inventoryValueAsOf below) — not "no tools/consumables
-    // exist", which would come back as a real 0. Treating a failed
-    // fetch as a 0 deduction would silently overstate this balance
-    // instead of correctly showing it as unavailable.
-    const pettyCashBalance =
-      pettyCashLedgerBalance === null || closingToolsValueForPettyCash === null || closingConsumablesValueForPettyCash === null
-        ? null
-        : pettyCashLedgerBalance - closingToolsValueForPettyCash - closingConsumablesValueForPettyCash;
+    // Petty Cash balance = the ledger's own total. Stock and equipment
+    // bought with Petty Cash are real ledger outflows (ticked "paid from
+    // Petty Cash"), so nothing is estimated or subtracted on top, and it
+    // always agrees with the Petty Cash ledger and its printed report.
+    const pettyCashBalance = Array.isArray(pettyCashLedger) ? ledgerBalanceAsOf(pettyCashLedger, monthEnd, "inflow") : null;
     const energyBalance = Array.isArray(energyLedger) ? ledgerBalanceAsOf(energyLedger, monthEnd, "inflow") : null;
 
     // [FEATURE] Net Position deliberately excludes Energy — it's
@@ -1289,13 +1268,13 @@ async function compileReportPreview() {
 
     out += `<div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:12px; margin-bottom:20px;">
       <div style="background:#e8f4fd; border:2px solid #0d6efd; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; color:#0d6efd; text-transform:uppercase;">Occupancy Rate</div><div style="font-size:28px; font-weight:900; color:${closingOccupancyRate === null ? "#999" : "inherit"};">${closingOccupancyRate === null ? "Unavailable" : closingOccupancyRate.toFixed(1) + "%"}</div><div style="font-size:12px; color:#666;">${closingOccupancyRate === null ? "Couldn't load occupancy data" : `${closingOccupiedCount} / ${totalApts} units as of ${escapeHtml(asOfLabel)}`}</div></div>
-      ${balanceCard("Service Charge Pool", scBalance, "#198754")}
-      ${balanceCard("Petty Cash (net of Tools/Consumables)", pettyCashBalance, "#198754")}
+      ${balanceCard("Service Charge Pool (less transfers to Petty Cash)", scBalance, "#198754")}
+      ${balanceCard("Petty Cash", pettyCashBalance, "#198754")}
       ${balanceCard("Energy", energyBalance, "#198754")}
     </div>`;
 
     out += `<div style="display:grid; grid-template-columns:1fr; gap:12px; margin-bottom:20px;">
-      <div style="background:#e8f5e9; border:2px solid #198754; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; color:#198754; text-transform:uppercase;">Net Position as of ${escapeHtml(asOfLabel)} (Service Charge + Petty Cash)</div><div style="font-size:24px; font-weight:900; color:${netPosition === null ? "#999" : netPosition >= 0 ? "#198754" : "#dc3545"};">${netPosition === null ? "Unavailable" : `${netPosition >= 0 ? "" : "-"}N${formatMoney(Math.abs(netPosition))}`}</div></div>
+      <div style="background:#e8f5e9; border:2px solid #198754; border-radius:12px; padding:14px; text-align:center; page-break-inside:avoid;"><div style="font-size:11px; font-weight:800; color:#198754; text-transform:uppercase;">Net Position as of ${escapeHtml(asOfLabel)} (Service Charge Pool + Unspent Petty Cash)</div><div style="font-size:24px; font-weight:900; color:${netPosition === null ? "#999" : netPosition >= 0 ? "#198754" : "#dc3545"};">${netPosition === null ? "Unavailable" : `${netPosition >= 0 ? "" : "-"}N${formatMoney(Math.abs(netPosition))}`}</div></div>
     </div>`;
 
     // [FEATURE] Period breakdown — Opening (balance/rate at the start
@@ -1306,15 +1285,7 @@ async function compileReportPreview() {
     // rather than recalculated). A single month is just a range where
     // From and To are the same — no special-casing needed.
     const openingScBalance = Array.isArray(scLedger) ? ledgerBalanceAsOf(scLedger, dayBeforeStart, "credit", paidFromPettyCash) : null;
-    // Same Tools/Unused-Consumables deduction as pettyCashBalance
-    // above, applied as of the period's start instead of its end.
-    const openingPettyCashLedgerBalance = Array.isArray(pettyCashLedger) ? ledgerBalanceAsOf(pettyCashLedger, dayBeforeStart, "inflow") : null;
-    const openingToolsValueForPettyCash = inventoryValueAsOf("tool", dayBeforeStart);
-    const openingConsumablesValueForPettyCash = inventoryValueAsOf("consumable", dayBeforeStart);
-    const openingPettyCashBalance =
-      openingPettyCashLedgerBalance === null || openingToolsValueForPettyCash === null || openingConsumablesValueForPettyCash === null
-        ? null
-        : openingPettyCashLedgerBalance - openingToolsValueForPettyCash - openingConsumablesValueForPettyCash;
+    const openingPettyCashBalance = Array.isArray(pettyCashLedger) ? ledgerBalanceAsOf(pettyCashLedger, dayBeforeStart, "inflow") : null;
     const openingEnergyBalance = Array.isArray(energyLedger) ? ledgerBalanceAsOf(energyLedger, dayBeforeStart, "inflow") : null;
 
     // [FEATURE] Tools/Consumables value — same "reconstruct value as
@@ -1387,16 +1358,14 @@ async function compileReportPreview() {
       return { credit, debit };
     }
 
-    // Reuses the exact same values already computed above for the
-    // Petty Cash balance deduction, rather than calling
-    // inventoryValueAsOf a second time for the same (type, date) pairs
-    // — guarantees this table always agrees with that deduction
-    // instead of the two ever silently drifting apart.
-    const openingToolsValue = openingToolsValueForPettyCash;
-    const closingToolsValue = closingToolsValueForPettyCash;
+    // Asset values (what the estate holds in stock and equipment) — a
+    // different question from what was spent from Petty Cash, which is
+    // answered by the Petty Cash row above from the ledger itself.
+    const openingToolsValue = inventoryValueAsOf("tool", dayBeforeStart);
+    const closingToolsValue = inventoryValueAsOf("tool", monthEnd);
     const toolsActivity = inventoryActivityInPeriod("tool");
-    const openingConsumablesValue = openingConsumablesValueForPettyCash;
-    const closingConsumablesValue = closingConsumablesValueForPettyCash;
+    const openingConsumablesValue = inventoryValueAsOf("consumable", dayBeforeStart);
+    const closingConsumablesValue = inventoryValueAsOf("consumable", monthEnd);
     const consumablesActivity = inventoryActivityInPeriod("consumable");
 
     const breakdownRow = (label, opening, credit, debit, closing, isPercent) => {
@@ -1410,12 +1379,17 @@ async function compileReportPreview() {
         if (isPercent) return `${v > 0 ? "+" : ""}${v.toFixed(1)}%`;
         return v > 0 ? `N${formatMoney(v)}` : "—";
       };
+      // Credits and non-negative closing balances print in plain black;
+      // only a negative closing balance is flagged red, and an
+      // unavailable one grey — so red always means "this is overdrawn",
+      // not just "this is a closing balance".
+      const closingColor = isPercent ? "" : closing === null ? "color:#999;" : closing < 0 ? "color:#dc3545;" : "";
       return `<tr style="border-bottom:1px solid #eee;">
         <td style="padding:8px 6px; font-weight:700;">${escapeHtml(label)}</td>
         <td style="padding:8px 6px; text-align:right;">${fmt(opening)}</td>
-        <td style="padding:8px 6px; text-align:right; color:#198754;">${fmtSigned(credit)}</td>
+        <td style="padding:8px 6px; text-align:right;">${fmtSigned(credit)}</td>
         <td style="padding:8px 6px; text-align:right; color:#dc3545;">${fmtSigned(debit)}</td>
-        <td style="padding:8px 6px; text-align:right; font-weight:700; ${isPercent ? "" : "color:#dc3545;"}">${fmt(closing)}</td>
+        <td style="padding:8px 6px; text-align:right; font-weight:700; ${closingColor}">${fmt(closing)}</td>
       </tr>`;
     };
 
@@ -1456,36 +1430,11 @@ async function compileReportPreview() {
           })()}
           ${(() => {
             const activity = Array.isArray(pettyCashLedger) ? monthActivityByDirection(pettyCashLedger, "inflow") : null;
-            // [FEATURE] The normal ledger-based debit only reflects
-            // recorded Petty Cash outflows — it has no way to see
-            // Tools/Consumables purchases, since those were never
-            // recorded as Petty Cash ledger entries in the first
-            // place (see the Opening/Closing balance adjustment
-            // above). The increase in Tools+Consumables value across
-            // this period represents exactly that much additional
-            // Petty Cash spent on inventory that the ledger itself
-            // has no record of, so it's added to the debit shown here
-            // — this is what keeps Opening + Credit - Debit = Closing
-            // holding true for the already-adjusted balances above,
-            // rather than the debit column alone under-explaining the
-            // change.
-            const openingInventoryValue =
-              openingToolsValueForPettyCash === null || openingConsumablesValueForPettyCash === null
-                ? null
-                : openingToolsValueForPettyCash + openingConsumablesValueForPettyCash;
-            const closingInventoryValue =
-              closingToolsValueForPettyCash === null || closingConsumablesValueForPettyCash === null
-                ? null
-                : closingToolsValueForPettyCash + closingConsumablesValueForPettyCash;
-            const inventorySpendThisPeriod =
-              openingInventoryValue === null || closingInventoryValue === null ? null : closingInventoryValue - openingInventoryValue;
-            const adjustedDebit =
-              !activity || inventorySpendThisPeriod === null ? null : activity.debit + inventorySpendThisPeriod;
             return breakdownRow(
               "Petty Cash",
               openingPettyCashBalance,
               activity ? activity.credit : null,
-              adjustedDebit,
+              activity ? activity.debit : null,
               pettyCashBalance,
               false,
             );
@@ -1925,14 +1874,13 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
   endDate.setHours(23, 59, 59, 999);
   const dayBeforeStart = new Date(startDate.getTime() - 1);
 
-  // Opening/closing pooled balance = sum across every apartment's own
-  // balance at that instant — same function the live ledger summary
-  // widget uses (Modals-core.js), so these numbers always agree with
-  // what a manager sees day-to-day in the Service Charge section.
-  const openingBalances = computeServiceChargeBalancesAsOf(ledger, dayBeforeStart);
-  const closingBalances = computeServiceChargeBalancesAsOf(ledger, endDate);
-  const openingTotal = Object.values(openingBalances).reduce((s, v) => s + v, 0);
-  const closingTotal = Object.values(closingBalances).reduce((s, v) => s + v, 0);
+  // Opening/closing pooled balance comes from the same function the
+  // live Service Charge summary uses (Modals-core.js), so this report
+  // and the live view always agree. A Petty Cash Topup is a pure
+  // transfer between tills and is left out of the pool, the lists, and
+  // the totals below entirely.
+  const openingTotal = computeServiceChargePoolBalanceAsOf(ledger, dayBeforeStart);
+  const closingTotal = computeServiceChargePoolBalanceAsOf(ledger, endDate);
 
   // Historically-accurate occupancy count for THIS period — not
   // "currently occupied right now," which could be wrong for a report
@@ -1947,22 +1895,23 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
   );
 
   const periodRows = ledger.filter((row) => {
-    if (!row) return false;
+    if (!row || row.type === "petty_cash_topup") return false;
     const d = new Date(row.date);
     return !isNaN(d.getTime()) && d >= startDate && d <= endDate;
   });
 
   let totalContributions = 0,
     totalSharedExpense = 0,
-    totalApartmentExpense = 0,
-    totalPettyCashTopup = 0;
+    totalApartmentExpense = 0;
   periodRows.forEach((row) => {
     const amt = Number(row.amount) || 0;
     if (row.type === "contribution") totalContributions += amt;
     else if (row.type === "shared_expense") totalSharedExpense += amt;
     else if (row.type === "apartment_expense") totalApartmentExpense += amt;
-    else if (row.type === "petty_cash_topup") totalPettyCashTopup += amt;
   });
+  // Every expense counts once, including those paid from Petty Cash —
+  // topups never appear (see above), so nothing is counted twice.
+  const totalExpenses = totalSharedExpense + totalApartmentExpense;
 
   const typeLabels = { contribution: "Contribution", apartment_expense: "Apartment Expense", shared_expense: "Shared Expense", petty_cash_topup: "Petty Cash Topup" };
 
@@ -2017,7 +1966,7 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
   const fullEntryDates = {};
   const fullEntryOrder = [];
   ledger.forEach((row) => {
-    if (!row) return;
+    if (!row || row.type === "petty_cash_topup") return;
     const key = row.entryNumber || row.expenseId || row.entryId;
     if (fullEntryNet[key] === undefined) {
       fullEntryNet[key] = 0;
@@ -2147,9 +2096,8 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
   const out = `<div style="font-size:13px;">
     <table style="width:100%; border-collapse:collapse; border:2px solid #000; font-size:14px; font-weight:bold; margin-bottom:20px;">
       <tr><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Opening Pooled Balance</td><td style="border:1px solid #000; padding:6px; width:25%;">₦${formatMoney(openingTotal)}</td><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Closing Pooled Balance</td><td style="border:1px solid #000; padding:6px; width:25%;">₦${formatMoney(closingTotal)}</td></tr>
-      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Total Contributions</td><td style="border:1px solid #000; padding:6px; color:#198754;">₦${formatMoney(totalContributions)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Total Expenses</td><td style="border:1px solid #000; padding:6px; color:#dc3545;">₦${formatMoney(totalSharedExpense + totalApartmentExpense + totalPettyCashTopup)}</td></tr>
+      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Total Contributions</td><td style="border:1px solid #000; padding:6px; color:#198754;">₦${formatMoney(totalContributions)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Total Expenses</td><td style="border:1px solid #000; padding:6px; color:#dc3545;">₦${formatMoney(totalExpenses)}</td></tr>
       <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Shared Expenses</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(totalSharedExpense)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Apartment-Specific Expenses</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(totalApartmentExpense)}</td></tr>
-      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Petty Cash Topups</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(totalPettyCashTopup)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;"></td><td style="border:1px solid #000; padding:6px;"></td></tr>
       <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Apartments Occupied This Period</td><td colspan="3" style="border:1px solid #000; padding:6px;">${occupiedDuringPeriod.length} of ${realApartments.length}</td></tr>
     </table>
     <h3 style="font-size:14px; font-weight:900; text-transform:uppercase; margin:0 0 6px 0; text-decoration:underline;">Activity (${escapeHtml(formatDateForDisplay(startDateStr))} &mdash; ${escapeHtml(formatDateForDisplay(endDateStr))})</h3>
@@ -2341,11 +2289,7 @@ async function generatePettyCashReport(startDateStr, endDateStr) {
 
   viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading Petty Cash ledger...</p>`;
 
-  const [ledger, items, movements] = await callApiSequential([
-    ["getPettyCashLedger", {}],
-    ["getInventoryItems", {}],
-    ["getInventoryMovements", {}],
-  ]);
+  const ledger = await callApiStrict("getPettyCashLedger", {});
   if (!ledger || !Array.isArray(ledger)) {
     viewport.innerHTML = `<p style="padding:20px; color:#dc3545; font-weight:700;">${escapeHtml((ledger && ledger.message) || "Couldn't load the Petty Cash ledger.")}</p>`;
     return;
@@ -2356,23 +2300,13 @@ async function generatePettyCashReport(startDateStr, endDateStr) {
   endDate.setHours(23, 59, 59, 999);
   const dayBeforeStart = new Date(startDate.getTime() - 1);
 
-  // [FEATURE] Tools and consumables are bought using Petty Cash, but
-  // that purchase is never recorded as a Petty Cash outflow (Receive
-  // Stock and tool creation don't link to Petty Cash the way Service
-  // Charge expenses optionally do) — so the ledger-based balance
-  // below is overstated by however much has actually gone out this
-  // way. See computeToolsValueAsOf/computeUnusedConsumablesValueAsOf
-  // in Modals-core.js (shared with the live Petty Cash summary, so
-  // both stay consistent) for the full reasoning.
-  const openingToolsValue = computeToolsValueAsOf(items, dayBeforeStart);
-  const closingToolsValue = computeToolsValueAsOf(items, endDate);
-  const openingUnusedConsumablesValue = computeUnusedConsumablesValueAsOf(items, movements, dayBeforeStart);
-  const closingUnusedConsumablesValue = computeUnusedConsumablesValueAsOf(items, movements, endDate);
-
-  const ledgerOpeningBalance = computePettyCashBalanceAsOf(ledger, dayBeforeStart);
-  const ledgerClosingBalance = computePettyCashBalanceAsOf(ledger, endDate);
-  const openingBalance = ledgerOpeningBalance - (openingToolsValue || 0) - (openingUnusedConsumablesValue || 0);
-  const closingBalance = ledgerClosingBalance - (closingToolsValue || 0) - (closingUnusedConsumablesValue || 0);
+  // Opening and closing balance are simply the ledger's own totals.
+  // Stock and equipment bought with Petty Cash are real ledger outflows
+  // (ticked "paid from Petty Cash"), so nothing is estimated or
+  // subtracted on top, and Opening + Inflow - Outflow = Closing holds
+  // by construction.
+  const openingBalance = computePettyCashBalanceAsOf(ledger, dayBeforeStart);
+  const closingBalance = computePettyCashBalanceAsOf(ledger, endDate);
 
   // Running balance is computed from the FULL ledger chronologically
   // (matching the live ledger table's own logic) so each period row's
@@ -2399,30 +2333,13 @@ async function generatePettyCashReport(startDateStr, endDateStr) {
     else totalOutflow += amt;
   });
 
-  // [FEATURE] Category header table — outflows within the period,
-  // grouped into the categories that actually matter for reconciling
-  // this ledger. Category is free text (not a fixed list) so this
-  // matches on keywords rather than an exact string; "Individual
-  // Apartment" and "Shared Expense" go by the apt field's shape
-  // instead, since that's set consistently by the Service Charge
-  // linking logic regardless of what category text was used.
+  // [FEATURE] The groups listed under Total Outflow. classifyPettyCashOutflows
+  // (Modals-core.js, shared with the live summary) puts every outflow row
+  // in exactly one group, so they always add up to Total Outflow —
+  // including stock and equipment bought with Petty Cash, which are
+  // ordinary ledger rows linked to their item.
   const outflowRows = periodRows.filter((row) => String(row.direction).toLowerCase() === "outflow");
-  const electricityVendingTotal = outflowRows
-    .filter((row) => /electricity|vending/i.test(String(row.category || "")))
-    .reduce((s, row) => s + (Number(row.amount) || 0), 0);
-  // Individual Apartment / Shared Expense both exclude anything
-  // already counted as Electricity Vending — an electricity purchase
-  // linked to one or several apartments still belongs to its own
-  // category, not double-counted into an apt-based one too.
-  const individualApartmentTotal = outflowRows
-    .filter((row) => {
-      const apt = String(row.apt || "");
-      return apt && apt !== "Petty Cash Transfer" && !apt.toLowerCase().startsWith("shared") && !/electricity|vending/i.test(String(row.category || ""));
-    })
-    .reduce((s, row) => s + (Number(row.amount) || 0), 0);
-  const sharedExpenseTotal = outflowRows
-    .filter((row) => String(row.apt || "").toLowerCase().startsWith("shared") && !/electricity|vending/i.test(String(row.category || "")))
-    .reduce((s, row) => s + (Number(row.amount) || 0), 0);
+  const groups = classifyPettyCashOutflows(outflowRows);
 
   const activityTable = periodRows.length
     ? `<table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; table-layout:fixed;">
@@ -2449,7 +2366,7 @@ async function generatePettyCashReport(startDateStr, endDateStr) {
               return `<tr style="border-bottom:1px solid #eee;">
                 <td style="padding:5px 4px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
                 <td style="padding:5px 4px; font-weight:700;">${escapeHtml(row.apt || "")}</td>
-                <td style="padding:5px 4px;">${escapeHtml(row.category || "")}${row.linkedServiceChargeEntry ? ` <span style="color:#666; font-size:11px;">(SC ${escapeHtml(row.linkedServiceChargeEntry)})</span>` : ""}</td>
+                <td style="padding:5px 4px;">${escapeHtml(row.category || "")}${row.linkedServiceChargeEntry ? ` <span style="color:#666; font-size:11px;">(SC ${escapeHtml(row.linkedServiceChargeEntry)})</span>` : ""}${row.linkedInventoryItem ? ` <span style="color:#666; font-size:11px;">(Stock ${escapeHtml(row.linkedInventoryItem)})</span>` : ""}</td>
                 <td style="padding:5px 4px; word-break:break-word; overflow-wrap:break-word; white-space:normal; color:#555;">${escapeHtml(row.description || "")}</td>
                 <td style="padding:5px 4px; text-align:right; font-weight:700; color:${isInflow ? "#198754" : "#dc3545"};">${isInflow ? "+" : "-"}₦${formatMoney(row.amount)}</td>
                 <td style="padding:5px 4px; text-align:right; font-weight:700; color:${row.runningBalance >= 0 ? "#000" : "#dc3545"};">₦${formatMoney(row.runningBalance)}</td>
@@ -2464,9 +2381,10 @@ async function generatePettyCashReport(startDateStr, endDateStr) {
     <table style="width:100%; border-collapse:collapse; border:2px solid #000; font-size:14px; font-weight:bold; margin-bottom:20px;">
       <tr><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Opening Balance</td><td style="border:1px solid #000; padding:6px; width:25%; color:${openingBalance >= 0 ? "#000" : "#dc3545"};">₦${formatMoney(openingBalance)}</td><td style="border:1px solid #000; padding:6px; width:25%; background:#f9f9f9;">Closing Balance</td><td style="border:1px solid #000; padding:6px; width:25%; color:${closingBalance >= 0 ? "#000" : "#dc3545"};">₦${formatMoney(closingBalance)}</td></tr>
       <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Total Inflow</td><td style="border:1px solid #000; padding:6px; color:#198754;">₦${formatMoney(totalInflow)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Total Outflow</td><td style="border:1px solid #000; padding:6px; color:#dc3545;">₦${formatMoney(totalOutflow)}</td></tr>
-      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Electricity Vending</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(electricityVendingTotal)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Individual Apartment</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(individualApartmentTotal)}</td></tr>
-      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Shared Expense</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(sharedExpenseTotal)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;"></td><td style="border:1px solid #000; padding:6px;"></td></tr>
-      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Tools (deducted from balance)</td><td style="border:1px solid #000; padding:6px; color:#dc3545;">₦${formatMoney(closingToolsValue || 0)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Unused Consumables (deducted from balance)</td><td style="border:1px solid #000; padding:6px; color:#dc3545;">₦${formatMoney(closingUnusedConsumablesValue || 0)}</td></tr>
+      <tr><td colspan="4" style="border:1px solid #000; padding:6px; background:#eee; font-size:12px; text-transform:uppercase;">Total Outflow is made up of</td></tr>
+      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Electricity Vending</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(groups.electricityVending)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Individual Apartment</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(groups.individualApartment)}</td></tr>
+      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Shared Expense</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(groups.sharedExpense)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Tools / Equipment Purchases</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(groups.tools)}</td></tr>
+      <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Consumables Purchases</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(groups.consumables)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Other Expenses</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(groups.other)}</td></tr>
     </table>
     <h3 style="font-size:14px; font-weight:900; text-transform:uppercase; margin:0 0 6px 0; text-decoration:underline;">Activity (${escapeHtml(formatDateForDisplay(startDateStr))} &mdash; ${escapeHtml(formatDateForDisplay(endDateStr))})</h3>
     ${activityTable}

@@ -1620,6 +1620,13 @@ async function openModal(type, editData = null) {
       <div class="form-field"><label ${lbl}>Price (₦)</label><input id="it_price" type="text" inputmode="numeric" oninput="maskCurrencyInput(this)" value="${isEdit ? formatMoney(editData.unitCost || 0) : ""}" ${ls}></div>
       <div class="form-field"><label ${lbl}>Purchase Date</label><input id="it_purchasedate" type="date" value="${isEdit && editData.purchaseDate ? String(editData.purchaseDate).slice(0, 10) : ""}" ${ls}></div>
       <div class="form-field"><label ${lbl}>Quantity</label><input id="it_qty" type="number" min="0" value="${isEdit ? escapeHtml(editData.currentQty || 0) : "1"}" ${ls}></div>
+      ${
+        !isEdit
+          ? '<div class="form-field span-3"><label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer;"><input type="checkbox" id="it_paid_pc" style="width:auto;"> Paid from Petty Cash</label><div style="font-size:11px; color:var(--muted); margin-top:2px;">Records this purchase (price × quantity) as an outflow in the Petty Cash ledger.</div></div>'
+          : String(editData.paidFromPettyCash || "").toLowerCase() === "yes"
+            ? '<div class="form-field span-3"><label style="display:flex; align-items:center; gap:6px; font-weight:700;"><input type="checkbox" checked disabled style="width:auto;"> Paid from Petty Cash</label><div style="font-size:11px; color:var(--muted); margin-top:2px;">Recorded in the Petty Cash ledger when this item was added.</div></div>'
+            : ""
+      }
       <div class="form-field span-3"><label ${lbl}>Specification</label><input id="it_spec" value="${isEdit ? escapeHtml(editData.specification || "") : ""}" placeholder="e.g. Model / capacity" ${ls}></div>
       <div class="form-field span-3"><label ${lbl}>Status</label>
         <select id="it_status" ${ls}>
@@ -1664,6 +1671,13 @@ async function openModal(type, editData = null) {
         status: document.getElementById("it_status").value,
       };
       if (isEdit) payload.itemCode = editData.itemCode;
+      else {
+        payload.paidFromPettyCash = document.getElementById("it_paid_pc").checked;
+        if (payload.paidFromPettyCash && !(Number(payload.unitCost) > 0 && Number(payload.currentQty) > 0)) {
+          showToast("Enter a price and a quantity above zero to record this purchase from Petty Cash.", "error");
+          return;
+        }
+      }
       submit.disabled = true;
       submit.classList.add("loading");
       callApi(isEdit ? "updateInventoryItem" : "saveInventoryItem", payload)
@@ -1675,7 +1689,8 @@ async function openModal(type, editData = null) {
             return;
           }
           closeModal();
-          showToast(isEdit ? "Updated." : `${result.itemCode} created.`, "success");
+          showToast(isEdit ? "Updated." : result.pettyCashEntry ? `${result.itemCode} created and recorded in Petty Cash.` : `${result.itemCode} created.`, "success");
+          if (result.pettyCashEntry && typeof notePettyCashEntryAdded === "function") notePettyCashEntryAdded(result.pettyCashEntry);
           if (result.item && typeof patchLocalInventoryItem === "function") patchLocalInventoryItem(result.item);
           else if (typeof refreshInventorySection === "function") refreshInventorySection();
         })
@@ -1697,6 +1712,7 @@ async function openModal(type, editData = null) {
       <div class="form-field"><label ${lbl}>Delivery Note</label><input id="rs_delivery" ${ls}></div>
       <div class="form-field"><label ${lbl}>Invoice Ref</label><input id="rs_invoice" ${ls}></div>
       <div class="form-field"><label ${lbl}>Person Receiving</label><input id="rs_recipient" ${ls}></div>
+      <div class="form-field span-3"><label style="display:flex; align-items:center; gap:6px; font-weight:700; cursor:pointer;"><input type="checkbox" id="rs_paid_pc" style="width:auto;"> Paid from Petty Cash</label><div style="font-size:11px; color:var(--muted); margin-top:2px;">Records this purchase (quantity × unit cost) as an outflow in the Petty Cash ledger.</div></div>
     `;
     populateInventoryItemDropdown("rs_item");
 
@@ -1705,6 +1721,11 @@ async function openModal(type, editData = null) {
       const qty = document.getElementById("rs_qty").value;
       if (!itemCode || !qty || Number(qty) <= 0) {
         showToast("Select an item and enter a positive quantity.", "error");
+        return;
+      }
+      const paidFromPettyCash = document.getElementById("rs_paid_pc").checked;
+      if (paidFromPettyCash && !(Number(document.getElementById("rs_cost").value) > 0)) {
+        showToast("Enter a unit cost above zero to record this purchase from Petty Cash.", "error");
         return;
       }
       submit.disabled = true;
@@ -1717,6 +1738,7 @@ async function openModal(type, editData = null) {
         deliveryNote: sanitizeInput(document.getElementById("rs_delivery").value),
         invoiceRef: sanitizeInput(document.getElementById("rs_invoice").value),
         personReceiving: sanitizeInput(document.getElementById("rs_recipient").value),
+        paidFromPettyCash,
       })
         .then((result) => {
           submit.disabled = false;
@@ -1726,7 +1748,8 @@ async function openModal(type, editData = null) {
             return;
           }
           closeModal();
-          showToast("Stock received.", "success");
+          showToast(result.pettyCashEntry ? "Stock received and recorded in Petty Cash." : "Stock received.", "success");
+          if (result.pettyCashEntry && typeof notePettyCashEntryAdded === "function") notePettyCashEntryAdded(result.pettyCashEntry);
           if (typeof refreshInventorySection === "function") refreshInventorySection();
         })
         .catch(() => {

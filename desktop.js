@@ -132,9 +132,41 @@ async function initDesktop() {
   // [BUG FIX] Sequential, not Promise.all — firing getSettings and
   // getAllData simultaneously risked exactly the queued-request 404
   // documented on callApiSequential in Core.js, right at app startup.
+  // [FEATURE] One-time: the stock and equipment already on record were
+  // all paid from Petty Cash, and the Petty Cash balance no longer
+  // estimates them from stock value — so the first launch after that
+  // change turns them into real ledger entries. The work happens in
+  // local-api.js (backup first, all-or-nothing, and it never runs a
+  // second time). Done BEFORE the data below loads so nothing is drawn
+  // from a ledger that is about to change.
+  let stockImport = null;
+  let stockImportError = null;
+  if (window.localApi) {
+    const importResult = await callApi("importStockToPettyCash", {});
+    if (importResult && importResult.status === "success" && importResult.alreadyDone === false) {
+      stockImport = importResult;
+      clearAllLedgerCaches();
+    } else if (importResult && importResult.status === "error") {
+      stockImportError = importResult.message;
+    }
+  }
+
   await loadDesktopSettings();
   await loadDesktopData(hadCache);
   renderDesktop();
+
+  if (stockImport && stockImport.tools + stockImport.receipts > 0) {
+    showToast(
+      `Existing stock imported into Petty Cash: ${stockImport.tools} tool(s) and ${stockImport.receipts} stock receipt(s), ₦${formatMoney(stockImport.total)} in total. A backup of your data was saved first.` +
+        (stockImport.mixedIssues > 0
+          ? ` ${stockImport.mixedIssues} past issue(s) drew on both older untracked stock and receipts, so each was treated as coming from whichever supplied more.`
+          : ""),
+      "success",
+    );
+  }
+  if (stockImportError) {
+    showToast("Couldn't import existing stock into Petty Cash — nothing was changed. " + stockImportError, "error");
+  }
 
   // [FEATURE] The automatic exit-sync to the mobile relay (see
   // mobile-sync.js/main.js's before-quit handler) fails completely

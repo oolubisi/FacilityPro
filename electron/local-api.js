@@ -143,6 +143,220 @@ function getKpiDashboardData() {
 // § INVENTORY — ported first as the proof-of-concept slice
 // ─────────────────────────────────────────────
 
+// ─────────────────────────────────────────────
+// § PAID FROM PETTY CASH (stock and equipment)
+//
+// A tool or a stock receipt marked "paid from Petty Cash" becomes a real
+// outflow in the Petty Cash ledger, linked back to the item/receipt, so
+// the ledger is an honest record of cash and its running balance is the
+// Petty Cash balance (nothing is estimated from stock value any more).
+// ─────────────────────────────────────────────
+function truthyFlag(v) {
+  return v === true || String(v == null ? '' : v).toLowerCase() === 'yes' || String(v == null ? '' : v).toLowerCase() === 'true';
+}
+function isYes(v) {
+  return String(v == null ? '' : v).toLowerCase() === 'yes';
+}
+
+// Adds (without saving) the Petty Cash outflow for one purchase.
+function recordStockPurchaseInPettyCash(opts, actor) {
+  const { amount, date, kind, item, movementId, qtyLabel, imported } = opts;
+  const verb = kind === 'tool' ? 'Equipment purchased' : 'Stock received';
+  const description = verb + ': ' + (item.name || item.itemCode) + (qtyLabel ? ' (' + qtyLabel + ')' : '') + (imported ? ' — imported' : '');
+  return createPettyCashRow(
+    'outflow',
+    { amount, date, apt: '', category: kind === 'tool' ? 'Equipment Purchase' : 'Stock Purchase', description },
+    actor, '',
+    { linkedInventoryItem: item.itemCode, linkedInventoryMovement: movementId || '', inventoryKind: kind },
+  );
+}
+
+// Walks one item's movement history first-in-first-out, tracking which
+// remaining units came from receipts that were paid from Petty Cash (their
+// purchase is already in the Petty Cash ledger) and which did not. Only
+// stock whose purchase is genuinely in the ledger counts as petty-cash-
+// paid: stock that predates movement tracking, and found-stock
+// adjustments, have no ledger entry and so are "other" — otherwise their
+// cost would vanish from every balance. `currentQty` is the item's stock
+// at the END of the history (it is how untracked stock is detected).
+// `onIssue(movement, paidQty, otherQty)` is called for each recorded issue
+// as it consumes stock. Returns `consume(qty)` for taking more stock off
+// the front of whatever is left (used when a NEW issue is being made).
+function walkStockLots(itemCode, currentQty, onIssue) {
+  const moves = db.getCollection('InventoryMovements')
+    .map((m, idx) => ({ m, idx, t: m ? new Date(m.date).getTime() : NaN }))
+    .filter((x) => x.m && x.m.itemCode === itemCode && !isNaN(x.t))
+    .sort((a, b) => a.t - b.t || a.idx - b.idx);
+
+  const EPS = 1e-9;
+  const lots = [];
+  const tracked = moves.reduce((sum, x) => sum + (Number(x.m.quantity) || 0), 0);
+  const untracked = currentQty - tracked;
+  if (untracked > EPS) lots.push({ qty: untracked, paid: false });
+
+  const consume = (q) => {
+    let left = q;
+    let paidTaken = 0;
+    let otherTaken = 0;
+    while (left > EPS && lots.length) {
+      const lot = lots[0];
+      const take = Math.min(lot.qty, left);
+      if (lot.paid) paidTaken += take; else otherTaken += take;
+      lot.qty -= take;
+      left -= take;
+      if (lot.qty <= EPS) lots.shift();
+    }
+    return { paidTaken, otherTaken, shortfall: left > EPS ? left : 0 };
+  };
+
+  moves.forEach(({ m }) => {
+    const q = Number(m.quantity) || 0;
+    if (q > 0) {
+      lots.push({ qty: q, paid: isYes(m.paidFromPettyCash) });
+    } else if (q < 0) {
+      const r = consume(-q);
+      if (onIssue && m.movementType === 'issue') onIssue(m, r.paidTaken, r.otherTaken + r.shortfall);
+    }
+  });
+  return { consume };
+}
+
+// When stock is issued now: how much of it came from petty-cash-paid
+// receipts and how much did not.
+function splitIssueByPettyCashSource(itemCode, oldQty, issueQty) {
+  const r = walkStockLots(itemCode, oldQty).consume(issueQty);
+  return { paidQty: r.paidTaken, otherQty: r.otherTaken + r.shortfall };
+}
+
+// ─────────────────────────────────────────────
+// § ONE-TIME IMPORT — existing stock into Petty Cash
+//
+// Before "paid from Petty Cash" existed, the Petty Cash balance was
+// estimated by subtracting the value of tools and unused consumables.
+// That estimate is retired in favour of real ledger entries, so every
+// tool and every stock receipt already on record (all of it was paid
+// from Petty Cash) becomes an outflow dated when it was bought.
+//
+// Safe by construction: a full backup of the data file is taken first;
+// everything is built in memory and written in ONE save, undone in
+// memory if anything throws; and a marker (kept through Settings saves)
+// stops it from ever running twice — so stock deliberately left
+// un-ticked afterwards is never swept in.
+// ─────────────────────────────────────────────
+function importStockToPettyCash(data, actor) {
+  const settings = db.getCollection('Settings');
+  if (settings.stockImportedToPettyCash) return { status: 'success', alreadyDone: true };
+
+  let backupFile = '';
+  try {
+    backupFile = db.backupDatabase('before-stock-import');
+  } catch (e) {
+    return { status: 'error', message: "Couldn't back up the data file first, so nothing was imported: " + String((e && e.message) || e) };
+  }
+
+  const items = db.getCollection('InventoryItems');
+  const movements = db.getCollection('InventoryMovements');
+  const pettyCash = db.getCollection('PettyCash');
+  const itemByCode = {};
+  items.forEach((i) => { if (i && i.itemCode) itemByCode[i.itemCode] = i; });
+  const now = new Date().toISOString();
+  const money = (n) => Math.round(n * 100) / 100;
+
+  const addedRows = [];
+  const flagged = [];
+  const reflagged = [];
+  let toolCount = 0;
+  let receiptCount = 0;
+  let totalAmount = 0;
+  let issuesFlagged = 0;
+  let mixedIssues = 0;
+
+  try {
+    items.forEach((item) => {
+      if (!item || String(item.itemType || '').toLowerCase() !== 'tool' || isYes(item.paidFromPettyCash)) return;
+      const qty = Number(item.currentQty) || 0;
+      const amount = money(qty * (Number(item.unitCost) || 0));
+      if (!(amount > 0)) return;
+      const r = recordStockPurchaseInPettyCash(
+        { amount, date: item.purchaseDate || item.createdAt || now, kind: 'tool', item, qtyLabel: String(qty), imported: true },
+        actor,
+      );
+      if (r.status !== 'success') return;
+      addedRows.push(r.entry);
+      flagged.push(item);
+      item.paidFromPettyCash = 'Yes';
+      item.pettyCashEntryId = r.entryId;
+      toolCount += 1;
+      totalAmount += amount;
+    });
+
+    movements.forEach((m) => {
+      if (!m || m.movementType !== 'receive' || isYes(m.paidFromPettyCash)) return;
+      const amount = money(Number(m.totalValue) || (Number(m.quantity) || 0) * (Number(m.unitCostAtTime) || 0));
+      if (!(amount > 0)) return;
+      const item = itemByCode[m.itemCode] || { itemCode: m.itemCode, name: m.itemCode };
+      const r = recordStockPurchaseInPettyCash(
+        { amount, date: m.date || now, kind: 'consumable', item, movementId: m.entryId, qtyLabel: (Number(m.quantity) || 0) + (item.unit ? ' ' + item.unit : ''), imported: true },
+        actor,
+      );
+      if (r.status !== 'success') return;
+      addedRows.push(r.entry);
+      flagged.push(m);
+      m.paidFromPettyCash = 'Yes';
+      m.pettyCashEntryId = r.entryId;
+      receiptCount += 1;
+      totalAmount += amount;
+    });
+
+    // Past issues charged Service Charge as ordinary pool expenses (the
+    // old estimate treated issued stock as no longer "unused", so its cost
+    // lived there). Now that the whole receipt is a Petty Cash outflow, an
+    // issue of that stock must be flagged "paid from Petty Cash" too —
+    // otherwise its cost would be deducted a second time from the pool.
+    // Each past issue is traced back to the receipts it consumed
+    // (first-in-first-out); one that spans petty-cash-paid stock and stock
+    // with no ledger entry (older untracked stock) can't be split after
+    // the fact, so it follows whichever source supplied more of it.
+    const scLedger = db.getCollection('ServiceChargeLedger');
+    items.forEach((item) => {
+      if (!item || String(item.itemType || '').toLowerCase() === 'tool') return;
+      walkStockLots(item.itemCode, Number(item.currentQty) || 0, (m, paidQty, otherQty) => {
+        const ids = String(m.linkedServiceChargeEntry || '').split(',').map((x) => x.trim()).filter(Boolean);
+        if (!ids.length) return;
+        // Counted whichever way it goes, so the summary reports every
+        // issue that had to be assigned to one source.
+        if (paidQty > 1e-9 && otherQty > 1e-9) mixedIssues += 1;
+        if (!(paidQty > otherQty)) return;
+        scLedger.forEach((row) => {
+          if (!row || isYes(row.paidFromPettyCash)) return;
+          if (ids.indexOf(row.expenseId) === -1 && ids.indexOf(row.entryId) === -1) return;
+          reflagged.push([row, row.paidFromPettyCash]);
+          row.paidFromPettyCash = 'Yes';
+        });
+        issuesFlagged += 1;
+      });
+    });
+
+    settings.stockImportedToPettyCash = now;
+    settings.stockImportSummary = { tools: toolCount, receipts: receiptCount, total: money(totalAmount), issuesFlagged, mixedIssues, backupFile };
+    db.persist();
+  } catch (e) {
+    // Undo everything done in memory so a later, unrelated save can't
+    // write a half-finished import to disk.
+    const added = new Set(addedRows);
+    const remaining = pettyCash.filter((row) => !added.has(row));
+    pettyCash.length = 0;
+    pettyCash.push(...remaining);
+    flagged.forEach((rec) => { delete rec.paidFromPettyCash; delete rec.pettyCashEntryId; });
+    reflagged.forEach(([row, previous]) => { if (previous === undefined) delete row.paidFromPettyCash; else row.paidFromPettyCash = previous; });
+    delete settings.stockImportedToPettyCash;
+    delete settings.stockImportSummary;
+    return { status: 'error', message: 'Import failed and was rolled back; nothing was changed. ' + String((e && e.message) || e) };
+  }
+
+  return { status: 'success', alreadyDone: false, tools: toolCount, receipts: receiptCount, total: money(totalAmount), issuesFlagged, mixedIssues, backupFile };
+}
+
 function saveInventoryItem(data, actor) {
   const name = sanitizePayload({ n: data.name || '' }).n;
   if (!name) return { status: 'error', message: 'Item name is required.' };
@@ -152,6 +366,18 @@ function saveInventoryItem(data, actor) {
   const itemCode = generateNextId(items, 'itemCode', category ? category.slice(0, 3).toUpperCase() : 'GEN');
   const now = new Date().toISOString();
   const startingCost = parseFloat(data.unitCost) || 0;
+
+  // Only tools are bought at creation time (consumables arrive through
+  // Receive Stock), so "paid from Petty Cash" applies to tools here.
+  // Checked BEFORE anything is created so a missing price/quantity
+  // can't leave an item behind with no matching ledger entry.
+  const isTool = data.itemType === 'tool';
+  const initialQty = parseFloat(data.currentQty) || 0;
+  const purchaseAmount = Math.round(initialQty * startingCost * 100) / 100;
+  const paidFromPettyCash = isTool && truthyFlag(data.paidFromPettyCash);
+  if (paidFromPettyCash && !(purchaseAmount > 0)) {
+    return { status: 'error', message: 'Enter a price and a quantity above zero to record this purchase from Petty Cash.' };
+  }
 
   const newItem = {
     itemCode, name, category,
@@ -178,8 +404,26 @@ function saveInventoryItem(data, actor) {
     createdAt: now, createdBy: actor.name, updatedAt: now, updatedBy: actor.name,
   };
   items.push(newItem);
+
+  let pettyCashEntry = null;
+  if (paidFromPettyCash) {
+    const purchase = recordStockPurchaseInPettyCash(
+      { amount: purchaseAmount, date: newItem.purchaseDate || now, kind: 'tool', item: newItem, qtyLabel: String(initialQty) },
+      actor,
+    );
+    if (purchase.status !== 'success') {
+      items.pop();
+      return purchase;
+    }
+    newItem.paidFromPettyCash = 'Yes';
+    newItem.pettyCashEntryId = purchase.entryId;
+    pettyCashEntry = purchase.entry;
+  } else if (isTool) {
+    newItem.paidFromPettyCash = 'No';
+  }
+
   db.persist();
-  return { status: 'success', itemCode, item: newItem };
+  return { status: 'success', itemCode, item: newItem, pettyCashEntry };
 }
 
 function updateInventoryItem(data, actor) {
@@ -257,6 +501,14 @@ function receiveStock(data, actor) {
   let unitCost = parseFloat(data.unitCost);
   if (isNaN(unitCost) || unitCost < 0) unitCost = 0;
 
+  // Checked before anything is changed, so a missing cost can't leave
+  // received stock with no matching Petty Cash entry.
+  const paidFromPettyCash = truthyFlag(data.paidFromPettyCash);
+  const purchaseTotal = Math.round(qty * unitCost * 100) / 100;
+  if (paidFromPettyCash && !(purchaseTotal > 0)) {
+    return { status: 'error', message: 'Enter a unit cost above zero to record this purchase from Petty Cash.' };
+  }
+
   const items = db.getCollection('InventoryItems');
   const item = findByPK(items, 'itemCode', itemCode);
   if (!item) return { status: 'error', message: 'Item not found.' };
@@ -297,9 +549,23 @@ function receiveStock(data, actor) {
     recipient: sanitizePayload({ r: data.personReceiving || '' }).r,
     createdAt: now, createdBy: actor.name,
   };
+  newMovement.paidFromPettyCash = paidFromPettyCash ? 'Yes' : 'No';
   movements.push(newMovement);
+
+  let pettyCashEntry = null;
+  if (paidFromPettyCash) {
+    const purchase = recordStockPurchaseInPettyCash(
+      { amount: purchaseTotal, date: moveDate, kind: 'consumable', item, movementId: entryId, qtyLabel: qty + (item.unit ? ' ' + item.unit : '') },
+      actor,
+    );
+    if (purchase.status === 'success') {
+      newMovement.pettyCashEntryId = purchase.entryId;
+      pettyCashEntry = purchase.entry;
+    }
+  }
+
   db.persist();
-  return { status: 'success', entryId, newQty, newUnitCost: newAvgCost, item, movement: newMovement };
+  return { status: 'success', entryId, newQty, newUnitCost: newAvgCost, item, movement: newMovement, pettyCashEntry };
 }
 
 function issueStock(data, actor) {
@@ -328,19 +594,39 @@ function issueStock(data, actor) {
   const isShared = !apt || apt.toLowerCase() === 'shared';
   const moveDate = data.date || new Date().toISOString();
 
-  let scResult = null;
+  // The Service Charge expense for the issued stock is flagged "paid
+  // from Petty Cash" for whatever part of it came from petty-cash-paid
+  // receipts — that cost already left as cash when it was bought (it is
+  // in the Petty Cash ledger), so it must not be deducted from the pool
+  // a second time. It is flagged WITHOUT creating another Petty Cash
+  // outflow (alreadyPaidFromPettyCash, not fromPettyCash). Any remainder
+  // is an ordinary pool expense. Usually an issue is wholly one or the
+  // other and this is a single entry; it only splits into two when one
+  // issue spans both kinds of stock.
+  const split = splitIssueByPettyCashSource(itemCode, oldQty, qty);
+  const paidValue = Math.min(totalValue, Math.round(split.paidQty * unitCost * 100) / 100);
+  const otherValue = Math.round((totalValue - paidValue) * 100) / 100;
+
+  const scResults = [];
   if (totalValue > 0) {
     const scCategory = 'Inventory: ' + (item.name || itemCode);
     const scDescription = qty + ' ' + (item.unit || '') + ' issued' + (data.purpose ? ' — ' + data.purpose : '');
-    scResult = isShared
-      ? logSharedExpense({ amount: totalValue, category: scCategory, description: scDescription, date: moveDate }, actor)
-      : logApartmentExpense({ apt, amount: totalValue, category: scCategory, description: scDescription, date: moveDate }, actor);
+    const logOne = (amountToLog, alreadyPaid) => (isShared
+      ? logSharedExpense({ amount: amountToLog, category: scCategory, description: scDescription, date: moveDate, alreadyPaidFromPettyCash: alreadyPaid }, actor)
+      : logApartmentExpense({ apt, amount: amountToLog, category: scCategory, description: scDescription, date: moveDate, alreadyPaidFromPettyCash: alreadyPaid }, actor));
+    if (paidValue > 0) scResults.push(logOne(paidValue, true));
+    if (otherValue > 0) scResults.push(logOne(otherValue, false));
   }
+  const scResult = scResults.find((r) => r && r.status !== 'success') || scResults[0] || null;
 
   const movements = db.getCollection('InventoryMovements');
   const entryId = generateNextId(movements, 'entryId', 'IM');
   const now = new Date().toISOString();
-  const linkedEntry = (scResult && scResult.status === 'success') ? (scResult.entryId || scResult.expenseId || '') : '';
+  const linkedEntry = scResults
+    .filter((r) => r && r.status === 'success')
+    .map((r) => r.entryId || r.expenseId || '')
+    .filter(Boolean)
+    .join(', ');
 
   const newMovement = {
     entryId, itemCode, movementType: 'issue', date: moveDate,
@@ -410,7 +696,13 @@ function adjustStock(data, actor) {
 // available" fallback until Petty Cash itself is ported properly.
 // ─────────────────────────────────────────────
 
-function appendPettyCashEntry(direction, data, actor, linkedEntry) {
+// Builds and adds one Petty Cash row WITHOUT saving to disk, so a caller
+// making several related changes (a purchase plus its stock record, or
+// a bulk import) can save them all in one atomic write instead of
+// leaving a half-finished state behind if something goes wrong between
+// two separate saves. `extra` carries any additional fields (e.g. the
+// stock item a purchase is linked to).
+function createPettyCashRow(direction, data, actor, linkedEntry, extra) {
   const amount = parseFloat(data.amount);
   if (!amount || amount <= 0) {
     return { status: 'error', message: 'A positive amount is required.' };
@@ -427,10 +719,16 @@ function appendPettyCashEntry(direction, data, actor, linkedEntry) {
     amount, createdAt: now, createdBy: actor.name,
     updatedAt: now, updatedBy: actor.name,
     linkedServiceChargeEntry: linkedEntry || '',
+    ...(extra || {}),
   };
   entries.push(newEntry);
-  db.persist();
   return { status: 'success', entryId, entry: newEntry };
+}
+
+function appendPettyCashEntry(direction, data, actor, linkedEntry, extra) {
+  const result = createPettyCashRow(direction, data, actor, linkedEntry, extra);
+  if (result.status === 'success') db.persist();
+  return result;
 }
 
 // ─────────────────────────────────────────────
@@ -544,7 +842,7 @@ function logApartmentExpense(data, actor) {
     entryId, expenseId: entryId, entryNumber, apt, date: entryDate,
     type: 'apartment_expense', category,
     description: sanitizePayload({ d: data.description || '' }).d,
-    amount, direction: 'debit', paidFromPettyCash: data.fromPettyCash ? 'Yes' : 'No',
+    amount, direction: 'debit', paidFromPettyCash: (data.fromPettyCash || data.alreadyPaidFromPettyCash) ? 'Yes' : 'No',
     createdAt: now, createdBy: actor.name, updatedAt: now, updatedBy: actor.name,
   };
   ledger.push(newEntry);
@@ -646,7 +944,7 @@ function logSharedExpense(data, actor) {
     const rowObj = {
       entryId, expenseId, entryNumber, apt: aptId, date: expenseDate,
       type: entryType, category, description,
-      amount: share, direction: 'debit', paidFromPettyCash: data.fromPettyCash ? 'Yes' : 'No',
+      amount: share, direction: 'debit', paidFromPettyCash: (data.fromPettyCash || data.alreadyPaidFromPettyCash) ? 'Yes' : 'No',
       createdAt: now, createdBy: actor.name, updatedAt: now, updatedBy: actor.name,
     };
     rowObjects.push(rowObj);
@@ -729,8 +1027,52 @@ function deletePettyCashEntry(data, actor) {
   const remaining = entries.filter((r) => r.entryId !== entryId);
   entries.length = 0;
   entries.push(...remaining);
+
+  // A Petty Cash Topup is stored as two linked rows: the Petty Cash
+  // inflow (this one) and a Service Charge row. Service Charge views
+  // treat a topup as a pure transfer and no longer list that row, so
+  // there is no longer any way to delete it from that side — deleting
+  // the inflow here removes its twin too, rather than leaving a hidden
+  // orphan behind. Only topup twins are touched: a Petty Cash outflow
+  // linked to a Service Charge *expense* is left alone, as before.
+  let deletedTopupTwinCount = 0;
+  if (existing.direction === 'inflow' && existing.linkedServiceChargeEntry) {
+    const scLedger = db.getCollection('ServiceChargeLedger');
+    const keep = scLedger.filter(
+      (r) => !(r && r.type === 'petty_cash_topup' && r.entryNumber === existing.linkedServiceChargeEntry),
+    );
+    deletedTopupTwinCount = scLedger.length - keep.length;
+    if (deletedTopupTwinCount > 0) {
+      scLedger.length = 0;
+      scLedger.push(...keep);
+    }
+  }
+
+  // A stock/equipment purchase entry: once it's deleted, that stock is
+  // no longer recorded as paid from Petty Cash, so its flag is cleared —
+  // otherwise it would still be treated as paid (and excluded from the
+  // pool when issued) with no ledger entry left to back that up.
+  let unlinkedStock = false;
+  if (existing.linkedInventoryItem) {
+    if (existing.linkedInventoryMovement) {
+      const movement = findByPK(db.getCollection('InventoryMovements'), 'entryId', existing.linkedInventoryMovement);
+      if (movement) {
+        movement.paidFromPettyCash = 'No';
+        movement.pettyCashEntryId = '';
+        unlinkedStock = true;
+      }
+    } else {
+      const tool = findByPK(db.getCollection('InventoryItems'), 'itemCode', existing.linkedInventoryItem);
+      if (tool) {
+        tool.paidFromPettyCash = 'No';
+        tool.pettyCashEntryId = '';
+        unlinkedStock = true;
+      }
+    }
+  }
+
   db.persist();
-  return { status: 'success' };
+  return { status: 'success', deletedTopupTwinCount, unlinkedStock };
 }
 
 // ─────────────────────────────────────────────
@@ -1071,7 +1413,17 @@ function saveSettings(data) {
   // other key, which would otherwise silently reset the chosen
   // attachments location back to the default every time someone saves
   // an unrelated Settings field like the estate name.
-  const attachmentsFolder = settings.attachmentsFolder;
+  //
+  // [BUG FIX] The same goes for the app's other internally-managed keys:
+  // the last-sync status written by mobile-sync.js, and the marker that
+  // records the one-time stock import into Petty Cash. None of them is
+  // on this form, so they were being wiped on every Settings save — for
+  // the import marker that would let the import run a second time.
+  const PRESERVED_KEYS = ['attachmentsFolder', 'lastSyncAt', 'lastSyncError', 'stockImportedToPettyCash', 'stockImportSummary'];
+  const preserved = {};
+  PRESERVED_KEYS.forEach((key) => {
+    if (settings[key] !== undefined) preserved[key] = settings[key];
+  });
   Object.keys(settings).forEach((key) => delete settings[key]);
   Object.assign(settings, {
     estateName: data.estateName || '',
@@ -1081,7 +1433,7 @@ function saveSettings(data) {
     logoUrl: data.logoUrl || '',
     mainFolder: data.mainFolder || 'FacilityPro_Attachments',
   });
-  if (attachmentsFolder) settings.attachmentsFolder = attachmentsFolder;
+  Object.assign(settings, preserved);
   db.persist();
   return { status: 'success', message: 'Settings synced.' };
 }
@@ -1292,6 +1644,7 @@ function handleAction(action, data, sessionToken) {
   if (action === 'saveInventoryItem') return saveInventoryItem(data, actor);
   if (action === 'updateInventoryItem') return updateInventoryItem(data, actor);
   if (action === 'receiveStock') return receiveStock(data, actor);
+  if (action === 'importStockToPettyCash') return importStockToPettyCash(data, actor);
   if (action === 'markItemOnOrder') return markItemOnOrder(data, actor);
   if (action === 'cancelOnOrder') return cancelOnOrder(data, actor);
   if (action === 'issueStock') return issueStock(data, actor);

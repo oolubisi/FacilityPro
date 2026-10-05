@@ -269,21 +269,21 @@ function computeServiceChargeBalancesAsOf(ledger, asOfDate) {
   return balances;
 }
 
-// [FEATURE] The pool's own aggregate cash balance — deliberately NOT
-// the sum of computeServiceChargeBalancesAsOf's per-apartment
-// balances above, because those two numbers now mean different
-// things. A "Paid from Petty Cash" expense still reduces the specific
-// apartment's own balance (they were genuinely charged for it) but
-// must NOT reduce the pool's total again here — that cash already
-// left the pool once, at the moment it was transferred into Petty
-// Cash via a Topup. Debiting the pool a second time when it's later
-// spent from the till would double-count the same outflow.
+// [FEATURE] The pool's aggregate balance = every contribution minus
+// every expense, "Paid from Petty Cash" ones included. A Petty Cash
+// Topup is treated as a pure transfer, not spending: it moves money
+// between tills without any apartment being charged, so it's left out
+// of this balance (and out of the Service Charge lists/reports)
+// entirely — the expense it eventually funds is what shows up, once,
+// at the moment it's actually spent. This therefore always equals the
+// sum of the per-apartment balances from computeServiceChargeBalancesAsOf
+// above. Cash that's been topped up into Petty Cash but not yet spent
+// is still counted here as part of the pool.
 function computeServiceChargePoolBalanceAsOf(ledger, asOfDate) {
   const cutoff = asOfDate ? new Date(asOfDate).getTime() : null;
   let balance = 0;
   (ledger || []).forEach((row) => {
-    if (!row) return;
-    if (String(row.paidFromPettyCash).toLowerCase() === "yes") return;
+    if (!row || row.type === "petty_cash_topup") return;
     const rowTime = new Date(row.date).getTime();
     if (cutoff !== null && (isNaN(rowTime) || rowTime > cutoff)) return;
     const amt = Number(row.amount) || 0;
@@ -294,11 +294,9 @@ function computeServiceChargePoolBalanceAsOf(ledger, asOfDate) {
 
 // [FEATURE] One apartment's Service Charge standing at a glance — the
 // "View Apartment Balance" quick-check modal calls this on selection
-// change. Deliberately includes "Paid from Petty Cash" expenses at
-// full weight (unlike the pool's own aggregate balance) since this
-// apartment genuinely was charged for them regardless of which till
-// physically paid — see computeServiceChargePoolBalanceAsOf above for
-// why those two numbers differ on purpose.
+// change. Includes "Paid from Petty Cash" expenses at full weight —
+// the apartment was charged for them regardless of which till
+// physically paid.
 function renderScApartmentBalanceDetail(unitId) {
   const el = document.getElementById("scab_detail");
   if (!el) return;
@@ -474,7 +472,12 @@ function wasApartmentOccupiedDuringPeriod(apt, occupancyLog, startDate, endDate,
 }
 
 function renderServiceChargeLedgerTable(container, ledger) {
-  const sorted = sortByDate(ledger, "date", false);
+  // A Petty Cash Topup is a pure transfer between tills, not an
+  // expense, so it isn't listed here — the expenses it later funds
+  // already appear (flagged "Paid from Petty Cash"), and listing both
+  // made the same money look like it left twice. The topup itself is
+  // still visible in the Petty Cash ledger, where it is a real inflow.
+  const sorted = sortByDate((ledger || []).filter((row) => row && row.type !== "petty_cash_topup"), "date", false);
 
   if (sorted.length === 0) {
     container.innerHTML = `<p style="color:var(--muted); font-size:13px;">No entries yet.</p>`;
@@ -737,11 +740,30 @@ let lastFetchedPettyCashLedger = [];
 function patchLocalPettyCashEntry(entry) {
   if (!entry || !entry.entryId) return;
   lastFetchedPettyCashLedger.push(entry);
-  setLedgerCache("pettycash", { result: lastFetchedPettyCashLedger, items: lastFetchedInventoryItems, movements: lastFetchedInventoryMovements });
+  setLedgerCache("pettycash", { result: lastFetchedPettyCashLedger });
   renderPettyCashSummary();
   const containerId = isDesktopShell() ? "desktop-pc-ledger" : "mobile-pc-ledger";
   const container = document.getElementById(containerId);
   if (container) renderPettyCashLedgerTable(container, lastFetchedPettyCashLedger);
+}
+
+// Called when a Petty Cash entry is created by a form that isn't the
+// Petty Cash section itself (e.g. Receive Stock ticked "paid from Petty
+// Cash"). If the ledger is already loaded this session the new row is
+// patched straight in; if not, patching would cache a ledger holding
+// just that one row, so the stale cache is dropped instead and the
+// next visit loads the full ledger fresh.
+function notePettyCashEntryAdded(entry) {
+  if (!entry || !entry.entryId) return;
+  if ((lastFetchedPettyCashLedger || []).length > 0) {
+    patchLocalPettyCashEntry(entry);
+  } else {
+    try {
+      localStorage.removeItem(LEDGER_CACHE_PREFIX + "pettycash");
+    } catch (e) {
+      /* caching is best-effort */
+    }
+  }
 }
 
 async function refreshPettyCashSection() {
@@ -752,8 +774,6 @@ async function refreshPettyCashSection() {
   const cached = getLedgerCache("pettycash");
   if (cached) {
     lastFetchedPettyCashLedger = cached.result || [];
-    lastFetchedInventoryItems = cached.items || [];
-    lastFetchedInventoryMovements = cached.movements || [];
     renderPettyCashSummary();
     renderPettyCashLedgerTable(container, lastFetchedPettyCashLedger);
     showSyncBadge(containerId, true);
@@ -761,15 +781,7 @@ async function refreshPettyCashSection() {
     container.innerHTML = `<p style="color:var(--muted); font-size:13px;">Loading ledger...</p>`;
   }
 
-  // [FEATURE] Inventory items/movements fetched alongside the ledger
-  // itself now — needed to compute the Tools/Unused Consumables
-  // deduction shown in the summary below (see
-  // computeToolsValueAsOf/computeUnusedConsumablesValueAsOf above).
-  const [result, items, movements] = await callApiSequential([
-    ["getPettyCashLedger", {}],
-    ["getInventoryItems", {}],
-    ["getInventoryMovements", {}],
-  ]);
+  const result = await callApiStrict("getPettyCashLedger", {});
   showSyncBadge(containerId, false);
 
   if (!result || !Array.isArray(result)) {
@@ -780,9 +792,7 @@ async function refreshPettyCashSection() {
   }
 
   lastFetchedPettyCashLedger = result;
-  lastFetchedInventoryItems = Array.isArray(items) ? items : [];
-  lastFetchedInventoryMovements = Array.isArray(movements) ? movements : [];
-  setLedgerCache("pettycash", { result, items: lastFetchedInventoryItems, movements: lastFetchedInventoryMovements });
+  setLedgerCache("pettycash", { result });
   renderPettyCashSummary();
   renderPettyCashLedgerTable(container, result);
 }
@@ -792,33 +802,19 @@ function renderPettyCashSummary() {
   const el = document.getElementById(summaryId);
   if (!el) return;
 
-  const ledgerBalance = computePettyCashBalanceAsOf(lastFetchedPettyCashLedger, null);
-  const toolsValue = computeToolsValueAsOf(lastFetchedInventoryItems, null);
-  const unusedConsumablesValue = computeUnusedConsumablesValueAsOf(lastFetchedInventoryItems, lastFetchedInventoryMovements, null);
-  const balance = ledgerBalance - (toolsValue || 0) - (unusedConsumablesValue || 0);
+  // The balance is simply the ledger's own total. Stock and equipment
+  // bought with Petty Cash are real ledger outflows (ticked "paid from
+  // Petty Cash"), so nothing is estimated or subtracted on top — the
+  // balance shown here always equals the last running balance in the
+  // ledger table below.
+  const balance = computePettyCashBalanceAsOf(lastFetchedPettyCashLedger, null);
 
-  // [FEATURE] Same category breakdown as the printed Petty Cash
-  // Ledger report's header table, all-time rather than for one
-  // period — there's no period selector on this live view. See
-  // generatePettyCashReport in Reports.js for the report's own
-  // version of this same matching logic.
+  // All-time (there's no period selector on this live view), using the
+  // same grouping as the printed Petty Cash Ledger report.
   const outflowRows = (lastFetchedPettyCashLedger || []).filter((row) => row && String(row.direction).toLowerCase() === "outflow");
-  const electricityVendingTotal = outflowRows
-    .filter((row) => /electricity|vending/i.test(String(row.category || "")))
-    .reduce((s, row) => s + (Number(row.amount) || 0), 0);
-  // Individual Apartment / Shared Expense both exclude anything
-  // already counted as Electricity Vending — an electricity purchase
-  // linked to one or several apartments still belongs to its own
-  // category, not double-counted into an apt-based one too.
-  const individualApartmentTotal = outflowRows
-    .filter((row) => {
-      const apt = String(row.apt || "");
-      return apt && apt !== "Petty Cash Transfer" && !apt.toLowerCase().startsWith("shared") && !/electricity|vending/i.test(String(row.category || ""));
-    })
-    .reduce((s, row) => s + (Number(row.amount) || 0), 0);
-  const sharedExpenseTotal = outflowRows
-    .filter((row) => String(row.apt || "").toLowerCase().startsWith("shared") && !/electricity|vending/i.test(String(row.category || "")))
-    .reduce((s, row) => s + (Number(row.amount) || 0), 0);
+  const groups = classifyPettyCashOutflows(outflowRows);
+  const groupRow = (label, value) =>
+    `<tr><td style="padding:4px 0 4px 12px;">${label}</td><td style="padding:4px 0; text-align:right; font-weight:700;">₦${formatMoney(value)}</td></tr>`;
 
   el.innerHTML = `
     <div style="background:#fff; border:2px solid #000; border-radius:12px; padding:14px; margin-bottom:16px;">
@@ -828,11 +824,13 @@ function renderPettyCashSummary() {
     <div style="background:#fff; border:2px solid #000; border-radius:12px; padding:14px; margin-bottom:16px;">
       <div style="font-size:11px; font-weight:900; text-transform:uppercase; color:var(--muted); margin-bottom:8px;">Breakdown (All-Time)</div>
       <table style="width:100%; border-collapse:collapse; font-size:12px;">
-        <tr><td style="padding:4px 0;">Electricity Vending</td><td style="padding:4px 0; text-align:right; font-weight:700;">₦${formatMoney(electricityVendingTotal)}</td></tr>
-        <tr><td style="padding:4px 0;">Individual Apartment</td><td style="padding:4px 0; text-align:right; font-weight:700;">₦${formatMoney(individualApartmentTotal)}</td></tr>
-        <tr><td style="padding:4px 0;">Shared Expense</td><td style="padding:4px 0; text-align:right; font-weight:700;">₦${formatMoney(sharedExpenseTotal)}</td></tr>
-        <tr><td style="padding:4px 0; color:#dc3545;">Tools (deducted)</td><td style="padding:4px 0; text-align:right; font-weight:700; color:#dc3545;">₦${formatMoney(toolsValue || 0)}</td></tr>
-        <tr><td style="padding:4px 0; color:#dc3545;">Unused Consumables (deducted)</td><td style="padding:4px 0; text-align:right; font-weight:700; color:#dc3545;">₦${formatMoney(unusedConsumablesValue || 0)}</td></tr>
+        <tr style="border-bottom:1px solid #ddd;"><td style="padding:4px 0; font-weight:900;">Total Outflow</td><td style="padding:4px 0; text-align:right; font-weight:900; color:#dc3545;">₦${formatMoney(groups.total)}</td></tr>
+        ${groupRow("Electricity Vending", groups.electricityVending)}
+        ${groupRow("Individual Apartment", groups.individualApartment)}
+        ${groupRow("Shared Expense", groups.sharedExpense)}
+        ${groupRow("Tools / Equipment Purchases", groups.tools)}
+        ${groupRow("Consumables Purchases", groups.consumables)}
+        ${groupRow("Other Expenses", groups.other)}
       </table>
     </div>
   `;
@@ -856,51 +854,44 @@ function computePettyCashBalanceAsOf(ledger, asOfDate) {
   return balance;
 }
 
-// [FEATURE] Shared by the live Petty Cash summary and the printed
-// Petty Cash Ledger report — Tools and Consumables are bought using
-// Petty Cash, but that purchase is never recorded as a Petty Cash
-// outflow (Receive Stock and tool creation don't link to Petty Cash
-// the way Service Charge expenses optionally do), so the ledger-based
-// balance alone overstates what's actually left. Tools are a one-time
-// purchase and always count in full. Consumables only count while
-// still unused/in stock — once issued, their cost gets charged to
-// Service Charge instead (see issueStock in Code.gs), so from that
-// point their value is accounted for there, not here.
-function computeToolsValueAsOf(items, asOfDate) {
-  if (!Array.isArray(items)) return null;
-  const cutoff = asOfDate ? asOfDate.getTime() : Date.now();
-  return items
-    .filter((i) => i && i.itemType === "tool")
-    .filter((i) => !i.purchaseDate || new Date(i.purchaseDate).getTime() <= cutoff)
-    .reduce((s, i) => s + (Number(i.currentQty) || 0) * (Number(i.unitCost) || 0), 0);
-}
-function computeUnusedConsumablesValueAsOf(items, movements, asOfDate) {
-  if (!Array.isArray(items) || !Array.isArray(movements)) return null;
-  const cutoff = asOfDate ? asOfDate.getTime() : Date.now();
-  let total = 0;
-  items
-    .filter((i) => i && (i.itemType || "consumable") === "consumable")
-    .forEach((item) => {
-      const currentCost = Number(item.unitCost) || 0;
-      const itemMoves = movements
-        .filter((m) => m && m.itemCode === item.itemCode)
-        .map((m) => ({ ...m, _d: new Date(m.date) }))
-        .filter((m) => !isNaN(m._d.getTime()))
-        .sort((a, b) => a._d - b._d);
-      let qty = 0;
-      let lastCost = currentCost;
-      let foundCostBeforeCutoff = false;
-      itemMoves.forEach((m) => {
-        if (m._d.getTime() > cutoff) return;
-        qty += Number(m.quantity) || 0;
-        if (m.unitCostAtTime !== undefined && m.unitCostAtTime !== "") {
-          lastCost = Number(m.unitCostAtTime) || lastCost;
-          foundCostBeforeCutoff = true;
-        }
-      });
-      total += qty * (foundCostBeforeCutoff ? lastCost : currentCost);
-    });
-  return total;
+// [FEATURE] Splits Petty Cash outflow rows into the groups listed under
+// Total Outflow. Every row lands in exactly ONE group, so the groups
+// always add up to the total (anything matching no named group falls into
+// "other"). Shared by the live summary and the printed ledger report so
+// the two can't drift apart.
+//
+// Tools and consumables bought with Petty Cash arrive here as ordinary
+// ledger outflows linked to their item (ticked "paid from Petty Cash"),
+// so they are grouped by that link rather than estimated from stock value.
+function classifyPettyCashOutflows(outflowRows) {
+  const rows = outflowRows || [];
+  const sum = (list) => list.reduce((total, row) => total + (Number(row.amount) || 0), 0);
+  const isStock = (row) => !!row.linkedInventoryItem;
+  const isElectricity = (row) => /electricity|vending/i.test(String(row.category || ""));
+
+  const stockRows = rows.filter(isStock);
+  const otherRows = rows.filter((row) => !isStock(row));
+  const electricity = otherRows.filter(isElectricity);
+  const nonElectricity = otherRows.filter((row) => !isElectricity(row));
+  const shared = nonElectricity.filter((row) => String(row.apt || "").toLowerCase().startsWith("shared"));
+  const individual = nonElectricity.filter((row) => {
+    const apt = String(row.apt || "");
+    return apt && apt !== "Petty Cash Transfer" && !apt.toLowerCase().startsWith("shared");
+  });
+  const tools = stockRows.filter((row) => row.inventoryKind === "tool");
+  const consumables = stockRows.filter((row) => row.inventoryKind !== "tool");
+
+  const total = sum(rows);
+  const named = sum(electricity) + sum(individual) + sum(shared) + sum(tools) + sum(consumables);
+  return {
+    total,
+    electricityVending: sum(electricity),
+    individualApartment: sum(individual),
+    sharedExpense: sum(shared),
+    tools: sum(tools),
+    consumables: sum(consumables),
+    other: Math.round((total - named) * 100) / 100,
+  };
 }
 
 function renderPettyCashLedgerTable(container, ledger) {
@@ -943,7 +934,7 @@ function renderPettyCashLedgerTable(container, ledger) {
           return `<tr style="border-bottom:1px solid #eee;">
             <td style="padding:6px;">${escapeHtml(formatDateForDisplay(row.date))}</td>
             <td style="padding:6px; font-weight:800;">${escapeHtml(row.apt || "")}</td>
-            <td style="padding:6px;">${escapeHtml(row.category || "")}${row.linkedServiceChargeEntry ? ` <span style="color:var(--muted); font-size:11px;">(SC ${escapeHtml(row.linkedServiceChargeEntry)})</span>` : ""}</td>
+            <td style="padding:6px;">${escapeHtml(row.category || "")}${row.linkedServiceChargeEntry ? ` <span style="color:var(--muted); font-size:11px;">(SC ${escapeHtml(row.linkedServiceChargeEntry)})</span>` : ""}${row.linkedInventoryItem ? ` <span style="color:var(--muted); font-size:11px;">(Stock ${escapeHtml(row.linkedInventoryItem)})</span>` : ""}</td>
             <td style="padding:6px; color:#555;">${escapeHtml(row.description || "")}</td>
             <td style="padding:6px; text-align:right; font-weight:800; color:${isInflow ? "#198754" : "#dc3545"};">${amountDisplay}</td>
             <td style="padding:6px; text-align:right; font-weight:800; color:${row.runningBalance >= 0 ? "inherit" : "#dc3545"};">₦${formatMoney(row.runningBalance)}</td>

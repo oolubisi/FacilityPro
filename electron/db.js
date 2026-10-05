@@ -108,4 +108,15 @@ function getAttachmentsFolder() {
   return fallback;
 }
 
-module.exports = { COLLECTIONS, initDatabase, persist, getCollection, getDbPath, getAttachmentsFolder };
+// [FEATURE] Copies the database file next to itself under a labelled
+// name (facility-pro-data.<label>.json) — used before any bulk,
+// one-time data change so there is always a complete copy to go back
+// to. Persists first so the copy reflects the current in-memory state.
+function backupDatabase(label) {
+  persist();
+  const backupPath = dbPath.replace(/\.json$/, '') + '.' + label + '.json';
+  fs.copyFileSync(dbPath, backupPath);
+  return backupPath;
+}
+
+module.exports = { COLLECTIONS, initDatabase, persist, getCollection, getDbPath, getAttachmentsFolder, backupDatabase };
