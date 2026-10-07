@@ -1373,7 +1373,7 @@ function renderHelpView() {
     {
       icon: "fa-wallet",
       title: "Petty Cash",
-      body: "Manager+ only. Log cash Inflow/Outflow with a running balance shown after every entry. Entries can only be edited or deleted on the day they were created.",
+      body: "Manager+ only. Log cash Inflow/Outflow with a running balance shown after every entry. Entries can only be edited or deleted within 72 hours of creation.",
     },
     {
       icon: "fa-bolt",

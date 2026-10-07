@@ -145,6 +145,7 @@ function resetUserPin(userId) {
 // so this section fetches and refreshes independently.
 // ─────────────────────────────────────────────
 let lastFetchedServiceChargeLedger = [];
+let lastFetchedScPooledInputs = { petty: null, items: null, moves: [] };
 let lastFetchedServiceChargeBudgets = [];
 let lastFetchedRecurringTemplates = [];
 
@@ -161,6 +162,7 @@ function patchLocalServiceChargeEntries(entries) {
     result: lastFetchedServiceChargeLedger,
     budgets: lastFetchedServiceChargeBudgets,
     templates: lastFetchedRecurringTemplates,
+    pooledInputs: lastFetchedScPooledInputs,
   });
   renderServiceChargeSummary();
   const containerId = isDesktopShell() ? "desktop-sc-ledger" : "mobile-sc-ledger";
@@ -179,6 +181,7 @@ async function refreshServiceChargeSection() {
     lastFetchedServiceChargeLedger = cached.result || [];
     lastFetchedServiceChargeBudgets = cached.budgets || [];
     lastFetchedRecurringTemplates = cached.templates || [];
+    if (cached.pooledInputs) lastFetchedScPooledInputs = cached.pooledInputs;
     renderServiceChargeSummary();
     renderServiceChargeLedgerTable(container, lastFetchedServiceChargeLedger);
     renderRecurringExpensesDue();
@@ -189,11 +192,19 @@ async function refreshServiceChargeSection() {
     container.innerHTML = `<p style="color:var(--muted); font-size:13px;">Loading ledger...</p>`;
   }
 
-  const [result, budgets, templates] = await callApiSequential([
+  const [result, budgets, templates, scPettyLedger, scInvItems, scInvMoves] = await callApiSequential([
     ["getServiceChargeLedger", {}],
     ["getServiceChargeBudgets", {}],
     ["getRecurringExpenseTemplates", {}],
+    ["getPettyCashLedger", {}],
+    ["getInventoryItems", {}],
+    ["getInventoryMovements", {}],
   ]);
+  lastFetchedScPooledInputs = {
+    petty: Array.isArray(scPettyLedger) ? scPettyLedger : null,
+    items: Array.isArray(scInvItems) ? scInvItems : null,
+    moves: Array.isArray(scInvMoves) ? scInvMoves : [],
+  };
   showSyncBadge(containerId, false);
 
   if (!result || !Array.isArray(result)) {
@@ -226,13 +237,23 @@ function renderServiceChargeSummary() {
   if (!el) return;
 
   const balances = computeServiceChargeBalancesAsOf(lastFetchedServiceChargeLedger, null);
-  const total = computeServiceChargePoolBalanceAsOf(lastFetchedServiceChargeLedger, null);
+  const inputs = lastFetchedScPooledInputs || {};
+  const b = computePooledBalanceBreakdown(lastFetchedServiceChargeLedger, inputs.petty, inputs.items, inputs.moves, null);
+  const line = (label, v, neg) =>
+    `<div style="display:flex; justify-content:space-between; gap:12px; font-size:12px; margin-top:3px;"><span style="color:var(--muted);">${label}</span><span style="font-weight:700;">${neg ? "−" : ""}₦${formatMoney(v)}</span></div>`;
 
   el.innerHTML = `
     <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px;">
-      <div style="flex:1; min-width:160px; background:#fff; border:2px solid #000; border-radius:12px; padding:14px;">
+      <div style="flex:2; min-width:240px; background:#fff; border:2px solid #000; border-radius:12px; padding:14px;">
         <div style="font-size:11px; font-weight:900; text-transform:uppercase; color:var(--muted);">Pooled Estate Balance (now)</div>
-        <div style="font-size:22px; font-weight:900; margin-top:4px;">₦${formatMoney(total)}</div>
+        <div style="font-size:22px; font-weight:900; margin-top:4px; ${b.pooled < 0 ? "color:var(--danger);" : ""}">₦${formatMoney(b.pooled)}</div>
+        <div style="border-top:1px solid #eee; margin-top:8px; padding-top:6px;">
+          ${line("Ledger balance", b.ledgerBalance, false)}
+          ${line("Less: Tools / Equipment", b.tools, true)}
+          ${line("Less: Consumables", b.consumables, true)}
+          ${line("Less: Petty Cash balance", b.petty, true)}
+          ${b.missing.length ? `<div style="font-size:11px; color:var(--danger); margin-top:4px;">Couldn't load ${b.missing.join(" / ")} — pooled balance may be overstated.</div>` : ""}
+        </div>
       </div>
       <div style="flex:1; min-width:160px; background:#fff; border:2px solid #000; border-radius:12px; padding:14px;">
         <div style="font-size:11px; font-weight:900; text-transform:uppercase; color:var(--muted);">Apartments With Activity</div>
@@ -648,19 +669,15 @@ function renderRecurringTemplatesList() {
   </table></div>`;
 }
 
-// Entries can only be deleted the same calendar day they were created
-// — mirrors Code.gs's isSameCalendarDay(), which is the actual
-// enforcement. This client-side copy only controls whether the Delete
-// button shows at all; the server rejects the request regardless.
+// Entries stay editable/deletable for 72 hours after creation — mirrors
+// local-api.js's isSameCalendarDay(), which is the actual enforcement.
+// This client-side copy only controls whether the buttons show at all;
+// the server rejects the request regardless.
 function isEntrySameCalendarDay(isoString) {
   if (!isoString) return false;
   const d = new Date(isoString);
-  const now = new Date();
-  return (
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate()
-  );
+  if (isNaN(d.getTime())) return false;
+  return Date.now() - d.getTime() <= 72 * 3600 * 1000;
 }
 
 function deleteServiceChargeLedgerEntry(entryId) {
@@ -854,6 +871,60 @@ function computePettyCashBalanceAsOf(ledger, asOfDate) {
   return balance;
 }
 
+// [FEATURE] Stock value as of a date, for the Pooled Balance deductions.
+// Tools: quantity x cost, counted if bought on/before the date. Consumables:
+// quantity and cost reconstructed from the movement history up to the date.
+// Shared by the KPI report, the live Service Charge card and the Service
+// Charge Overall report so all three always value stock the same way.
+function computeInventoryValueAsOf(items, movements, kind, asOfDate) {
+  if (!Array.isArray(items)) return null;
+  const cutoff = asOfDate ? new Date(asOfDate).getTime() : Infinity;
+  let total = 0;
+  items
+    .filter((i) => i && (kind === "tool" ? i.itemType === "tool" : (i.itemType || "consumable") === "consumable"))
+    .forEach((item) => {
+      const currentCost = Number(item.unitCost) || 0;
+      if (kind === "tool") {
+        if (item.purchaseDate && new Date(item.purchaseDate).getTime() > cutoff) return;
+        total += (Number(item.currentQty) || 0) * currentCost;
+        return;
+      }
+      const moves = (movements || [])
+        .filter((m) => m && m.itemCode === item.itemCode)
+        .map((m) => ({ ...m, _d: new Date(m.date) }))
+        .filter((m) => !isNaN(m._d.getTime()))
+        .sort((a, b) => a._d - b._d);
+      let qty = 0, lastCost = currentCost, foundCost = false;
+      moves.forEach((m) => {
+        if (m._d.getTime() > cutoff) return;
+        qty += Number(m.quantity) || 0;
+        if (m.unitCostAtTime !== undefined && m.unitCostAtTime !== "") {
+          lastCost = Number(m.unitCostAtTime) || lastCost;
+          foundCost = true;
+        }
+      });
+      total += qty * (foundCost ? lastCost : currentCost);
+    });
+  return total;
+}
+
+// [FEATURE] Pooled Balance = ledger balance (contributions less every
+// expense) LESS the money that is not free cash: stock already bought
+// (tools/equipment and consumables on hand) and the Petty Cash till.
+// A figure that can't be loaded counts as 0 and is flagged in `missing`
+// so a report never silently overstates the pool.
+function computePooledBalanceBreakdown(scLedger, pettyLedger, items, movements, asOfDate) {
+  const ledgerBalance = computeServiceChargePoolBalanceAsOf(scLedger, asOfDate);
+  const tools = computeInventoryValueAsOf(items, movements, "tool", asOfDate);
+  const consumables = computeInventoryValueAsOf(items, movements, "consumable", asOfDate);
+  const petty = Array.isArray(pettyLedger) ? computePettyCashBalanceAsOf(pettyLedger, asOfDate) : null;
+  const missing = [];
+  if (tools === null || consumables === null) missing.push("inventory");
+  if (petty === null) missing.push("petty cash");
+  const pooled = ledgerBalance - (tools || 0) - (consumables || 0) - (petty || 0);
+  return { ledgerBalance, tools: tools || 0, consumables: consumables || 0, petty: petty || 0, pooled, missing };
+}
+
 // [FEATURE] Splits Petty Cash outflow rows into the groups listed under
 // Total Outflow. Every row lands in exactly ONE group, so the groups
 // always add up to the total (anything matching no named group falls into
@@ -939,7 +1010,7 @@ function renderPettyCashLedgerTable(container, ledger) {
             <td style="padding:6px; text-align:right; font-weight:800; color:${isInflow ? "#198754" : "#dc3545"};">${amountDisplay}</td>
             <td style="padding:6px; text-align:right; font-weight:800; color:${row.runningBalance >= 0 ? "inherit" : "#dc3545"};">₦${formatMoney(row.runningBalance)}</td>
             <td style="padding:6px; text-align:right; white-space:nowrap;">
-              ${canDelete ? `<button type="button" data-modal-action="delete-petty-cash-entry" data-id="${escapeHtml(row.entryId)}" style="background:#fdecea; color:#dc3545; border:0; border-radius:6px; padding:4px 8px; font-size:11px; font-weight:700; cursor:pointer;">Delete</button>` : `<span style="color:var(--muted); font-size:11px;">Locked</span>`}
+              ${canDelete ? `<button type="button" data-modal-action="delete-petty-cash-entry" data-id="${escapeHtml(row.entryId)}" style="background:#fdecea; color:#dc3545; border:0; border-radius:6px; padding:4px 8px; font-size:11px; font-weight:700; cursor:pointer;">Delete</button>` : `<button type="button" data-modal-action="delete-petty-cash-entry" data-override="1" data-id="${escapeHtml(row.entryId)}" title="Older entry — delete with override" style="background:#fff; color:#dc3545; border:1px solid #dc3545; border-radius:6px; padding:4px 8px; font-size:11px; font-weight:700; cursor:pointer;">Delete&nbsp;(override)</button>`}
             </td>
           </tr>`;
         })
@@ -948,9 +1019,53 @@ function renderPettyCashLedgerTable(container, ledger) {
   </table></div>`;
 }
 
-function deletePettyCashLedgerEntry(entryId) {
-  if (!window.confirm("Delete this entry? This can't be undone.")) return;
-  callApi("deletePettyCashEntry", { entryId }).then((result) => {
+// In-app "type to confirm" dialog. window.prompt() is not supported in
+// Electron (it silently returns nothing), so this builds its own overlay.
+// Resolves true only if the typed digits equal `expected`.
+function askTypedConfirmation(title, detailHtml, expected) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.style.cssText = "position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:100000; display:flex; align-items:center; justify-content:center; padding:16px;";
+    overlay.innerHTML = `<div style="background:#fff; color:#000; border:2px solid #000; border-radius:12px; padding:18px; width:100%; max-width:380px; font-family:inherit;">
+      <h3 style="margin:0 0 8px; font-size:15px; font-weight:900; color:#dc3545;">${escapeHtml(title)}</h3>
+      <div style="font-size:13px; margin-bottom:12px; line-height:1.4;">${detailHtml}</div>
+      <label style="font-size:12px; font-weight:800;">Type the amount (${escapeHtml(expected)}) to confirm</label>
+      <input type="text" inputmode="numeric" autocomplete="off" style="width:100%; box-sizing:border-box; margin:6px 0 4px; padding:8px; border:2px solid #000; border-radius:8px; font-size:14px;">
+      <div class="tc-err" style="color:#dc3545; font-size:12px; min-height:16px;"></div>
+      <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:8px;">
+        <button type="button" class="tc-cancel" style="padding:8px 14px; border:2px solid #000; background:#fff; border-radius:8px; font-weight:800; cursor:pointer;">Cancel</button>
+        <button type="button" class="tc-ok" style="padding:8px 14px; border:0; background:#dc3545; color:#fff; border-radius:8px; font-weight:800; cursor:pointer;">Delete</button>
+      </div></div>`;
+    document.body.appendChild(overlay);
+    const input = overlay.querySelector("input");
+    const err = overlay.querySelector(".tc-err");
+    const done = (v) => { overlay.remove(); resolve(v); };
+    overlay.querySelector(".tc-cancel").onclick = () => done(false);
+    const ok = () => {
+      if (String(input.value).replace(/[^0-9]/g, "") === String(expected).replace(/[^0-9]/g, "")) done(true);
+      else err.textContent = "Amount doesn't match.";
+    };
+    overlay.querySelector(".tc-ok").onclick = ok;
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") ok(); if (e.key === "Escape") done(false); });
+    setTimeout(() => input.focus(), 30);
+  });
+}
+
+async function deletePettyCashLedgerEntry(entryId, override) {
+  if (override) {
+    // Older entries need a stronger confirmation: the amount must be
+    // typed back, so a mis-click can't remove the wrong historic row.
+    const row = (lastFetchedPettyCashLedger || []).find((r) => r && r.entryId === entryId);
+    if (!row) {
+      showToast("Couldn't find that entry on screen — refresh and try again.", "error");
+      return;
+    }
+    const expected = String(Math.round(Number(row.amount) || 0));
+    const detail = `This entry is more than 72 hours old. Deleting it changes past balances (a backup is taken first).<br><br><b>${escapeHtml(formatDateForDisplay(row.date))} · ${escapeHtml(row.category || "")} · ₦${escapeHtml(formatMoney(row.amount))}</b>`;
+    const confirmed = await askTypedConfirmation("Delete older entry", detail, expected);
+    if (!confirmed) return;
+  } else if (!window.confirm("Delete this entry? This can't be undone.")) return;
+  callApi("deletePettyCashEntry", { entryId, override: !!override }).then((result) => {
     if (result && result.status === "success") {
       showToast("Entry deleted.", "success");
       refreshPettyCashSection();
@@ -1442,7 +1557,7 @@ function handleModalContentClick(event) {
       deleteServiceChargeLedgerEntry(actionEl.dataset.id);
       break;
     case "delete-petty-cash-entry":
-      deletePettyCashLedgerEntry(actionEl.dataset.id);
+      deletePettyCashLedgerEntry(actionEl.dataset.id, actionEl.dataset.override === "1");
       break;
     case "edit-energy-entry":
       editEnergyLedgerEntry(actionEl.dataset.id);

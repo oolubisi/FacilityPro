@@ -1,4 +1,4 @@
-const CACHE_NAME = "facility-pro-v17";
+const CACHE_NAME = "facility-pro-v18";
 
 const STATIC_ASSETS = [
   "./",

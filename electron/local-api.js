@@ -793,12 +793,15 @@ function wasApartmentOccupiedOnDate(apt, occupancyLog, targetDateStr, currentApt
   return false;
 }
 
+// Ledger entries stay editable/deletable for 72 hours after creation,
+// then lock. (Name kept for the existing call sites.)
+const ENTRY_EDIT_WINDOW_HOURS = 72;
 function isSameCalendarDay(isoString) {
   if (!isoString) return false;
   const d = new Date(isoString);
-  const now = new Date();
   if (isNaN(d.getTime())) return false;
-  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  const age = Date.now() - d.getTime();
+  return age <= ENTRY_EDIT_WINDOW_HOURS * 3600 * 1000;
 }
 
 function logContribution(data, actor) {
@@ -983,7 +986,7 @@ function deleteServiceChargeEntry(data, actor) {
   const existing = findByPK(ledger, 'entryId', entryId);
   if (!existing) return { status: 'error', message: 'Entry not found.' };
   if (!isSameCalendarDay(existing.createdAt)) {
-    return { status: 'error', message: 'This entry can only be deleted on the day it was created.' };
+    return { status: 'error', message: 'This entry can only be deleted within 72 hours of being created.' };
   }
 
   let idsToDelete = [entryId];
@@ -1020,8 +1023,15 @@ function deletePettyCashEntry(data, actor) {
   const entries = db.getCollection('PettyCash');
   const existing = findByPK(entries, 'entryId', entryId);
   if (!existing) return { status: 'error', message: 'Entry not found.' };
+  let backupFile = null;
   if (!isSameCalendarDay(existing.createdAt)) {
-    return { status: 'error', message: 'This entry can only be deleted on the day it was created.' };
+    if (!data.override) {
+      return { status: 'error', message: 'This entry can only be deleted within 72 hours of being created.' };
+    }
+    // Override for older entries (e.g. a duplicate from past editing):
+    // snapshot the whole database first so it can be restored.
+    try { backupFile = db.backupDatabase('before-delete-old-petty-cash'); }
+    catch (e) { return { status: 'error', message: 'Could not back up the data first, so nothing was deleted: ' + e.message }; }
   }
 
   const remaining = entries.filter((r) => r.entryId !== entryId);
@@ -1072,7 +1082,7 @@ function deletePettyCashEntry(data, actor) {
   }
 
   db.persist();
-  return { status: 'success', deletedTopupTwinCount, unlinkedStock };
+  return { status: 'success', deletedTopupTwinCount, unlinkedStock, backupFile };
 }
 
 // ─────────────────────────────────────────────
@@ -1117,7 +1127,7 @@ function updateEnergyEntry(data, actor) {
   const existing = findByPK(ledger, 'entryId', entryId);
   if (!existing) return { status: 'error', message: 'Entry not found.' };
   if (!isSameCalendarDay(existing.createdAt)) {
-    return { status: 'error', message: 'Entries can only be edited on the day they were created.' };
+    return { status: 'error', message: 'Entries can only be edited within 72 hours of being created.' };
   }
 
   const update = { entryId, updatedAt: new Date().toISOString(), updatedBy: actor.name };
@@ -1147,7 +1157,7 @@ function deleteEnergyEntry(data, actor) {
   const existing = findByPK(ledger, 'entryId', entryId);
   if (!existing) return { status: 'error', message: 'Entry not found.' };
   if (!isSameCalendarDay(existing.createdAt)) {
-    return { status: 'error', message: 'Entries can only be deleted on the day they were created.' };
+    return { status: 'error', message: 'Entries can only be deleted within 72 hours of being created.' };
   }
   const remaining = ledger.filter((r) => r.entryId !== entryId);
   ledger.length = 0;

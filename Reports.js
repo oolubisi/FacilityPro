@@ -1294,42 +1294,7 @@ async function compileReportPreview() {
     // so they can appear as their own rows in this same breakdown
     // table rather than requiring a separate report.
     function inventoryValueAsOf(itemTypeFilter, asOfDate) {
-      if (!Array.isArray(inventoryItems)) return null;
-      const cutoff = asOfDate.getTime();
-      let total = 0;
-      inventoryItems
-        .filter((i) => i && (itemTypeFilter === "tool" ? i.itemType === "tool" : (i.itemType || "consumable") === "consumable"))
-        .forEach((item) => {
-          const currentCost = Number(item.unitCost) || 0;
-          if (itemTypeFilter === "tool") {
-            // No movement history for tools — included if purchased
-            // on or before the cutoff (or has no recorded purchase
-            // date at all, treated as always having existed).
-            if (item.purchaseDate && new Date(item.purchaseDate).getTime() > cutoff) return;
-            total += (Number(item.currentQty) || 0) * currentCost;
-            return;
-          }
-          // Consumables: walk movement history up to the cutoff to
-          // recover quantity and the cost in effect at that point.
-          const itemMoves = (inventoryMovements || [])
-            .filter((m) => m && m.itemCode === item.itemCode)
-            .map((m) => ({ ...m, _d: new Date(m.date) }))
-            .filter((m) => !isNaN(m._d.getTime()))
-            .sort((a, b) => a._d - b._d);
-          let qty = 0;
-          let lastCost = currentCost;
-          let foundCostBeforeCutoff = false;
-          itemMoves.forEach((m) => {
-            if (m._d.getTime() > cutoff) return;
-            qty += Number(m.quantity) || 0;
-            if (m.unitCostAtTime !== undefined && m.unitCostAtTime !== "") {
-              lastCost = Number(m.unitCostAtTime) || lastCost;
-              foundCostBeforeCutoff = true;
-            }
-          });
-          total += qty * (foundCostBeforeCutoff ? lastCost : currentCost);
-        });
-      return total;
+      return computeInventoryValueAsOf(inventoryItems, inventoryMovements, itemTypeFilter, asOfDate);
     }
 
     function inventoryActivityInPeriod(itemTypeFilter) {
@@ -1860,9 +1825,12 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
 
   viewport.innerHTML = `<p style="padding:20px; color:#666;">Loading Service Charge data...</p>`;
 
-  const [ledger, occupancyLog] = await callApiSequential([
+  const [ledger, occupancyLog, pettyLedgerRaw, invItemsRaw, invMovesRaw] = await callApiSequential([
     ["getServiceChargeLedger", {}],
     ["getOccupancyLog", {}],
+    ["getPettyCashLedger", {}],
+    ["getInventoryItems", {}],
+    ["getInventoryMovements", {}],
   ]);
   if (!ledger || !Array.isArray(ledger)) {
     viewport.innerHTML = `<p style="padding:20px; color:#dc3545; font-weight:700;">${escapeHtml((ledger && ledger.message) || "Couldn't load the Service Charge ledger.")}</p>`;
@@ -1879,8 +1847,15 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
   // and the live view always agree. A Petty Cash Topup is a pure
   // transfer between tills and is left out of the pool, the lists, and
   // the totals below entirely.
-  const openingTotal = computeServiceChargePoolBalanceAsOf(ledger, dayBeforeStart);
-  const closingTotal = computeServiceChargePoolBalanceAsOf(ledger, endDate);
+  const pettyLedgerForPool = Array.isArray(pettyLedgerRaw) ? pettyLedgerRaw : null;
+  const invItemsForPool = Array.isArray(invItemsRaw) ? invItemsRaw : null;
+  const invMovesForPool = Array.isArray(invMovesRaw) ? invMovesRaw : [];
+  // Pooled Balance = ledger balance less tools/equipment, consumables
+  // and the Petty Cash till (see computePooledBalanceBreakdown).
+  const openingBreakdown = computePooledBalanceBreakdown(ledger, pettyLedgerForPool, invItemsForPool, invMovesForPool, dayBeforeStart);
+  const closingBreakdown = computePooledBalanceBreakdown(ledger, pettyLedgerForPool, invItemsForPool, invMovesForPool, endDate);
+  const openingTotal = openingBreakdown.pooled;
+  const closingTotal = closingBreakdown.pooled;
 
   // Historically-accurate occupancy count for THIS period — not
   // "currently occupied right now," which could be wrong for a report
@@ -2007,7 +1982,7 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
           <th style="padding:6px 4px;">Category</th>
           <th style="padding:6px 4px;">Notes</th>
           <th style="padding:6px 2px; text-align:right;">Amount</th>
-          <th style="padding:6px 4px; text-align:right;">Balance</th>
+          <th style="padding:6px 4px; text-align:right;">Ledger Bal.</th>
         </tr></thead>
         <tbody>
           ${sortedRows
@@ -2100,6 +2075,27 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
       <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Shared Expenses</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(totalSharedExpense)}</td><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Apartment-Specific Expenses</td><td style="border:1px solid #000; padding:6px;">₦${formatMoney(totalApartmentExpense)}</td></tr>
       <tr><td style="border:1px solid #000; padding:6px; background:#f9f9f9;">Apartments Occupied This Period</td><td colspan="3" style="border:1px solid #000; padding:6px;">${occupiedDuringPeriod.length} of ${realApartments.length}</td></tr>
     </table>
+    <table style="width:100%; border-collapse:collapse; border:2px solid #000; font-size:13px; margin-bottom:20px;">
+      <thead><tr style="background:#f9f9f9; border-bottom:2px solid #000; text-align:left;">
+        <th style="padding:6px; border:1px solid #000;">Pooled Balance Reconciliation</th>
+        <th style="padding:6px; border:1px solid #000; text-align:right;">Opening</th>
+        <th style="padding:6px; border:1px solid #000; text-align:right;">Closing</th>
+      </tr></thead>
+      <tbody>
+        ${[
+          ["Ledger balance (contributions less all expenses)", openingBreakdown.ledgerBalance, closingBreakdown.ledgerBalance, false],
+          ["Less: Tools / Equipment", openingBreakdown.tools, closingBreakdown.tools, true],
+          ["Less: Consumables", openingBreakdown.consumables, closingBreakdown.consumables, true],
+          ["Less: Petty Cash balance", openingBreakdown.petty, closingBreakdown.petty, true],
+        ]
+          .map(
+            ([label, o, c, neg]) => `<tr><td style="padding:6px; border:1px solid #000;">${label}</td><td style="padding:6px; border:1px solid #000; text-align:right;">${neg ? "-" : ""}₦${formatMoney(o)}</td><td style="padding:6px; border:1px solid #000; text-align:right;">${neg ? "-" : ""}₦${formatMoney(c)}</td></tr>`,
+          )
+          .join("")}
+        <tr style="font-weight:900; background:#f9f9f9;"><td style="padding:6px; border:1px solid #000;">Pooled Balance</td><td style="padding:6px; border:1px solid #000; text-align:right; ${openingTotal < 0 ? "color:#dc3545;" : ""}">₦${formatMoney(openingTotal)}</td><td style="padding:6px; border:1px solid #000; text-align:right; ${closingTotal < 0 ? "color:#dc3545;" : ""}">₦${formatMoney(closingTotal)}</td></tr>
+      </tbody>
+    </table>
+    ${closingBreakdown.missing.length ? `<p style="font-size:11px; color:#dc3545; margin:-12px 0 16px;">Couldn't load ${closingBreakdown.missing.join(" / ")} — pooled balance may be overstated.</p>` : ""}
     <h3 style="font-size:14px; font-weight:900; text-transform:uppercase; margin:0 0 6px 0; text-decoration:underline;">Activity (${escapeHtml(formatDateForDisplay(startDateStr))} &mdash; ${escapeHtml(formatDateForDisplay(endDateStr))})</h3>
     ${activityTable}
     ${apartmentBreakdownPages}
