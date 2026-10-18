@@ -534,7 +534,7 @@ function renderDiagnosticsPanel() {
         <div><strong>Service Worker:</strong> ${swReady ? "Supported" : "Unavailable"}</div>
         <div><strong>Offline Queue:</strong> ${queue.length}</div>
         <div><strong>Cached Reads:</strong> ${backups}</div>
-        <div><strong>Backend URL:</strong> ${escapeHtml(GAS_URL.slice(0, 42))}...</div>
+        <div><strong>Sync Source:</strong> Google Drive (read-only)${window.mobileSnapshot && window.mobileSnapshot.generatedAt ? " — as of " + escapeHtml(formatDateForDisplay(window.mobileSnapshot.generatedAt)) : ""}</div>
         <div><strong>App Cache:</strong> facility-pro-v16</div>
       </div>
       <div style="margin-top:10px; font-size:13px;">

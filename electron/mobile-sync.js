@@ -1,16 +1,26 @@
-// mobile-sync.js — Pushes a read-only snapshot of the local data to
-// the small Apps Script relay added for exactly this purpose (see
-// uploadMobileSnapshot in Code.gs), so the mobile app can pull it down
-// and show a read-only view. This is the one deliberately narrow
-// exception to "the desktop app doesn't talk to Apps Script anymore" —
-// everything else in this app (db.js, local-api.js) never touches the
-// network at all.
+// mobile-sync.js — Pushes a read-only snapshot of the local data into
+// the Google Drive-synced folder on this machine, one JSON file per
+// collection plus a manifest.json. Drive's own desktop client is what
+// actually gets this to the cloud; this file just writes plain JSON to
+// a local path, the same way db.js writes the main database file.
+//
+// Replaces the previous design, which POSTed the whole snapshot to a
+// small Apps Script relay (uploadMobileSnapshot in Code.gs) for the
+// phone PWA to pull from. That relay — and Apps Script generally — is
+// no longer used anywhere in this app; see drive-sync.js (mobile side)
+// for how the phone now reads these same files directly out of Drive
+// via the Drive API.
 
+const fs = require('fs');
+const path = require('path');
 const db = require('./db');
 
-const GAS_URL =
-  'https://script.google.com/macros/s/AKfycbxG8ubpGZdJtvY61-wmVw2O9J6NOwstoQQ4SMsXq0JMsttXf61dKwSrbEVfcBPQysmY/exec';
-const API_TOKEN = '38f1f6e7-86f7-4a27-bffe-96303db14298';
+// Default location of the Drive-synced folder this machine writes
+// into. Overridable via Settings.driveSyncFolder (same pattern as
+// Settings.attachmentsFolder) for anyone running this on a different
+// machine or Drive account later — falls back to this path when unset.
+const DEFAULT_SYNC_FOLDER =
+  '/Users/kayodeolubisi/Library/CloudStorage/GoogleDrive-oolubisi@gmail.com/My Drive/FacilityPro Sync';
 
 // Collections meaningful to view on mobile. Sessions and Users are
 // deliberately excluded — Sessions has no purpose once desktop dropped
@@ -24,20 +34,23 @@ const SNAPSHOT_COLLECTIONS = [
   'RecurringExpenseTemplates', 'ServiceChargeBudgets', 'ServiceChargeLedger',
 ];
 
-function buildSnapshot() {
-  const snapshot = {};
-  SNAPSHOT_COLLECTIONS.forEach((name) => {
-    snapshot[name] = db.getCollection(name);
-  });
-  snapshot.Settings = db.getCollection('Settings');
-  snapshot.generatedAt = new Date().toISOString();
-  return snapshot;
+function getSyncFolder() {
+  const settings = db.getCollection('Settings');
+  const configured = settings && settings.driveSyncFolder;
+  return (configured && typeof configured === 'string') ? configured : DEFAULT_SYNC_FOLDER;
 }
 
-// Returns { status: 'success', ... } or { status: 'error', message }.
-// Never throws — every failure path returns an error result instead,
-// since this can be invoked over IPC (needs a result to show) or
-// silently on app exit (needs to not crash the quit sequence).
+// Writes `value` to `<folder>/<name>.json` atomically — via a temp
+// file + rename, same pattern as db.js's persist() — so Drive's
+// desktop client never catches a half-written file mid-sync and
+// uploads a corrupt/truncated snapshot.
+function writeJsonFile(folder, name, value) {
+  const finalPath = path.join(folder, name + '.json');
+  const tmpPath = finalPath + '.tmp';
+  fs.writeFileSync(tmpPath, JSON.stringify(value), 'utf8');
+  fs.renameSync(tmpPath, finalPath);
+}
+
 // [FEATURE] Records the outcome of every sync attempt — success
 // timestamp or failure reason — directly in Settings, so both the
 // desktop Settings screen and the next app launch can tell someone
@@ -59,44 +72,35 @@ function recordSyncOutcome(result) {
   db.persist();
 }
 
+// Returns { status: 'success', timestamp } or { status: 'error', message }.
+// Never throws — every failure path returns an error result instead,
+// since this can be invoked over IPC (needs a result to show) or
+// silently on app exit (needs to not crash the quit sequence).
 async function syncMobileSnapshot() {
-  const snapshot = buildSnapshot();
-  let response;
+  const folder = getSyncFolder();
+  const generatedAt = new Date().toISOString();
+
   try {
-    response = await fetch(GAS_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'uploadMobileSnapshot', data: { snapshot }, token: API_TOKEN }),
+    fs.mkdirSync(folder, { recursive: true });
+
+    SNAPSHOT_COLLECTIONS.forEach((name) => {
+      writeJsonFile(folder, name, db.getCollection(name));
     });
+    writeJsonFile(folder, 'Settings', db.getCollection('Settings'));
+    writeJsonFile(folder, 'manifest', { generatedAt, collections: SNAPSHOT_COLLECTIONS });
   } catch (err) {
-    const result = { status: 'error', message: 'Could not reach the cloud relay: ' + String(err && err.message ? err.message : err) };
+    const result = {
+      status: 'error',
+      message: 'Could not write to the Drive sync folder (' + folder + '): ' +
+        String(err && err.message ? err.message : err),
+    };
     recordSyncOutcome(result);
     return result;
   }
 
-  if (!response.ok) {
-    const result = { status: 'error', message: 'Cloud relay returned HTTP ' + response.status + '.' };
-    recordSyncOutcome(result);
-    return result;
-  }
-
-  let result;
-  try {
-    result = await response.json();
-  } catch (err) {
-    const failResult = { status: 'error', message: 'Cloud relay returned an unreadable response.' };
-    recordSyncOutcome(failResult);
-    return failResult;
-  }
-
-  if (!result || result.status !== 'success') {
-    const failResult = { status: 'error', message: (result && result.message) || 'Snapshot upload failed.' };
-    recordSyncOutcome(failResult);
-    return failResult;
-  }
-  const successResult = { status: 'success', timestamp: result.timestamp };
-  recordSyncOutcome(successResult);
-  return successResult;
+  const result = { status: 'success', timestamp: generatedAt };
+  recordSyncOutcome(result);
+  return result;
 }
 
-module.exports = { syncMobileSnapshot };
+module.exports = { syncMobileSnapshot, getSyncFolder };
