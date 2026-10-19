@@ -523,7 +523,7 @@ function renderServiceChargeLedgerTable(container, ledger) {
     <tbody>
       ${sorted
         .map((row) => {
-          const canDelete = isEntrySameCalendarDay(row.createdAt);
+          const canDelete = isEntrySameCalendarDay(row.createdAt) || (appSettings && appSettings.transactionsUnlocked);
           const amountDisplay = `${row.direction === "credit" ? "+" : "-"}₦${formatMoney(row.amount)}`;
           const paidFromPettyCash = String(row.paidFromPettyCash).toLowerCase() === "yes";
           return `<tr style="border-bottom:1px solid #eee;">
@@ -999,7 +999,9 @@ function renderPettyCashLedgerTable(container, ledger) {
     <tbody>
       ${displayRows
         .map((row) => {
-          const canDelete = isEntrySameCalendarDay(row.createdAt);
+          const canDelete = isEntrySameCalendarDay(row.createdAt) || (appSettings && appSettings.transactionsUnlocked);
+          const isLinked = !!(row.linkedServiceChargeEntry || row.linkedInventoryItem || row.linkedInventoryMovement);
+          const canEditRow = canDelete && !isLinked;
           const isInflow = String(row.direction).toLowerCase() === "inflow";
           const amountDisplay = `${isInflow ? "+" : "-"}₦${formatMoney(row.amount)}`;
           return `<tr style="border-bottom:1px solid #eee;">
@@ -1010,6 +1012,7 @@ function renderPettyCashLedgerTable(container, ledger) {
             <td style="padding:6px; text-align:right; font-weight:800; color:${isInflow ? "#198754" : "#dc3545"};">${amountDisplay}</td>
             <td style="padding:6px; text-align:right; font-weight:800; color:${row.runningBalance >= 0 ? "inherit" : "#dc3545"};">₦${formatMoney(row.runningBalance)}</td>
             <td style="padding:6px; text-align:right; white-space:nowrap;">
+              ${canEditRow ? `<button type="button" data-modal-action="edit-petty-cash-entry" data-id="${escapeHtml(row.entryId)}" style="background:var(--text); color:#fff; border:0; border-radius:6px; padding:4px 8px; font-size:11px; font-weight:700; cursor:pointer; margin-right:4px;">Edit</button>` : ""}
               ${canDelete ? `<button type="button" data-modal-action="delete-petty-cash-entry" data-id="${escapeHtml(row.entryId)}" style="background:#fdecea; color:#dc3545; border:0; border-radius:6px; padding:4px 8px; font-size:11px; font-weight:700; cursor:pointer;">Delete</button>` : `<button type="button" data-modal-action="delete-petty-cash-entry" data-override="1" data-id="${escapeHtml(row.entryId)}" title="Older entry — delete with override" style="background:#fff; color:#dc3545; border:1px solid #dc3545; border-radius:6px; padding:4px 8px; font-size:11px; font-weight:700; cursor:pointer;">Delete&nbsp;(override)</button>`}
             </td>
           </tr>`;
@@ -1049,6 +1052,20 @@ function askTypedConfirmation(title, detailHtml, expected) {
     input.addEventListener("keydown", (e) => { if (e.key === "Enter") ok(); if (e.key === "Escape") done(false); });
     setTimeout(() => input.focus(), 30);
   });
+}
+
+function editPettyCashLedgerEntry(entryId) {
+  const entry = (lastFetchedPettyCashLedger || []).find((r) => r && r.entryId === entryId);
+  if (!entry) {
+    showToast("Entry not found.", "error");
+    return;
+  }
+  if (entry.linkedServiceChargeEntry || entry.linkedInventoryItem || entry.linkedInventoryMovement) {
+    showToast("This entry is linked to a Service Charge or Inventory record — edit it from there instead.", "warning");
+    return;
+  }
+  const isInflow = String(entry.direction).toLowerCase() === "inflow";
+  openModal(isInflow ? "pettycashinflow" : "pettycashoutflow", entry);
 }
 
 async function deletePettyCashLedgerEntry(entryId, override) {
@@ -1191,7 +1208,7 @@ function renderEnergyLedgerTable(container, ledger) {
     <tbody>
       ${displayRows
         .map((row) => {
-          const canEdit = isEntrySameCalendarDay(row.createdAt);
+          const canEdit = isEntrySameCalendarDay(row.createdAt) || (appSettings && appSettings.transactionsUnlocked);
           const isInflow = String(row.direction).toLowerCase() === "inflow";
           const amountDisplay = `${isInflow ? "+" : "-"}₦${formatMoney(row.amount)}`;
           return `<tr style="border-bottom:1px solid #eee;">
@@ -1555,6 +1572,9 @@ function handleModalContentClick(event) {
       break;
     case "delete-service-charge-entry":
       deleteServiceChargeLedgerEntry(actionEl.dataset.id);
+      break;
+    case "edit-petty-cash-entry":
+      editPettyCashLedgerEntry(actionEl.dataset.id);
       break;
     case "delete-petty-cash-entry":
       deletePettyCashLedgerEntry(actionEl.dataset.id, actionEl.dataset.override === "1");

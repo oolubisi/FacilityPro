@@ -938,6 +938,12 @@ async function openModal(type, editData = null) {
           )
           .join("")}
       </div>
+      <div class="form-field span-3" style="margin-top:4px;">
+        <label style="display:flex; align-items:center; gap:8px; font-weight:700; padding:6px 0; cursor:pointer;">
+          <input type="checkbox" id="rg_include_apartments" ${isEdit && editData.includeApartmentBreakdowns ? "checked" : ""} style="width:auto;">
+          Include a full breakdown page for each occupied apartment in "Service Charge — Overall"
+        </label>
+      </div>
     `;
 
     submit.onclick = () => {
@@ -955,6 +961,7 @@ async function openModal(type, editData = null) {
         id: isEdit ? editData.id : "group-" + Date.now(),
         name,
         reportKeys: checked,
+        includeApartmentBreakdowns: document.getElementById("rg_include_apartments")?.checked === true,
       });
       closeModal();
       showToast(isEdit ? "Group updated." : "Group created.", "success");
@@ -964,12 +971,12 @@ async function openModal(type, editData = null) {
 
   // ── PETTY CASH: INFLOW ──
   else if (type === "pettycashinflow") {
-    title.innerText = "Log Petty Cash Inflow";
+    title.innerText = isEdit ? "Edit Petty Cash Inflow" : "Log Petty Cash Inflow";
     body.innerHTML = `
-      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="pc_in_amount" type="text" inputmode="numeric" oninput="maskCurrencyInput(this)" ${ls}></div>
-      <div class="form-field"><label ${lbl}>Date</label><input id="pc_in_date" type="date" value="${getLocalDateString()}" ${ls}></div>
-      <div class="form-field span-3"><label ${lbl}>Category</label><input id="pc_in_category" placeholder="e.g. Top-up from Estate Account" ${ls}></div>
-      <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="pc_in_description" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="pc_in_amount" type="text" inputmode="numeric" oninput="maskCurrencyInput(this)" value="${isEdit ? formatMoney(editData.amount || 0) : ""}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Date</label><input id="pc_in_date" type="date" value="${isEdit && editData.date ? String(editData.date).slice(0, 10) : getLocalDateString()}" ${ls}></div>
+      <div class="form-field span-3"><label ${lbl}>Category</label><input id="pc_in_category" placeholder="e.g. Top-up from Estate Account" value="${isEdit ? escapeHtml(editData.category || "") : ""}" ${ls}></div>
+      <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="pc_in_description" value="${isEdit ? escapeHtml(editData.description || "") : ""}" ${ls}></div>
     `;
 
     submit.onclick = () => {
@@ -978,23 +985,25 @@ async function openModal(type, editData = null) {
         showToast("Enter a positive amount.", "error");
         return;
       }
-      submit.disabled = true;
-      submit.classList.add("loading");
-      callApi("logPettyCashInflow", {
+      const payload = {
         amount,
         date: document.getElementById("pc_in_date").value,
         category: sanitizeInput(document.getElementById("pc_in_category").value) || "Inflow",
         description: sanitizeInput(document.getElementById("pc_in_description").value),
-      })
+      };
+      if (isEdit) payload.entryId = editData.entryId;
+      submit.disabled = true;
+      submit.classList.add("loading");
+      callApi(isEdit ? "updatePettyCashEntry" : "logPettyCashInflow", payload)
         .then((result) => {
           submit.disabled = false;
           submit.classList.remove("loading");
           if (!result || result.status !== "success") {
-            showToast((result && result.message) || "Failed to log inflow.", "error");
+            showToast((result && result.message) || "Failed to save entry.", "error");
             return;
           }
           closeModal();
-          showToast("Petty cash inflow logged.", "success");
+          showToast(isEdit ? "Entry updated." : "Petty cash inflow logged.", "success");
           if (result.entry && typeof patchLocalPettyCashEntry === "function") patchLocalPettyCashEntry(result.entry);
           else if (typeof refreshPettyCashSection === "function") refreshPettyCashSection();
         })
@@ -1007,15 +1016,15 @@ async function openModal(type, editData = null) {
 
   // ── PETTY CASH: OUTFLOW ──
   else if (type === "pettycashoutflow") {
-    title.innerText = "Log Petty Cash Outflow";
+    title.innerText = isEdit ? "Edit Petty Cash Outflow" : "Log Petty Cash Outflow";
     body.innerHTML = `
-      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="pc_out_amount" type="text" inputmode="numeric" oninput="maskCurrencyInput(this)" ${ls}></div>
-      <div class="form-field"><label ${lbl}>Date</label><input id="pc_out_date" type="date" value="${getLocalDateString()}" ${ls}></div>
-      <div class="form-field"><label ${lbl}>Category</label><select id="pc_out_category" ${ls}>${PETTY_CASH_OUTFLOW_CATEGORIES.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("")}</select></div>
+      <div class="form-field"><label ${lbl}>Amount (₦)</label><input id="pc_out_amount" type="text" inputmode="numeric" oninput="maskCurrencyInput(this)" value="${isEdit ? formatMoney(editData.amount || 0) : ""}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Date</label><input id="pc_out_date" type="date" value="${isEdit && editData.date ? String(editData.date).slice(0, 10) : getLocalDateString()}" ${ls}></div>
+      <div class="form-field"><label ${lbl}>Category</label><select id="pc_out_category" ${ls}>${PETTY_CASH_OUTFLOW_CATEGORIES.map((c) => `<option value="${escapeHtml(c)}" ${isEdit && editData.category === c ? "selected" : ""}>${escapeHtml(c)}</option>`).join("")}</select></div>
       <div class="form-field"><label ${lbl}>Apartment</label><select id="pc_out_apt" ${ls}></select></div>
-      <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="pc_out_description" ${ls}></div>
+      <div class="form-field span-3"><label ${lbl}>Notes (optional)</label><input id="pc_out_description" value="${isEdit ? escapeHtml(editData.description || "") : ""}" ${ls}></div>
     `;
-    populateUnitDropdown("pc_out_apt");
+    populateUnitDropdown("pc_out_apt", isEdit ? editData.apt : "");
     // [FEATURE] Apartment is required for an outflow — "Shared" (a
     // general/estate-wide expense not tied to one unit) replaces the
     // usual blank "-- Choose Unit --" placeholder as the first, default
@@ -1024,6 +1033,7 @@ async function openModal(type, editData = null) {
     if (pcOutAptSelect && pcOutAptSelect.options.length > 0) {
       pcOutAptSelect.options[0].value = "Shared";
       pcOutAptSelect.options[0].textContent = "Shared";
+      if (isEdit && (!editData.apt || editData.apt === "Shared")) pcOutAptSelect.value = "Shared";
     }
 
     submit.onclick = () => {
@@ -1037,24 +1047,26 @@ async function openModal(type, editData = null) {
         showToast("Enter a positive amount.", "error");
         return;
       }
-      submit.disabled = true;
-      submit.classList.add("loading");
-      callApi("logPettyCashOutflow", {
+      const payload = {
         amount,
         date: document.getElementById("pc_out_date").value,
         category: sanitizeInput(document.getElementById("pc_out_category").value) || "Outflow",
         apt,
         description: sanitizeInput(document.getElementById("pc_out_description").value),
-      })
+      };
+      if (isEdit) payload.entryId = editData.entryId;
+      submit.disabled = true;
+      submit.classList.add("loading");
+      callApi(isEdit ? "updatePettyCashEntry" : "logPettyCashOutflow", payload)
         .then((result) => {
           submit.disabled = false;
           submit.classList.remove("loading");
           if (!result || result.status !== "success") {
-            showToast((result && result.message) || "Failed to log outflow.", "error");
+            showToast((result && result.message) || "Failed to save entry.", "error");
             return;
           }
           closeModal();
-          showToast("Petty cash outflow logged.", "success");
+          showToast(isEdit ? "Entry updated." : "Petty cash outflow logged.", "success");
           if (result.entry && typeof patchLocalPettyCashEntry === "function") patchLocalPettyCashEntry(result.entry);
           else if (typeof refreshPettyCashSection === "function") refreshPettyCashSection();
         })

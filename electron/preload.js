@@ -18,10 +18,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
 contextBridge.exposeInMainWorld("localApi", {
   call: (action, data, sessionToken) =>
     ipcRenderer.invoke("local-api-call", { action, data, sessionToken }),
-  // [FEATURE] One-time import from the existing cloud backend — see
-  // migration.js. Kept separate from .call() since it isn't a normal
-  // app action, just a one-off setup step.
-  runMigration: () => ipcRenderer.invoke("run-migration"),
+  // [REMOVED] runMigration() — the one-time Apps Script import is
+  // retired; see desktop.js for why.
   // [FEATURE] Opens the native folder picker so the person can choose
   // where attachments (photos, PDFs) are saved locally — see
   // main.js's select-attachments-folder handler.

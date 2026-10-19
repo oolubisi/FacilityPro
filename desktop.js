@@ -1089,12 +1089,24 @@ function renderSettingsShortcuts() {
     ${
       window.localApi
         ? `<div class="desktop-form-card">
-      <h3 style="margin:0 0 8px; font-size:15px;">Migrate from Cloud</h3>
-      <p style="margin:0 0 12px; font-size:12px; color:var(--muted);">One-time import of your existing Apartments, ledgers, Inventory and everything else from the old cloud backend into this app's local data. Safe to run more than once if needed — it always replaces local data with the latest cloud copy rather than duplicating anything, so only do this if you're sure the cloud copy is the one you want to keep.</p>
-      <button class="action-btn" id="desktop-run-migration-btn" style="width:auto; background:#6f42c1;">
-        <i class="fas fa-cloud-download-alt"></i> Import from Cloud
-      </button>
-      <div id="desktop-migration-status" style="margin-top:10px; font-size:13px;"></div>
+      <h3 style="margin:0 0 8px; font-size:15px;">Transaction Lock</h3>
+      <p style="margin:0 0 12px; font-size:12px; color:var(--muted);">Petty Cash, Service Charge and Energy ledger entries lock 72 hours after they're created. Unlock them here with the admin code to edit or delete older entries, then lock them back when you're done.</p>
+      <div id="desktop-lock-status-row" style="margin-bottom:12px;"></div>
+      <div id="desktop-lock-action-row"></div>
+      <hr style="margin:16px 0; border:0; border-top:1px solid var(--border);">
+      <label>ADMIN UNLOCK CODE</label>
+      ${
+        appSettings.transactionsAdminCode
+          ? `<label style="font-size:11px; color:#888; margin-top:4px;">CURRENT CODE</label>
+      <input type="password" id="desktop-admin-current-code-input" placeholder="Enter the current code" style="margin-bottom:8px;" />
+      <label style="font-size:11px; color:#888;">NEW CODE</label>`
+          : ""
+      }
+      <div style="display:flex; gap:8px; align-items:center;">
+        <input type="password" id="desktop-admin-code-input" placeholder="${appSettings.transactionsAdminCode ? "New code" : "Set a code"}" style="flex:1;" />
+        <button class="action-btn" id="desktop-save-admin-code-btn" style="width:auto; white-space:nowrap;">Save</button>
+      </div>
+      <small style="display:block; color:#888; margin-top:6px;">${appSettings.transactionsAdminCode ? "A code is set. Confirm it above to change it." : "No code set yet — set one before you can unlock transactions."}</small>
     </div>`
         : ""
     }
@@ -1131,9 +1143,6 @@ function renderSettingsShortcuts() {
     renderUsersList("desktop-user-list");
   }
 
-  const migrationBtn = document.getElementById("desktop-run-migration-btn");
-  if (migrationBtn) migrationBtn.addEventListener("click", runCloudMigration);
-
   const chooseFolderBtn = document.getElementById("desktop-choose-attachments-folder-btn");
   if (chooseFolderBtn) {
     displayCurrentAttachmentsFolder();
@@ -1145,6 +1154,90 @@ function renderSettingsShortcuts() {
       } else if (result && result.status !== "cancelled") {
         showToast((result && result.message) || "Could not update the attachments folder.", "error");
       }
+    });
+  }
+
+  const saveAdminCodeBtn = document.getElementById("desktop-save-admin-code-btn");
+  if (saveAdminCodeBtn) {
+    renderTransactionLockControls();
+    saveAdminCodeBtn.addEventListener("click", async () => {
+      const input = document.getElementById("desktop-admin-code-input");
+      const currentInput = document.getElementById("desktop-admin-current-code-input");
+      const code = (input.value || "").trim();
+      if (!code) {
+        showToast("Enter a code first.", "warning");
+        return;
+      }
+      const payload = { code };
+      if (currentInput) payload.currentCode = (currentInput.value || "").trim();
+      const result = await callApi("setTransactionsAdminCode", payload);
+      if (result && result.status === "success") {
+        appSettings.transactionsAdminCode = code;
+        showToast("Admin code saved.", "success");
+        renderSettingsShortcuts();
+      } else {
+        showToast((result && result.message) || "Could not save the code.", "error");
+      }
+    });
+  }
+}
+
+// [FEATURE] Status + Unlock/Lock button for "Transaction Lock" in
+// Settings (see local-api.js's unlockTransactions/lockTransactions).
+// Re-rendered standalone (not as part of the whole Settings screen)
+// after a successful unlock/lock so the admin-code inputs above it
+// don't lose whatever the person was mid-typing.
+function renderTransactionLockControls() {
+  const statusRow = document.getElementById("desktop-lock-status-row");
+  const actionRow = document.getElementById("desktop-lock-action-row");
+  if (!statusRow || !actionRow) return;
+
+  const refreshLedgerTables = () => {
+    if (typeof refreshPettyCashSection === "function") refreshPettyCashSection();
+    if (typeof refreshServiceChargeSection === "function") refreshServiceChargeSection();
+    if (typeof refreshEnergySection === "function") refreshEnergySection();
+  };
+
+  if (appSettings.transactionsUnlocked) {
+    statusRow.innerHTML = `<span style="color:#198754; font-weight:800;"><i class="fas fa-lock-open"></i> Unlocked — editing enabled for all transactions${
+      appSettings.transactionsUnlockedAt
+        ? " since " + escapeHtml(new Date(appSettings.transactionsUnlockedAt).toLocaleString())
+        : ""
+    }</span>`;
+    actionRow.innerHTML = `<button class="action-btn" id="desktop-lock-btn" style="width:auto; background:#6f42c1;"><i class="fas fa-lock"></i> Lock Transactions</button>`;
+    document.getElementById("desktop-lock-btn").addEventListener("click", async () => {
+      const result = await callApi("lockTransactions", {});
+      if (result && result.status === "success") {
+        appSettings.transactionsUnlocked = false;
+        showToast("Transactions locked.", "success");
+        renderTransactionLockControls();
+        refreshLedgerTables();
+      } else {
+        showToast((result && result.message) || "Could not lock transactions.", "error");
+      }
+    });
+  } else {
+    statusRow.innerHTML = `<span style="color:#dc3545; font-weight:800;"><i class="fas fa-lock"></i> Locked</span>`;
+    actionRow.innerHTML = `<div style="display:flex; gap:8px; align-items:center;">
+      <input type="password" id="desktop-unlock-code-input" placeholder="Admin code" style="flex:1;" />
+      <button class="action-btn" id="desktop-unlock-btn" style="width:auto; white-space:nowrap;"><i class="fas fa-lock-open"></i> Unlock</button>
+    </div>`;
+    const codeInput = document.getElementById("desktop-unlock-code-input");
+    const attemptUnlock = async () => {
+      const result = await callApi("unlockTransactions", { code: codeInput.value });
+      if (result && result.status === "success") {
+        appSettings.transactionsUnlocked = true;
+        appSettings.transactionsUnlockedAt = new Date().toISOString();
+        showToast("Transactions unlocked for editing.", "success");
+        renderTransactionLockControls();
+        refreshLedgerTables();
+      } else {
+        showToast((result && result.message) || "Incorrect code.", "error");
+      }
+    };
+    document.getElementById("desktop-unlock-btn").addEventListener("click", attemptUnlock);
+    codeInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") attemptUnlock();
     });
   }
 }
@@ -1159,41 +1252,15 @@ async function displayCurrentAttachmentsFolder() {
   el.textContent = (settings && settings.attachmentsFolder) || "Not yet set — using the default location.";
 }
 
-// [FEATURE] One-time (or re-run-if-needed) import from the existing
-// cloud backend into this app's local data store — see migration.js
-// in the Electron main process for what actually happens. This is the
-// last place in the app that ever talks to Apps Script.
-async function runCloudMigration() {
-  const btn = document.getElementById("desktop-run-migration-btn");
-  const statusEl = document.getElementById("desktop-migration-status");
-  if (!btn || !statusEl) return;
-
-  if (!confirm("This will replace all local data with a fresh copy from the cloud backend. Any local-only changes not yet reflected in the cloud will be lost. Continue?")) {
-    return;
-  }
-
-  btn.disabled = true;
-  statusEl.style.color = "var(--muted)";
-  statusEl.textContent = "Importing from cloud — this can take a moment...";
-
-  try {
-    const result = await window.localApi.runMigration();
-    if (!result || result.status !== "success") {
-      statusEl.style.color = "#dc3545";
-      statusEl.textContent = (result && result.message) || "Import failed.";
-      return;
-    }
-    const total = Object.values(result.counts || {}).reduce((s, n) => s + n, 0);
-    statusEl.style.color = "#198754";
-    statusEl.textContent = `Imported ${total} records across ${Object.keys(result.counts || {}).length} collections. Reloading...`;
-    setTimeout(() => window.location.reload(), 1500);
-  } catch (err) {
-    statusEl.style.color = "#dc3545";
-    statusEl.textContent = "Import failed: " + String(err && err.message ? err.message : err);
-  } finally {
-    btn.disabled = false;
-  }
-}
+// [REMOVED] runCloudMigration() / "Import from Cloud" — this one-time
+// Apps Script migration button has been retired now that the desktop
+// app's local JSON store is the system of record. It always replaced
+// local data wholesale with whatever was in the (now stale, no-longer-
+// updated) cloud backend, which is exactly what wiped out local-only
+// Maintenance/Staff/MaintenanceLog/RecurringExpenseTemplates/
+// ServiceChargeBudgets entries once (2026-10-19) — there is no reason
+// to ever run it again, so the button, its handler, and migration.js's
+// runMigration() IPC channel are gone rather than left as a trap.
 
 function openNewRecord() {
   const type = viewMeta[desktopState.view]?.newType;

@@ -174,16 +174,21 @@ function setReportSelection(profile, layout, params = {}) {
   applyReportParameters(params);
 }
 
+function monthRangeFor(monthStr) {
+  const [y, m] = monthStr.split("-").map(Number);
+  const last = new Date(y, m, 0).getDate();
+  return {
+    month: monthStr,
+    start: `${monthStr}-01`,
+    end: `${monthStr}-${String(last).padStart(2, "0")}`,
+  };
+}
+
 function getCurrentMonthRange() {
   const now = new Date();
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, "0");
-  const last = new Date(y, now.getMonth() + 1, 0).getDate();
-  return {
-    month: `${y}-${m}`,
-    start: `${y}-${m}-01`,
-    end: `${y}-${m}-${String(last).padStart(2, "0")}`,
-  };
+  return monthRangeFor(`${y}-${m}`);
 }
 
 // [FEATURE] Report Groups — user-defined, named collections of any
@@ -207,12 +212,54 @@ function getReportGroups() {
     localStorage.setItem(REPORT_GROUPS_STORAGE_KEY, JSON.stringify([defaultGroup]));
     localStorage.setItem(REPORT_GROUPS_SEEDED_KEY, "true");
   }
+  let groups;
   try {
-    const groups = JSON.parse(localStorage.getItem(REPORT_GROUPS_STORAGE_KEY));
-    return Array.isArray(groups) ? groups : [];
+    groups = JSON.parse(localStorage.getItem(REPORT_GROUPS_STORAGE_KEY));
+    if (!Array.isArray(groups)) groups = [];
   } catch (e) {
-    return [];
+    groups = [];
   }
+
+  // [FEATURE] "End Of Month" — a built-in group matching the estate's
+  // standard printed end-of-month report exactly: Executive KPI
+  // Dashboard, then Energy Ledger, then Petty Cash Ledger, then Service
+  // Charge — Overall with a full breakdown page appended for every
+  // apartment occupied during the selected month (that report also
+  // always appends the Occupancy Report as its own last page). Added
+  // here unconditionally of the one-time REPORT_GROUPS_SEEDED_KEY flag
+  // above, so it reaches accounts that already had groups seeded before
+  // this existed, not just brand-new ones. Only added once (checked by
+  // id) — after that it's an ordinary group the user can rename, edit,
+  // or delete like any other.
+  if (!groups.some((g) => g && g.id === "end-of-month")) {
+    groups.push({
+      id: "end-of-month",
+      name: "End Of Month",
+      reportKeys: ["kpi_dashboard", "energy_ledger", "petty_cash", "sc_overall"],
+      includeApartmentBreakdowns: true,
+    });
+    saveReportGroups(groups);
+  }
+
+  // [FEATURE] "Yearly Executive Summary" — the Executive KPI Dashboard
+  // run across a full calendar year instead of a single month, giving
+  // year-total inflows/expenses per ledger (Service Charge, Petty Cash,
+  // Energy) and opening/closing occupancy for the year, in the same
+  // headline-cards + period-breakdown layout the dashboard always uses
+  // — it already supports an arbitrary From/To month range, a year is
+  // just Jan–Dec of one year. `period: "year"` tells the groups list to
+  // show a year picker here instead of the usual month picker.
+  if (!groups.some((g) => g && g.id === "yearly-executive-summary")) {
+    groups.push({
+      id: "yearly-executive-summary",
+      name: "Yearly Executive Summary",
+      reportKeys: ["kpi_dashboard"],
+      period: "year",
+    });
+    saveReportGroups(groups);
+  }
+
+  return groups;
 }
 
 function saveReportGroups(groups) {
@@ -244,15 +291,39 @@ function deleteReportGroup(groupId) {
 // (which single apartment?) is skipped rather than guessed — see
 // REPORTS_REQUIRING_MANUAL_UNIT — and named in the summary toast so
 // nothing silently goes missing from the pack.
-function autoFillReportParameters(key) {
-  const range = getCurrentMonthRange();
+function autoFillReportParameters(key, monthOverride, yearOverride) {
+  // [FEATURE] A year override spans the whole calendar year (Jan–Dec)
+  // instead of a single month — used by year-scoped Report Groups like
+  // "Yearly Executive Summary". It takes priority over a month
+  // override, which in turn takes priority over "no override" (today's
+  // current month, the original default behavior).
+  let monthFromVal, monthToVal, startVal, endVal;
+  if (yearOverride) {
+    const y = Number(yearOverride);
+    monthFromVal = `${y}-01`;
+    monthToVal = `${y}-12`;
+    startVal = `${y}-01-01`;
+    endVal = `${y}-12-31`;
+  } else if (monthOverride) {
+    const r = monthRangeFor(monthOverride);
+    monthFromVal = r.month;
+    monthToVal = r.month;
+    startVal = r.start;
+    endVal = r.end;
+  } else {
+    const r = getCurrentMonthRange();
+    monthFromVal = r.month;
+    monthToVal = r.month;
+    startVal = r.start;
+    endVal = r.end;
+  }
   const today = new Date().toISOString().split("T")[0];
 
   const monthFrom = document.getElementById("rep-param-month-from");
   const monthTo = document.getElementById("rep-param-month-to");
   if (monthFrom && monthTo) {
-    monthFrom.value = range.month;
-    monthTo.value = range.month;
+    monthFrom.value = monthFromVal;
+    monthTo.value = monthToVal;
   }
   const dateField = document.getElementById("rep-param-date");
   if (dateField) dateField.value = today;
@@ -260,9 +331,19 @@ function autoFillReportParameters(key) {
   const startDate = document.getElementById("rep_start_date");
   const endDate = document.getElementById("rep_end_date");
   if (startDate && endDate) {
-    startDate.value = range.start;
-    endDate.value = range.end;
+    startDate.value = startVal;
+    endDate.value = endVal;
   }
+  // [BUG FIX] sc_overall/petty_cash/energy_ledger default their own
+  // period selector to "Current Month"/"Current Year", which (per
+  // resolveServiceChargeReportPeriod) recomputes from TODAY's real
+  // date and ignores whatever start/end we just filled in above. When
+  // an explicit month or year override is given (a Report Group
+  // generated for a specific past period), force that selector to
+  // "Custom Range" so the override actually takes effect instead of
+  // being silently overridden back to the live current month.
+  const periodSelect = document.getElementById("rep_sc_period");
+  if (periodSelect && (monthOverride || yearOverride)) periodSelect.value = "custom";
 
   // "Ledger" report's type selector has no meaningful default of its
   // own (its first option is a blank placeholder) — Inflow is as
@@ -273,7 +354,7 @@ function autoFillReportParameters(key) {
   }
 }
 
-function generateReportGroupPack(groupId) {
+function generateReportGroupPack(groupId, monthOverride, yearOverride) {
   const group = getReportGroups().find((g) => g.id === groupId);
   if (!group) {
     showToast("Report group not found.", "error");
@@ -284,6 +365,15 @@ function generateReportGroupPack(groupId) {
 
   const sections = [];
   const skipped = [];
+
+  // [FEATURE] Lets a group (like the built-in "End Of Month") ask its
+  // Service Charge — Overall section to include a full breakdown page
+  // per occupied apartment, without needing the on-screen checkbox to
+  // be ticked — there's no one sitting at that form during an
+  // unattended pack run. Read inside the sc_overall branch of
+  // compileReportPreview; reset after this pack so it never leaks into
+  // an unrelated report run later.
+  window.__forceScApartmentBreakdowns = !!group.includeApartmentBreakdowns;
 
   const capture = (title, renderFn) => {
     renderFn();
@@ -305,10 +395,12 @@ function generateReportGroupPack(groupId) {
     }
     capture(entry.label, () => {
       setReportSelection(entry.profile, key, {});
-      autoFillReportParameters(key);
+      autoFillReportParameters(key, monthOverride, yearOverride);
       compileReportPreview();
     });
   });
+
+  window.__forceScApartmentBreakdowns = false;
 
   if (sections.length === 0) {
     showToast("None of this group's reports could be generated automatically.", "warning");
@@ -349,20 +441,37 @@ function renderReportGroupsList() {
     return;
   }
 
+  // [FEATURE] An inline period picker per group so a group whose
+  // reports are date-ranged — above all "End Of Month" and "Yearly
+  // Executive Summary" — can be generated for whichever past period is
+  // needed, not just today's. Passed straight through to
+  // generateReportGroupPack, which forces every date-ranged report in
+  // the group onto that exact period; a group with no date-ranged
+  // reports at all just ignores it. `group.period === "year"` shows a
+  // plain year number input instead of the usual month picker.
   el.innerHTML = groups
-    .map(
-      (g) => `<div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid #eee; gap:10px;">
+    .map((g) => {
+      const isYearly = g.period === "year";
+      const periodInputId = `report-group-period-${g.id}`;
+      const periodInputHtml = isYearly
+        ? `<input type="number" id="${escapeHtml(periodInputId)}" value="${new Date().getFullYear()}" min="2000" max="2100" step="1" title="Year this pack's reports should cover" style="padding:5px 6px; font-size:12px; width:72px;">`
+        : `<input type="month" id="${escapeHtml(periodInputId)}" value="${getCurrentMonthRange().month}" title="Month this pack's reports should cover" style="padding:5px 6px; font-size:12px; width:auto;">`;
+      const generateOnclick = isYearly
+        ? `generateReportGroupPack('${escapeHtml(g.id)}', undefined, document.getElementById('${escapeHtml(periodInputId)}').value)`
+        : `generateReportGroupPack('${escapeHtml(g.id)}', document.getElementById('${escapeHtml(periodInputId)}').value)`;
+      return `<div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid #eee; gap:10px; flex-wrap:wrap;">
         <div>
           <strong style="font-size:13px;">${escapeHtml(g.name)}</strong>
           <div style="font-size:12px; color:#666;">${g.reportKeys.length} report${g.reportKeys.length === 1 ? "" : "s"}</div>
         </div>
-        <div style="display:flex; gap:6px; flex-shrink:0;">
-          <button type="button" onclick="generateReportGroupPack('${escapeHtml(g.id)}')" style="background:var(--primary, #0d6efd); color:#fff; border:0; border-radius:6px; padding:6px 12px; font-size:12px; font-weight:700; cursor:pointer;">Generate</button>
+        <div style="display:flex; gap:6px; flex-shrink:0; align-items:center;">
+          ${periodInputHtml}
+          <button type="button" onclick="${generateOnclick}" style="background:var(--primary, #0d6efd); color:#fff; border:0; border-radius:6px; padding:6px 12px; font-size:12px; font-weight:700; cursor:pointer;">Generate</button>
           <button type="button" onclick="editReportGroup('${escapeHtml(g.id)}')" style="background:var(--text, #333); color:#fff; border:0; border-radius:6px; padding:6px 10px; font-size:12px; font-weight:700; cursor:pointer;">Edit</button>
           <button type="button" onclick="deleteReportGroupConfirm('${escapeHtml(g.id)}')" style="background:#fdecea; color:#dc3545; border:0; border-radius:6px; padding:6px 10px; font-size:12px; font-weight:700; cursor:pointer;">Delete</button>
         </div>
-      </div>`,
-    )
+      </div>`;
+    })
     .join("");
 }
 
@@ -806,7 +915,9 @@ async function compileReportPreview() {
       showToast("Please select a start and end date.", "warning");
       return;
     }
-    const includeApartmentBreakdowns = document.getElementById("rep_sc_include_apartments")?.checked === true;
+    const includeApartmentBreakdowns =
+      document.getElementById("rep_sc_include_apartments")?.checked === true ||
+      window.__forceScApartmentBreakdowns === true;
     await generateServiceChargeOverallReport(startDate, endDate, includeApartmentBreakdowns);
     return;
   }
@@ -1199,13 +1310,21 @@ async function compileReportPreview() {
     }
     const paidFromPettyCash = (r) => String(r.paidFromPettyCash).toLowerCase() === "yes";
     function monthActivityByDirection(ledger, positiveDirection, excludeRow) {
+      return activityInRange(ledger, positiveDirection, monthStart, monthEnd, excludeRow);
+    }
+    // [FEATURE] Same credit/debit split as monthActivityByDirection,
+    // but against an explicit range rather than the report's own
+    // monthStart/monthEnd — used by the Monthly Totals breakdown below
+    // to total each individual calendar month inside a longer (e.g.
+    // full-year) selected period.
+    function activityInRange(ledger, positiveDirection, rangeStart, rangeEnd, excludeRow) {
       let credit = 0;
       let debit = 0;
       (ledger || []).forEach((r) => {
         if (!r) return;
         if (excludeRow && excludeRow(r)) return;
         const d = new Date(r.date);
-        if (isNaN(d.getTime()) || d < monthStart || d > monthEnd) return;
+        if (isNaN(d.getTime()) || d < rangeStart || d > rangeEnd) return;
         const amt = Math.abs(Number(r.amount) || 0);
         if (String(r.direction).toLowerCase() === positiveDirection) credit += amt;
         else debit += amt;
@@ -1425,7 +1544,74 @@ async function compileReportPreview() {
           ${breakdownRow("Consumables Value", openingConsumablesValue, consumablesActivity.credit, consumablesActivity.debit, closingConsumablesValue, false)}
         </tbody>
       </table>
-    </div>`;
+    </div>
+    ${(() => {
+      // [FEATURE] Monthly Totals — only shown when the selected period
+      // spans more than one calendar month (a single-month run, e.g.
+      // the ordinary current-month dashboard, would just repeat the
+      // one row already above it). Walks every calendar month from the
+      // From month to the To month, inclusive, totaling each ledger's
+      // credit/debit activity within that single month and the
+      // occupancy rate as of that month's end — the same building
+      // blocks already used for the headline cards above, just run
+      // once per month instead of once for the whole period.
+      const monthKeys = [];
+      let cursor = new Date(monthStart.getFullYear(), monthStart.getMonth(), 1);
+      const limit = new Date(monthEnd.getFullYear(), monthEnd.getMonth(), 1);
+      while (cursor <= limit) {
+        monthKeys.push({ y: cursor.getFullYear(), m: cursor.getMonth() });
+        cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+      }
+      if (monthKeys.length <= 1) return "";
+
+      const monthRows = monthKeys
+        .map(({ y, m }) => {
+          const subStart = new Date(y, m, 1);
+          const subEnd = new Date(y, m + 1, 0, 23, 59, 59, 999);
+          const label = subStart.toLocaleString("en-US", { month: "short", year: "numeric" });
+          const scAct = Array.isArray(scLedger) ? activityInRange(scLedger, "credit", subStart, subEnd, paidFromPettyCash) : null;
+          const pcAct = Array.isArray(pettyCashLedger) ? activityInRange(pettyCashLedger, "inflow", subStart, subEnd) : null;
+          const enAct = Array.isArray(energyLedger) ? activityInRange(energyLedger, "inflow", subStart, subEnd) : null;
+          const occRate = occupancyLogFailed ? null : occupancyRateAsOf(subEnd);
+          const fmtAmt = (v) => (v === null ? "—" : `N${formatMoney(v)}`);
+          const fmtPct = (v) => (v === null ? "—" : `${v.toFixed(1)}%`);
+          return `<tr style="border-bottom:1px solid #eee;">
+            <td style="padding:7px 6px; font-weight:700;">${escapeHtml(label)}</td>
+            <td style="padding:7px 6px; text-align:right; color:#198754;">${fmtAmt(scAct ? scAct.credit : null)}</td>
+            <td style="padding:7px 6px; text-align:right; color:#dc3545;">${fmtAmt(scAct ? scAct.debit : null)}</td>
+            <td style="padding:7px 6px; text-align:right; color:#198754;">${fmtAmt(pcAct ? pcAct.credit : null)}</td>
+            <td style="padding:7px 6px; text-align:right; color:#dc3545;">${fmtAmt(pcAct ? pcAct.debit : null)}</td>
+            <td style="padding:7px 6px; text-align:right; color:#198754;">${fmtAmt(enAct ? enAct.credit : null)}</td>
+            <td style="padding:7px 6px; text-align:right; color:#dc3545;">${fmtAmt(enAct ? enAct.debit : null)}</td>
+            <td style="padding:7px 6px; text-align:right; font-weight:700;">${fmtPct(occRate)}</td>
+          </tr>`;
+        })
+        .join("");
+
+      return `<div style="background:#fff; border:2px solid #000; border-radius:12px; padding:16px; margin-top:12px; page-break-inside:avoid;">
+        <h3 style="font-size:13px; font-weight:900; text-transform:uppercase; margin:0 0 12px 0; border-bottom:1px solid #ccc; padding-bottom:4px;">Monthly Totals</h3>
+        <table style="width:189mm; border-collapse:collapse; font-size:12px; border:1px solid #000;">
+          <thead>
+            <tr style="border-bottom:2px solid #000; text-align:right;">
+              <th style="padding:7px 6px; text-align:left;" rowspan="2">Month</th>
+              <th style="padding:7px 6px;" colspan="2">Service Charge</th>
+              <th style="padding:7px 6px;" colspan="2">Petty Cash</th>
+              <th style="padding:7px 6px;" colspan="2">Energy</th>
+              <th style="padding:7px 6px;" rowspan="2">Occupancy</th>
+            </tr>
+            <tr style="border-bottom:2px solid #000; text-align:right; font-size:11px; color:#666;">
+              <th style="padding:0 6px 6px;">Inflow</th>
+              <th style="padding:0 6px 6px;">Outflow</th>
+              <th style="padding:0 6px 6px;">Inflow</th>
+              <th style="padding:0 6px 6px;">Outflow</th>
+              <th style="padding:0 6px 6px;">Inflow</th>
+              <th style="padding:0 6px 6px;">Outflow</th>
+            </tr>
+          </thead>
+          <tbody>${monthRows}</tbody>
+        </table>
+      </div>`;
+    })()}`;
   } else if (layout === "data_quality") {
     out += generateTitleBar("DATA QUALITY AUDIT");
     const issues = buildDataQualityIssues();
@@ -2053,8 +2239,8 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
   // [FEATURE] Optional, off by default — one full per-apartment
   // breakdown page for every unit that was occupied at some point
   // during the period, using the exact same builder the standalone
-  // Per-Apartment report uses. Inserted BEFORE the Occupancy Report
-  // page, which must stay last regardless.
+  // Per-Apartment report uses. Inserted AFTER the Occupancy Report
+  // page, which stays second-to-last and leads into them.
   let apartmentBreakdownPages = "";
   if (includeApartmentBreakdowns) {
     apartmentBreakdownPages = occupiedDuringPeriod
@@ -2098,8 +2284,8 @@ async function generateServiceChargeOverallReport(startDateStr, endDateStr, incl
     ${closingBreakdown.missing.length ? `<p style="font-size:11px; color:#dc3545; margin:-12px 0 16px;">Couldn't load ${closingBreakdown.missing.join(" / ")} — pooled balance may be overstated.</p>` : ""}
     <h3 style="font-size:14px; font-weight:900; text-transform:uppercase; margin:0 0 6px 0; text-decoration:underline;">Activity (${escapeHtml(formatDateForDisplay(startDateStr))} &mdash; ${escapeHtml(formatDateForDisplay(endDateStr))})</h3>
     ${activityTable}
-    ${apartmentBreakdownPages}
     ${occupancyReportPage}
+    ${apartmentBreakdownPages}
   </div>`;
 
   const ref = generateReportRef("RPT");

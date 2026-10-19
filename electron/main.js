@@ -4,7 +4,6 @@ const http = require("http");
 const path = require("path");
 const db = require("./db");
 const localApi = require("./local-api");
-const migration = require("./migration");
 const mobileSync = require("./mobile-sync");
 
 const appRoot = path.join(__dirname, "..");
@@ -231,19 +230,8 @@ ipcMain.handle("local-api-call", (event, { action, data, sessionToken }) => {
   }
 });
 
-// [FEATURE] One-time import from the existing cloud backend — see
-// migration.js. Exposed as its own IPC channel (not routed through
-// local-api-call/handleAction) since it isn't a normal app action:
-// it's the one and only thing here that still talks to Apps Script,
-// and only ever runs once, deliberately triggered from Settings
-// rather than automatically.
-ipcMain.handle("run-migration", async () => {
-  try {
-    return await migration.runMigration();
-  } catch (err) {
-    return { status: "error", message: err && err.stack ? err.stack : String(err) };
-  }
-});
+// [REMOVED] "run-migration" IPC handler / migration.js — the one-time
+// Apps Script import is retired; see desktop.js for why.
 
 // [FEATURE] Pushes a read-only snapshot to the mobile relay — see
 // mobile-sync.js. Triggered from the renderer's "Sync Now" button and

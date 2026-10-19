@@ -804,6 +804,16 @@ function isSameCalendarDay(isoString) {
   return age <= ENTRY_EDIT_WINDOW_HOURS * 3600 * 1000;
 }
 
+// [FEATURE] Transaction Lock — an admin-code-gated global bypass of the
+// 72-hour window above, for when a genuinely older ledger entry needs
+// fixing. Settings.transactionsUnlocked is the single switch every
+// isSameCalendarDay() call site below also checks; unlockTransactions/
+// lockTransactions/setTransactionsAdminCode (near getSettings/saveSettings)
+// are the only things that touch it.
+function transactionsAreUnlocked() {
+  return db.getCollection('Settings').transactionsUnlocked === true;
+}
+
 function logContribution(data, actor) {
   const apt = String(data.apt || '').trim();
   const amount = parseFloat(data.amount);
@@ -985,8 +995,8 @@ function deleteServiceChargeEntry(data, actor) {
   const ledger = db.getCollection('ServiceChargeLedger');
   const existing = findByPK(ledger, 'entryId', entryId);
   if (!existing) return { status: 'error', message: 'Entry not found.' };
-  if (!isSameCalendarDay(existing.createdAt)) {
-    return { status: 'error', message: 'This entry can only be deleted within 72 hours of being created.' };
+  if (!isSameCalendarDay(existing.createdAt) && !transactionsAreUnlocked()) {
+    return { status: 'error', message: 'This entry can only be deleted within 72 hours of being created. Unlock transactions in Settings to override.' };
   }
 
   let idsToDelete = [entryId];
@@ -1016,6 +1026,41 @@ function deleteServiceChargeEntry(data, actor) {
   return { status: 'success', deletedCount: idsToDelete.length, deletedPettyCashCount };
 }
 
+// [FEATURE] Edit for a plain, manually-entered Petty Cash row — not
+// offered for a row linked to a Service Charge expense/topup or an
+// Inventory purchase (editing those here would desync the linked
+// record, which has its own edit/delete path). Gated by the same
+// 72-hour window (bypassed while transactionsAreUnlocked()) as every
+// other ledger edit/delete in this file.
+function updatePettyCashEntry(data, actor) {
+  const entryId = String(data.entryId || '').trim();
+  if (!entryId) return { status: 'error', message: 'Missing entryId.' };
+  const entries = db.getCollection('PettyCash');
+  const existing = findByPK(entries, 'entryId', entryId);
+  if (!existing) return { status: 'error', message: 'Entry not found.' };
+  if (!isSameCalendarDay(existing.createdAt) && !transactionsAreUnlocked()) {
+    return { status: 'error', message: 'This entry can only be edited within 72 hours of being created. Unlock transactions in Settings to override.' };
+  }
+  if (existing.linkedServiceChargeEntry || existing.linkedInventoryItem || existing.linkedInventoryMovement) {
+    return { status: 'error', message: 'This entry is linked to a Service Charge or Inventory record and can\'t be edited directly.' };
+  }
+
+  const update = { updatedAt: new Date().toISOString(), updatedBy: actor.name };
+  if (data.amount !== undefined) {
+    const amount = parseFloat(data.amount);
+    if (isNaN(amount) || amount <= 0) return { status: 'error', message: 'A positive amount is required.' };
+    update.amount = amount;
+  }
+  if (data.date !== undefined) update.date = data.date || existing.date;
+  if (data.apt !== undefined) update.apt = String(data.apt).trim();
+  if (data.category !== undefined) update.category = sanitizePayload({ c: data.category || existing.category }).c;
+  if (data.description !== undefined) update.description = sanitizePayload({ d: data.description }).d;
+
+  Object.assign(existing, update);
+  db.persist();
+  return { status: 'success', entry: existing };
+}
+
 function deletePettyCashEntry(data, actor) {
   const entryId = String(data.entryId || '').trim();
   if (!entryId) return { status: 'error', message: 'Missing entryId.' };
@@ -1024,7 +1069,7 @@ function deletePettyCashEntry(data, actor) {
   const existing = findByPK(entries, 'entryId', entryId);
   if (!existing) return { status: 'error', message: 'Entry not found.' };
   let backupFile = null;
-  if (!isSameCalendarDay(existing.createdAt)) {
+  if (!isSameCalendarDay(existing.createdAt) && !transactionsAreUnlocked()) {
     if (!data.override) {
       return { status: 'error', message: 'This entry can only be deleted within 72 hours of being created.' };
     }
@@ -1126,8 +1171,8 @@ function updateEnergyEntry(data, actor) {
   const ledger = db.getCollection('EnergyLedger');
   const existing = findByPK(ledger, 'entryId', entryId);
   if (!existing) return { status: 'error', message: 'Entry not found.' };
-  if (!isSameCalendarDay(existing.createdAt)) {
-    return { status: 'error', message: 'Entries can only be edited within 72 hours of being created.' };
+  if (!isSameCalendarDay(existing.createdAt) && !transactionsAreUnlocked()) {
+    return { status: 'error', message: 'Entries can only be edited within 72 hours of being created. Unlock transactions in Settings to override.' };
   }
 
   const update = { entryId, updatedAt: new Date().toISOString(), updatedBy: actor.name };
@@ -1156,8 +1201,8 @@ function deleteEnergyEntry(data, actor) {
   const ledger = db.getCollection('EnergyLedger');
   const existing = findByPK(ledger, 'entryId', entryId);
   if (!existing) return { status: 'error', message: 'Entry not found.' };
-  if (!isSameCalendarDay(existing.createdAt)) {
-    return { status: 'error', message: 'Entries can only be deleted within 72 hours of being created.' };
+  if (!isSameCalendarDay(existing.createdAt) && !transactionsAreUnlocked()) {
+    return { status: 'error', message: 'Entries can only be deleted within 72 hours of being created. Unlock transactions in Settings to override.' };
   }
   const remaining = ledger.filter((r) => r.entryId !== entryId);
   ledger.length = 0;
@@ -1408,11 +1453,57 @@ function handleGenericRecordAction(action, data, actor) {
 const DEFAULT_SETTINGS = {
   estateName: '', estateAddress: '', fmName: '', fmAddress: '',
   logoUrl: '', mainFolder: 'FacilityPro_Attachments',
+  // [FEATURE] Transaction Lock — see unlockTransactions/lockTransactions.
+  transactionsAdminCode: '', transactionsUnlocked: false, transactionsUnlockedAt: '',
 };
 
 function getSettings() {
   const settings = db.getCollection('Settings');
   return { ...DEFAULT_SETTINGS, ...settings };
+}
+
+// [FEATURE] Transaction Lock — admin code + unlock/lock, see
+// transactionsAreUnlocked() near isSameCalendarDay() for the bypass
+// itself. Changing an already-set code requires typing the current
+// one first — otherwise anyone at the keyboard could silently swap in
+// their own code and lock the real admin out of ever unlocking again.
+// A code that hasn't been set yet can be set directly (nothing to
+// confirm against).
+function setTransactionsAdminCode(data) {
+  const code = String(data.code || '').trim();
+  if (!code) return { status: 'error', message: 'Enter a code to save.' };
+  const settings = db.getCollection('Settings');
+  const configured = String(settings.transactionsAdminCode || '').trim();
+  if (configured) {
+    const currentCode = String(data.currentCode || '').trim();
+    if (!currentCode || currentCode !== configured) {
+      return { status: 'error', message: 'Enter the current admin code correctly to change it.' };
+    }
+  }
+  settings.transactionsAdminCode = code;
+  db.persist();
+  return { status: 'success' };
+}
+
+function unlockTransactions(data) {
+  const settings = db.getCollection('Settings');
+  const configured = String(settings.transactionsAdminCode || '').trim();
+  if (!configured) return { status: 'error', message: 'No admin code has been set yet — set one in Settings first.' };
+  const entered = String(data.code || '').trim();
+  if (!entered || entered !== configured) return { status: 'error', message: 'Incorrect admin code.' };
+  settings.transactionsUnlocked = true;
+  settings.transactionsUnlockedAt = new Date().toISOString();
+  db.persist();
+  return { status: 'success', unlockedAt: settings.transactionsUnlockedAt };
+}
+
+// No code required to lock back — re-locking should always be easy;
+// only unlocking needs the admin code.
+function lockTransactions() {
+  const settings = db.getCollection('Settings');
+  settings.transactionsUnlocked = false;
+  db.persist();
+  return { status: 'success' };
 }
 
 function saveSettings(data) {
@@ -1429,7 +1520,13 @@ function saveSettings(data) {
   // records the one-time stock import into Petty Cash. None of them is
   // on this form, so they were being wiped on every Settings save — for
   // the import marker that would let the import run a second time.
-  const PRESERVED_KEYS = ['attachmentsFolder', 'lastSyncAt', 'lastSyncError', 'stockImportedToPettyCash', 'stockImportSummary'];
+  const PRESERVED_KEYS = [
+    'attachmentsFolder', 'lastSyncAt', 'lastSyncError', 'stockImportedToPettyCash', 'stockImportSummary',
+    // [FEATURE] Transaction Lock (see unlockTransactions/lockTransactions
+    // below) — managed by its own dedicated controls in Settings, not
+    // this general form, so a save here must not reset or wipe them.
+    'transactionsAdminCode', 'transactionsUnlocked', 'transactionsUnlockedAt',
+  ];
   const preserved = {};
   PRESERVED_KEYS.forEach((key) => {
     if (settings[key] !== undefined) preserved[key] = settings[key];
@@ -1671,6 +1768,7 @@ function handleAction(action, data, sessionToken) {
   if (action === 'getPettyCashLedger') return db.getCollection('PettyCash');
   if (action === 'logPettyCashInflow') return appendPettyCashEntry('inflow', data, actor);
   if (action === 'logPettyCashOutflow') return appendPettyCashEntry('outflow', data, actor);
+  if (action === 'updatePettyCashEntry') return updatePettyCashEntry(data, actor);
   if (action === 'deletePettyCashEntry') return deletePettyCashEntry(data, actor);
 
   if (action === 'getEnergyLedger') return db.getCollection('EnergyLedger');
@@ -1682,6 +1780,9 @@ function handleAction(action, data, sessionToken) {
   if (action === 'generateId') return generateId(data);
   if (action === 'getSettings') return getSettings();
   if (action === 'saveSettings') return saveSettings(data);
+  if (action === 'setTransactionsAdminCode') return setTransactionsAdminCode(data);
+  if (action === 'unlockTransactions') return unlockTransactions(data);
+  if (action === 'lockTransactions') return lockTransactions();
   if (action === 'uploadImage') return uploadImage(data);
 
   if (action === 'getServiceChargeBudgets') return db.getCollection('ServiceChargeBudgets');
