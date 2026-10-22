@@ -184,6 +184,21 @@ function monthRangeFor(monthStr) {
   };
 }
 
+// [FEATURE] A From/To month range where From and To can differ — the
+// report group pickers need this (so a pack can be generated for, say,
+// Jan–Mar rather than only one month at a time), not just the
+// single-month case monthRangeFor covers.
+function monthRangeAcross(fromMonthStr, toMonthStr) {
+  const from = fromMonthStr || toMonthStr;
+  const to = toMonthStr || fromMonthStr;
+  return {
+    monthFrom: from,
+    monthTo: to,
+    start: monthRangeFor(from).start,
+    end: monthRangeFor(to).end,
+  };
+}
+
 function getCurrentMonthRange() {
   const now = new Date();
   const y = now.getFullYear();
@@ -291,12 +306,13 @@ function deleteReportGroup(groupId) {
 // (which single apartment?) is skipped rather than guessed — see
 // REPORTS_REQUIRING_MANUAL_UNIT — and named in the summary toast so
 // nothing silently goes missing from the pack.
-function autoFillReportParameters(key, monthOverride, yearOverride) {
+function autoFillReportParameters(key, monthFromOverride, monthToOverride, yearOverride) {
   // [FEATURE] A year override spans the whole calendar year (Jan–Dec)
-  // instead of a single month — used by year-scoped Report Groups like
-  // "Yearly Executive Summary". It takes priority over a month
-  // override, which in turn takes priority over "no override" (today's
-  // current month, the original default behavior).
+  // instead of a month range — used by year-scoped Report Groups like
+  // "Yearly Executive Summary". It takes priority over a month-range
+  // override (From/To month — From and To can be the same month, or
+  // different for a true range), which in turn takes priority over "no
+  // override" (today's current month, the original default behavior).
   let monthFromVal, monthToVal, startVal, endVal;
   if (yearOverride) {
     const y = Number(yearOverride);
@@ -304,10 +320,10 @@ function autoFillReportParameters(key, monthOverride, yearOverride) {
     monthToVal = `${y}-12`;
     startVal = `${y}-01-01`;
     endVal = `${y}-12-31`;
-  } else if (monthOverride) {
-    const r = monthRangeFor(monthOverride);
-    monthFromVal = r.month;
-    monthToVal = r.month;
+  } else if (monthFromOverride || monthToOverride) {
+    const r = monthRangeAcross(monthFromOverride, monthToOverride);
+    monthFromVal = r.monthFrom;
+    monthToVal = r.monthTo;
     startVal = r.start;
     endVal = r.end;
   } else {
@@ -343,7 +359,7 @@ function autoFillReportParameters(key, monthOverride, yearOverride) {
   // "Custom Range" so the override actually takes effect instead of
   // being silently overridden back to the live current month.
   const periodSelect = document.getElementById("rep_sc_period");
-  if (periodSelect && (monthOverride || yearOverride)) periodSelect.value = "custom";
+  if (periodSelect && (monthFromOverride || monthToOverride || yearOverride)) periodSelect.value = "custom";
 
   // "Ledger" report's type selector has no meaningful default of its
   // own (its first option is a blank placeholder) — Inflow is as
@@ -354,7 +370,7 @@ function autoFillReportParameters(key, monthOverride, yearOverride) {
   }
 }
 
-function generateReportGroupPack(groupId, monthOverride, yearOverride) {
+function generateReportGroupPack(groupId, monthFromOverride, monthToOverride, yearOverride) {
   const group = getReportGroups().find((g) => g.id === groupId);
   if (!group) {
     showToast("Report group not found.", "error");
@@ -395,7 +411,7 @@ function generateReportGroupPack(groupId, monthOverride, yearOverride) {
     }
     capture(entry.label, () => {
       setReportSelection(entry.profile, key, {});
-      autoFillReportParameters(key, monthOverride, yearOverride);
+      autoFillReportParameters(key, monthFromOverride, monthToOverride, yearOverride);
       compileReportPreview();
     });
   });
@@ -448,17 +464,24 @@ function renderReportGroupsList() {
   // generateReportGroupPack, which forces every date-ranged report in
   // the group onto that exact period; a group with no date-ranged
   // reports at all just ignores it. `group.period === "year"` shows a
-  // plain year number input instead of the usual month picker.
+  // plain year number input; every other group shows a From/To month
+  // range (From and To can be the same month for a single-month run,
+  // or different for a true multi-month range).
   el.innerHTML = groups
     .map((g) => {
       const isYearly = g.period === "year";
       const periodInputId = `report-group-period-${g.id}`;
+      const fromInputId = `report-group-from-${g.id}`;
+      const toInputId = `report-group-to-${g.id}`;
+      const currentMonth = getCurrentMonthRange().month;
       const periodInputHtml = isYearly
         ? `<input type="number" id="${escapeHtml(periodInputId)}" value="${new Date().getFullYear()}" min="2000" max="2100" step="1" title="Year this pack's reports should cover" style="padding:5px 6px; font-size:12px; width:72px;">`
-        : `<input type="month" id="${escapeHtml(periodInputId)}" value="${getCurrentMonthRange().month}" title="Month this pack's reports should cover" style="padding:5px 6px; font-size:12px; width:auto;">`;
+        : `<input type="month" id="${escapeHtml(fromInputId)}" value="${currentMonth}" title="From month" style="padding:5px 6px; font-size:12px; width:auto;">
+           <span style="font-size:11px; color:#666;">&ndash;</span>
+           <input type="month" id="${escapeHtml(toInputId)}" value="${currentMonth}" title="To month" style="padding:5px 6px; font-size:12px; width:auto;">`;
       const generateOnclick = isYearly
-        ? `generateReportGroupPack('${escapeHtml(g.id)}', undefined, document.getElementById('${escapeHtml(periodInputId)}').value)`
-        : `generateReportGroupPack('${escapeHtml(g.id)}', document.getElementById('${escapeHtml(periodInputId)}').value)`;
+        ? `generateReportGroupPack('${escapeHtml(g.id)}', undefined, undefined, document.getElementById('${escapeHtml(periodInputId)}').value)`
+        : `generateReportGroupPack('${escapeHtml(g.id)}', document.getElementById('${escapeHtml(fromInputId)}').value, document.getElementById('${escapeHtml(toInputId)}').value)`;
       return `<div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid #eee; gap:10px; flex-wrap:wrap;">
         <div>
           <strong style="font-size:13px;">${escapeHtml(g.name)}</strong>
