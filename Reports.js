@@ -370,10 +370,19 @@ function autoFillReportParameters(key, monthFromOverride, monthToOverride, yearO
   }
 }
 
-function generateReportGroupPack(groupId, monthFromOverride, monthToOverride, yearOverride) {
+async function generateReportGroupPack(groupId, monthFromOverride, monthToOverride, yearOverride) {
   const group = getReportGroups().find((g) => g.id === groupId);
   if (!group) {
     showToast("Report group not found.", "error");
+    return;
+  }
+  // [BUG FIX] The From/To month picker lets either field be changed
+  // independently, so nothing stops someone setting "To" before
+  // "From" — silently produces a backwards, empty-looking range
+  // instead of catching the mistake. String comparison is safe here
+  // since both are always "YYYY-MM".
+  if (monthFromOverride && monthToOverride && monthToOverride < monthFromOverride) {
+    showToast("'To' month can't be before 'From' month.", "warning");
     return;
   }
   const viewport = document.getElementById("report-preview-viewport");
@@ -391,8 +400,20 @@ function generateReportGroupPack(groupId, monthFromOverride, monthToOverride, ye
   // an unrelated report run later.
   window.__forceScApartmentBreakdowns = !!group.includeApartmentBreakdowns;
 
-  const capture = (title, renderFn) => {
-    renderFn();
+  // [BUG FIX] compileReportPreview() is async and guarded by a shared
+  // "a report action is already in progress" flag (reportActionInProgress
+  // in runReportAction) — it refuses to start a second report until the
+  // first one's promise has actually resolved, showing "Still working on
+  // the previous request" and bailing out. capture()/the loop below used
+  // to fire each report's render without awaiting it, so by the time the
+  // next report in the group started, the previous one's guard hadn't
+  // cleared yet — every report after the first got rejected by that
+  // guard and silently produced no content, leaving the pack with just
+  // one section. Awaiting each one in turn (one report fully finishes,
+  // including its own internal awaits, before the next starts) is what
+  // actually fixes it.
+  const capture = async (title, renderFn) => {
+    await renderFn();
     if (window.currentReportRawContent) {
       sections.push(`
         <section style="page-break-after:always;">
@@ -402,19 +423,19 @@ function generateReportGroupPack(groupId, monthFromOverride, monthToOverride, ye
     }
   };
 
-  group.reportKeys.forEach((key) => {
+  for (const key of group.reportKeys) {
     const entry = ALL_REPORTS_FLAT.find((r) => r.key === key);
-    if (!entry) return; // report has since been removed from the app
+    if (!entry) continue; // report has since been removed from the app
     if (REPORTS_REQUIRING_MANUAL_UNIT.includes(key)) {
       skipped.push(entry.label);
-      return;
+      continue;
     }
-    capture(entry.label, () => {
+    await capture(entry.label, async () => {
       setReportSelection(entry.profile, key, {});
       autoFillReportParameters(key, monthFromOverride, monthToOverride, yearOverride);
-      compileReportPreview();
+      await compileReportPreview();
     });
-  });
+  }
 
   window.__forceScApartmentBreakdowns = false;
 
@@ -476,9 +497,9 @@ function renderReportGroupsList() {
       const currentMonth = getCurrentMonthRange().month;
       const periodInputHtml = isYearly
         ? `<input type="number" id="${escapeHtml(periodInputId)}" value="${new Date().getFullYear()}" min="2000" max="2100" step="1" title="Year this pack's reports should cover" style="padding:5px 6px; font-size:12px; width:72px;">`
-        : `<input type="month" id="${escapeHtml(fromInputId)}" value="${currentMonth}" title="From month" style="padding:5px 6px; font-size:12px; width:auto;">
+        : `<input type="month" id="${escapeHtml(fromInputId)}" value="${currentMonth}" title="From month" style="padding:5px 6px; font-size:12px; width:auto;" onclick="if (this.showPicker) { try { this.showPicker(); } catch (e) {} }" oninput="const t=document.getElementById('${escapeHtml(toInputId)}'); t.min=this.value; if (t.value && t.value < this.value) t.value = this.value;">
            <span style="font-size:11px; color:#666;">&ndash;</span>
-           <input type="month" id="${escapeHtml(toInputId)}" value="${currentMonth}" title="To month" style="padding:5px 6px; font-size:12px; width:auto;">`;
+           <input type="month" id="${escapeHtml(toInputId)}" value="${currentMonth}" min="${currentMonth}" title="To month" style="padding:5px 6px; font-size:12px; width:auto;" onclick="if (this.showPicker) { try { this.showPicker(); } catch (e) {} }" oninput="document.getElementById('${escapeHtml(fromInputId)}').max = this.value;">`;
       const generateOnclick = isYearly
         ? `generateReportGroupPack('${escapeHtml(g.id)}', undefined, undefined, document.getElementById('${escapeHtml(periodInputId)}').value)`
         : `generateReportGroupPack('${escapeHtml(g.id)}', document.getElementById('${escapeHtml(fromInputId)}').value, document.getElementById('${escapeHtml(toInputId)}').value)`;
@@ -603,6 +624,26 @@ function handleReportProfileSwitch() {
     });
 }
 
+// [FEATURE] Shared attribute strings for every date/month range picker
+// in the report params form (START DATE/END DATE pairs, the Ledger
+// report's own pair, the KPI/Monthly FM month pair) — one place to
+// keep two behaviors consistent everywhere:
+//  1. Clicking anywhere in the box opens the native picker, not just
+//     the small calendar icon (a plain click otherwise just drops a
+//     text caret into whichever segment was clicked).
+//  2. Moving the start value past the current end value snaps the end
+//     value forward to match it, rather than silently allowing (or
+//     just warning about) a backwards range.
+// Both type="date" and type="month" inputs support showPicker(), so
+// this one pair of attribute strings covers every range in the app.
+const OPEN_PICKER_ON_CLICK = ` onclick="if (this.showPicker) { try { this.showPicker(); } catch (e) {} }"`;
+function dateRangeSnapAttrs(startId, endId) {
+  return {
+    startAttrs: `${OPEN_PICKER_ON_CLICK} oninput="const e=document.getElementById('${endId}'); if (e) { e.min=this.value; if (e.value && this.value && e.value < this.value) e.value = this.value; } "`,
+    endAttrs: `${OPEN_PICKER_ON_CLICK} oninput="const s=document.getElementById('${startId}'); if (s) s.max=this.value;"`,
+  };
+}
+
 function handleReportLayoutSwitch() {
   const layout = document.getElementById("rep-layout-selector").value;
   const paramsFrame = document.getElementById("rep-dynamic-parameters-frame");
@@ -629,7 +670,10 @@ function handleReportLayoutSwitch() {
       "pending_outflow",
     ].includes(layout)
   ) {
-    paramsFrame.innerHTML = `<div style="display:flex; gap:10px;"><div style="flex:1;"><label>START DATE</label><input type="date" id="rep_start_date"></div><div style="flex:1;"><label>END DATE</label><input type="date" id="rep_end_date"></div></div>`;
+    {
+      const { startAttrs, endAttrs } = dateRangeSnapAttrs("rep_start_date", "rep_end_date");
+      paramsFrame.innerHTML = `<div style="display:flex; gap:10px;"><div style="flex:1;"><label>START DATE</label><input type="date" id="rep_start_date"${startAttrs}></div><div style="flex:1;"><label>END DATE</label><input type="date" id="rep_end_date"${endAttrs}></div></div>`;
+    }
   } else if (
     layout === "sc_overall" ||
     layout === "sc_per_apartment" ||
@@ -656,6 +700,7 @@ function handleReportLayoutSwitch() {
              <option value="wastage">Wastage / Adjustments</option>
            </select>`
         : "";
+    const scDateAttrs = dateRangeSnapAttrs("rep_start_date", "rep_end_date");
     paramsFrame.innerHTML = `
       ${unitPickerHtml}
       <label ${unitPickerHtml ? 'style="margin-top:10px; display:block;"' : ""}>REPORT PERIOD</label>
@@ -667,8 +712,8 @@ function handleReportLayoutSwitch() {
       </select>
       <div id="rep_sc_custom_dates" style="display:none; margin-top:10px;">
         <div style="display:flex; gap:10px;">
-          <div style="flex:1;"><label>START DATE</label><input type="date" id="rep_start_date"></div>
-          <div style="flex:1;"><label>END DATE</label><input type="date" id="rep_end_date"></div>
+          <div style="flex:1;"><label>START DATE</label><input type="date" id="rep_start_date"${scDateAttrs.startAttrs}></div>
+          <div style="flex:1;"><label>END DATE</label><input type="date" id="rep_end_date"${scDateAttrs.endAttrs}></div>
         </div>
       </div>
       ${groupByHtml}
@@ -683,6 +728,7 @@ function handleReportLayoutSwitch() {
         e.target.value === "custom" ? "block" : "none";
     });
   } else if (layout === "ledger") {
+    const ledgerDateAttrs = dateRangeSnapAttrs("rep_start_date", "rep_end_date");
     paramsFrame.innerHTML = `
       <label>SELECT LEDGER TYPE</label>
       <select id="rep-ledger-type">
@@ -691,25 +737,33 @@ function handleReportLayoutSwitch() {
         <option value="outflow_paid_pending">Outflow - Paid & Pending</option>
       </select>
       <div style="display:flex; gap:10px; margin-top:10px;">
-        <div style="flex:1;"><label>START DATE</label><input type="date" id="rep_start_date"></div>
-        <div style="flex:1;"><label>END DATE</label><input type="date" id="rep_end_date"></div>
+        <div style="flex:1;"><label>START DATE</label><input type="date" id="rep_start_date"${ledgerDateAttrs.startAttrs}></div>
+        <div style="flex:1;"><label>END DATE</label><input type="date" id="rep_end_date"${ledgerDateAttrs.endAttrs}></div>
       </div>`;
   } else if (layout === "daily_operations") {
-    paramsFrame.innerHTML = `<label>REPORT DATE</label><input type="date" id="rep-param-date" value="${new Date().toISOString().split("T")[0]}">`;
+    paramsFrame.innerHTML = `<label>REPORT DATE</label><input type="date" id="rep-param-date" value="${new Date().toISOString().split("T")[0]}"${OPEN_PICKER_ON_CLICK}>`;
   } else if (layout === "monthly_fm" || layout === "kpi_dashboard") {
     const now = new Date();
     const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const prevMonthStr = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, "0")}`;
+    // [FEATURE] showPicker() on click (not just on the native calendar
+    // icon) so clicking anywhere in either box opens the month/year
+    // picker — a plain click otherwise just drops a text caret into
+    // whichever segment was clicked. Guarded by a feature check since
+    // showPicker() isn't universally supported.
+    const openPickerOnClick = ` onclick="if (this.showPicker) { try { this.showPicker(); } catch (e) {} }"`;
     paramsFrame.innerHTML = `
       <label>FROM MONTH</label>
-      <input type="month" id="rep-param-month-from" value="${prevMonthStr}">
+      <input type="month" id="rep-param-month-from" value="${prevMonthStr}"${openPickerOnClick}>
       <label style="margin-top:10px; display:block;">TO MONTH</label>
-      <input type="month" id="rep-param-month-to" value="${prevMonthStr}">
+      <input type="month" id="rep-param-month-to" value="${prevMonthStr}" min="${prevMonthStr}"${openPickerOnClick}>
       <div id="rep-param-month-range" style="margin-top:6px; font-size:12px; color:#666;"></div>
     `;
+    const fromInput = document.getElementById("rep-param-month-from");
+    const toInput = document.getElementById("rep-param-month-to");
     const updateMonthRangeLabel = () => {
-      const fromVal = document.getElementById("rep-param-month-from")?.value;
-      const toVal = document.getElementById("rep-param-month-to")?.value;
+      const fromVal = fromInput?.value;
+      const toVal = toInput?.value;
       const rangeEl = document.getElementById("rep-param-month-range");
       if (!fromVal || !toVal || !rangeEl) return;
       const [fy, fm] = fromVal.split("-").map(Number);
@@ -723,9 +777,19 @@ function handleReportLayoutSwitch() {
         rangeEl.textContent = `Covers ${fmt(first)} – ${fmt(last)}`;
       }
     };
+    // [BUG FIX] Moving "From" past the current "To" used to just show
+    // the "⚠ before From month" warning and leave it at that — now
+    // "To" snaps forward to match "From" instead, same as the Report
+    // Groups period pickers.
+    fromInput.addEventListener("input", () => {
+      toInput.min = fromInput.value;
+      if (toInput.value && fromInput.value && toInput.value < fromInput.value) {
+        toInput.value = fromInput.value;
+      }
+      updateMonthRangeLabel();
+    });
+    toInput.addEventListener("input", updateMonthRangeLabel);
     updateMonthRangeLabel();
-    document.getElementById("rep-param-month-from").addEventListener("change", updateMonthRangeLabel);
-    document.getElementById("rep-param-month-to").addEventListener("change", updateMonthRangeLabel);
   }
 }
 
@@ -1569,10 +1633,7 @@ async function compileReportPreview() {
       </table>
     </div>
     ${(() => {
-      // [FEATURE] Monthly Totals — only shown when the selected period
-      // spans more than one calendar month (a single-month run, e.g.
-      // the ordinary current-month dashboard, would just repeat the
-      // one row already above it). Walks every calendar month from the
+      // [FEATURE] Monthly Totals — walks every calendar month from the
       // From month to the To month, inclusive, totaling each ledger's
       // credit/debit activity within that single month and the
       // occupancy rate as of that month's end — the same building
@@ -1585,7 +1646,21 @@ async function compileReportPreview() {
         monthKeys.push({ y: cursor.getFullYear(), m: cursor.getMonth() });
         cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
       }
-      if (monthKeys.length <= 1) return "";
+      // [FEATURE] A single-month run (the ordinary current-month
+      // dashboard) would otherwise show just the one row already
+      // covered by the headline cards above — instead, trail it back
+      // 5 more months so there's always a 6-month trend to read, even
+      // when only one month was explicitly selected. An explicit
+      // multi-month range (e.g. the Yearly Executive Summary) is left
+      // exactly as selected.
+      if (monthKeys.length <= 1) {
+        const anchor = monthKeys[0] || { y: monthStart.getFullYear(), m: monthStart.getMonth() };
+        monthKeys.length = 0;
+        for (let i = 5; i >= 0; i--) {
+          const d = new Date(anchor.y, anchor.m - i, 1);
+          monthKeys.push({ y: d.getFullYear(), m: d.getMonth() });
+        }
+      }
 
       const monthRows = monthKeys
         .map(({ y, m }) => {
@@ -1598,15 +1673,21 @@ async function compileReportPreview() {
           const occRate = occupancyLogFailed ? null : occupancyRateAsOf(subEnd);
           const fmtAmt = (v) => (v === null ? "—" : `N${formatMoney(v)}`);
           const fmtPct = (v) => (v === null ? "—" : `${v.toFixed(1)}%`);
+          // [FEATURE] A heavier left border on the first column of each
+          // ledger group (Service Charge / Petty Cash / Energy /
+          // Occupancy) — the header row's colspan groups already imply
+          // the grouping, but without a visible divider the numbers
+          // all run together into one undifferentiated row.
+          const GROUP_DIVIDER = "border-left:1px solid #000;";
           return `<tr style="border-bottom:1px solid #eee;">
             <td style="padding:7px 6px; font-weight:700;">${escapeHtml(label)}</td>
-            <td style="padding:7px 6px; text-align:right; color:#198754;">${fmtAmt(scAct ? scAct.credit : null)}</td>
+            <td style="padding:7px 6px; text-align:right; color:#198754; ${GROUP_DIVIDER}">${fmtAmt(scAct ? scAct.credit : null)}</td>
             <td style="padding:7px 6px; text-align:right; color:#dc3545;">${fmtAmt(scAct ? scAct.debit : null)}</td>
-            <td style="padding:7px 6px; text-align:right; color:#198754;">${fmtAmt(pcAct ? pcAct.credit : null)}</td>
+            <td style="padding:7px 6px; text-align:right; color:#198754; ${GROUP_DIVIDER}">${fmtAmt(pcAct ? pcAct.credit : null)}</td>
             <td style="padding:7px 6px; text-align:right; color:#dc3545;">${fmtAmt(pcAct ? pcAct.debit : null)}</td>
-            <td style="padding:7px 6px; text-align:right; color:#198754;">${fmtAmt(enAct ? enAct.credit : null)}</td>
+            <td style="padding:7px 6px; text-align:right; color:#198754; ${GROUP_DIVIDER}">${fmtAmt(enAct ? enAct.credit : null)}</td>
             <td style="padding:7px 6px; text-align:right; color:#dc3545;">${fmtAmt(enAct ? enAct.debit : null)}</td>
-            <td style="padding:7px 6px; text-align:right; font-weight:700;">${fmtPct(occRate)}</td>
+            <td style="padding:7px 6px; text-align:right; font-weight:700; ${GROUP_DIVIDER}">${fmtPct(occRate)}</td>
           </tr>`;
         })
         .join("");
@@ -1617,17 +1698,17 @@ async function compileReportPreview() {
           <thead>
             <tr style="border-bottom:2px solid #000; text-align:right;">
               <th style="padding:7px 6px; text-align:left;" rowspan="2">Month</th>
-              <th style="padding:7px 6px;" colspan="2">Service Charge</th>
-              <th style="padding:7px 6px;" colspan="2">Petty Cash</th>
-              <th style="padding:7px 6px;" colspan="2">Energy</th>
-              <th style="padding:7px 6px;" rowspan="2">Occupancy</th>
+              <th style="padding:7px 6px; border-left:1px solid #000;" colspan="2">Service Charge</th>
+              <th style="padding:7px 6px; border-left:1px solid #000;" colspan="2">Petty Cash</th>
+              <th style="padding:7px 6px; border-left:1px solid #000;" colspan="2">Energy</th>
+              <th style="padding:7px 6px; border-left:1px solid #000;" rowspan="2">Occupancy</th>
             </tr>
             <tr style="border-bottom:2px solid #000; text-align:right; font-size:11px; color:#666;">
-              <th style="padding:0 6px 6px;">Inflow</th>
+              <th style="padding:0 6px 6px; border-left:1px solid #000;">Inflow</th>
               <th style="padding:0 6px 6px;">Outflow</th>
-              <th style="padding:0 6px 6px;">Inflow</th>
+              <th style="padding:0 6px 6px; border-left:1px solid #000;">Inflow</th>
               <th style="padding:0 6px 6px;">Outflow</th>
-              <th style="padding:0 6px 6px;">Inflow</th>
+              <th style="padding:0 6px 6px; border-left:1px solid #000;">Inflow</th>
               <th style="padding:0 6px 6px;">Outflow</th>
             </tr>
           </thead>

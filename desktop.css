@@ -69,7 +69,7 @@ button {
 
 .nav-section {
   display: grid;
-  gap: 8px;
+  gap: 3px;
   padding: 16px 0 22px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.12);
 }
@@ -91,6 +91,9 @@ button {
   background: transparent;
   text-align: left;
   font-weight: 800;
+  /* [FEATURE] App menu text reduced 3pt from its previous implicit
+     16px (body's default), to 13px. */
+  font-size: 13px;
 }
 
 .nav-item i {
