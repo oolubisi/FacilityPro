@@ -448,8 +448,15 @@ async function openModal(type, editData = null) {
     // getDefaultWeightForType() in Code.gs exactly, so what you see
     // here is what actually gets used if you save it as-is. Still
     // fully editable for a genuine per-unit override.
+    // [FEATURE] "Airbnb" added as a classification alongside the
+    // existing Studio/1-Bed/2-Bed set — short-let units don't carry a
+    // normal annual service charge the way long-let units do, so this
+    // defaults their weight to 0 rather than guessing a ratio against
+    // long-let pricing; adjust on the backend if that's not right for
+    // a specific unit.
     const getDefaultWeightForType = (type) => {
       const t = String(type || "").toLowerCase();
+      if (t.includes("airbnb")) return 0;
       if (t.includes("studio")) return 1;
       if (t.includes("2") && t.includes("bed")) return 1.5;
       if (t.includes("1") && t.includes("bed")) return 1.25;
@@ -457,11 +464,16 @@ async function openModal(type, editData = null) {
     };
     const suggestedWeight =
       editData.weight || editData.Weight || getDefaultWeightForType(editData.type || editData.Type);
+    const currentType = editData.type || editData.Type || "Standard";
+    const TYPE_OPTIONS = ["Standard", "Studio", "1-Bedroom", "2-Bedroom", "Airbnb"];
+    const typeOptionsHtml = (TYPE_OPTIONS.includes(currentType) ? TYPE_OPTIONS : [...TYPE_OPTIONS, currentType])
+      .map((t) => `<option value="${escapeHtml(t)}" ${t === currentType ? "selected" : ""}>${escapeHtml(t)}</option>`)
+      .join("");
 
     body.innerHTML = `
       <div class="form-grid-3">
         <div class="form-field"><label ${lbl}>Tenant Name</label><input id="f_tenant" value="${escapeHtml(editData.tenant || editData.Tenant || "")}" ${ls}></div>
-        <div class="form-field"><label ${lbl}>Apartment Type</label><input id="f_type" value="${escapeHtml(editData.type || editData.Type || "Standard")}" disabled ${ls}></div>
+        <div class="form-field"><label ${lbl}>Apartment Type</label><select id="f_type" ${ls}>${typeOptionsHtml}</select></div>
         <div class="form-field"><label ${lbl}>Current Rent (₦)</label><input id="f_rent" type="text" inputmode="numeric" placeholder="Annual rent amount" oninput="maskCurrencyInput(this)" value="${(editData.rent || editData.Rent) ? formatMoney(editData.rent || editData.Rent) : ""}" ${ls}></div>
         <div class="form-field"><label ${lbl}>Service Charge Deposit (₦)</label><input id="f_deposit" type="text" inputmode="numeric" placeholder="Service charge deposit amount" oninput="maskCurrencyInput(this)" value="${(editData.serviceChargeDeposit || editData.ServiceChargeDeposit) ? formatMoney(editData.serviceChargeDeposit || editData.ServiceChargeDeposit) : ""}" ${ls}></div>
         <div class="form-field"><label ${lbl}>Meter No</label><input id="f_meter" value="${escapeHtml(suggestedMeterNo)}" disabled ${ls}></div>
@@ -490,6 +502,16 @@ async function openModal(type, editData = null) {
       populateModalInlineImageGalleryPreviews("aptPreviews");
     document.getElementById("cameraInput").onchange = (e) =>
       processIncomingMultiAttachments(e.target.files, "aptPreviews");
+    // Weight field stays disabled/backend-set as before, but its
+    // displayed suggestion still updates when Type changes, so
+    // switching a unit to Airbnb (or any other type) doesn't leave
+    // a stale ratio sitting on screen.
+    document.getElementById("f_type").addEventListener("change", (e) => {
+      const weightInput = document.getElementById("f_weight");
+      if (weightInput && !(editData.weight || editData.Weight)) {
+        weightInput.value = getDefaultWeightForType(e.target.value);
+      }
+    });
     submit.onclick = () => {
       submit.disabled = true;
       submit.classList.add("loading");
@@ -508,7 +530,7 @@ async function openModal(type, editData = null) {
         notes: sanitizeInput(document.getElementById("f_notes").value),
         notes2: sanitizeInput(document.getElementById("f_notes2").value),
         photos: currentModalFiles.join(","),
-        type: editData.type || editData.Type || "",
+        type: document.getElementById("f_type").value,
         oldApt: currentUnit,
       }, editData, "apartments")
         .then(() => {

@@ -257,6 +257,42 @@ ipcMain.handle("select-attachments-folder", async () => {
   return { status: "success", path: chosen };
 });
 
+// [BUG FIX] mobile-sync.js previously fell back to a path hardcoded
+// for one specific Mac account when Settings.driveSyncFolder was
+// unset — harmless on that one machine, but a guaranteed EPERM/ENOENT
+// on every other machine (e.g. a Windows PC, or a different Google
+// account), since nothing ever actually wrote driveSyncFolder into
+// Settings. There was no UI to set it. This mirrors
+// select-attachments-folder above so Settings can expose a real
+// "Choose Folder" control instead.
+ipcMain.handle("select-drive-sync-folder", async () => {
+  const result = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] });
+  if (result.canceled || !result.filePaths[0]) return { status: "cancelled" };
+  const chosen = result.filePaths[0];
+  const settings = db.getCollection("Settings");
+  settings.driveSyncFolder = chosen;
+  db.persist();
+  return { status: "success", path: chosen };
+});
+
+// [FEATURE] One-time pull the other direction: reads the same
+// collection JSON files mobile-sync.js writes OUT of the chosen Drive
+// folder, and loads them IN to this machine's local database. Meant
+// for exactly the situation of setting this app up on a new/second
+// machine that shares the Drive account with one that's already been
+// syncing — e.g. the Windows install picking up the Apartments list
+// etc. that the Mac install already pushed to Drive, rather than
+// starting from an empty database. Backs up the current (likely
+// empty or stale) local database first, since this overwrites every
+// data collection wholesale.
+ipcMain.handle("import-drive-sync-snapshot", async () => {
+  try {
+    return mobileSync.importFromSyncFolder();
+  } catch (err) {
+    return { status: "error", message: err && err.stack ? err.stack : String(err) };
+  }
+});
+
 // [FEATURE] Serves files from the attachments folder to the renderer
 // under the attachment:// scheme registered above — e.g. a photo
 // saved as "img_1234_photo.jpg" is requested by the renderer as

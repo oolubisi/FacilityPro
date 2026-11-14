@@ -1521,7 +1521,7 @@ function saveSettings(data) {
   // on this form, so they were being wiped on every Settings save — for
   // the import marker that would let the import run a second time.
   const PRESERVED_KEYS = [
-    'attachmentsFolder', 'lastSyncAt', 'lastSyncError', 'stockImportedToPettyCash', 'stockImportSummary',
+    'attachmentsFolder', 'driveSyncFolder', 'lastSyncAt', 'lastSyncError', 'stockImportedToPettyCash', 'stockImportSummary',
     // [FEATURE] Transaction Lock (see unlockTransactions/lockTransactions
     // below) — managed by its own dedicated controls in Settings, not
     // this general form, so a save here must not reset or wipe them.

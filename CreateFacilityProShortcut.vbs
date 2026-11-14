@@ -1,5 +1,5 @@
 Set oWS = WScript.CreateObject("WScript.Shell")
-appDir = "C:\Users\Kayode\Documents\My Apps\FacilityPro"
+appDir = "C:\Users\Oolub\Documents\My Apps\FacilityPro"
 desktopPath = oWS.SpecialFolders("Desktop")
 sLinkFile = desktopPath & "\Facility Pro.lnk"
 Set oLink = oWS.CreateShortcut(sLinkFile)

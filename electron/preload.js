@@ -29,4 +29,14 @@ contextBridge.exposeInMainWorld("localApi", {
   // for the "Sync Now" button so it doesn't require closing the app
   // to get mobile caught up.
   syncMobileSnapshot: () => ipcRenderer.invoke("sync-mobile-snapshot"),
+  // [BUG FIX] Opens the native folder picker for Settings' Mobile Sync
+  // card — see main.js's select-drive-sync-folder handler. There was
+  // previously no way to set this at all; mobile-sync.js just guessed
+  // a path that only existed on one specific machine.
+  selectDriveSyncFolder: () => ipcRenderer.invoke("select-drive-sync-folder"),
+  // [FEATURE] One-time pull of an existing Drive-synced snapshot into
+  // this machine's local database — see main.js's
+  // import-drive-sync-snapshot handler / mobile-sync.js's
+  // importFromSyncFolder().
+  importDriveSyncSnapshot: () => ipcRenderer.invoke("import-drive-sync-snapshot"),
 });

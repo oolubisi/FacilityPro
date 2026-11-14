@@ -1073,16 +1073,25 @@ function renderSettingsShortcuts() {
         ? `<div class="desktop-form-card">
       <h3 style="margin:0 0 8px; font-size:15px;">Mobile Sync</h3>
       <p style="margin:0 0 8px; font-size:12px; color:var(--muted);">Pushed automatically when you close the app, or any time via "Sync Now" in the sidebar.</p>
+      <p id="desktop-drive-sync-folder-path" style="margin:0 0 12px; font-size:13px; font-weight:700; word-break:break-all;">Loading...</p>
+      <button class="action-btn" id="desktop-choose-drive-sync-folder-btn" style="width:auto; background:#0d6efd; margin-bottom:12px;">
+        <i class="fas fa-folder-open"></i> Choose Folder
+      </button>
       ${
         appSettings.lastSyncError
           ? `<p style="margin:0; font-size:13px; font-weight:700; color:#dc3545;">Last attempt failed: ${escapeHtml(appSettings.lastSyncError)}</p>`
           : ""
       }
-      <p style="margin:0; font-size:13px; font-weight:700;">${
+      <p style="margin:0 0 12px; font-size:13px; font-weight:700;">${
         appSettings.lastSyncAt
           ? "Last synced: " + escapeHtml(formatDateForDisplay(appSettings.lastSyncAt)) + " at " + escapeHtml(new Date(appSettings.lastSyncAt).toLocaleTimeString())
           : "Never synced yet."
       }</p>
+      <hr style="margin:4px 0 12px; border:0; border-top:1px solid var(--border);">
+      <p style="margin:0 0 8px; font-size:12px; color:var(--muted);">Setting this app up on a new machine that shares the same Drive account as one already syncing? Pull its existing data in once, instead of starting empty. This overwrites everything below with what's in the folder above — a backup of this machine's current data is made first.</p>
+      <button class="action-btn" id="desktop-import-drive-sync-btn" style="width:auto; background:#6f42c1;">
+        <i class="fas fa-cloud-download-alt"></i> Import from Drive Sync
+      </button>
     </div>`
         : ""
     }
@@ -1153,6 +1162,39 @@ function renderSettingsShortcuts() {
         displayCurrentAttachmentsFolder();
       } else if (result && result.status !== "cancelled") {
         showToast((result && result.message) || "Could not update the attachments folder.", "error");
+      }
+    });
+  }
+
+  const chooseDriveSyncFolderBtn = document.getElementById("desktop-choose-drive-sync-folder-btn");
+  if (chooseDriveSyncFolderBtn) {
+    displayCurrentDriveSyncFolder();
+    chooseDriveSyncFolderBtn.addEventListener("click", async () => {
+      const result = await window.localApi.selectDriveSyncFolder();
+      if (result && result.status === "success") {
+        showToast("Drive sync folder updated.", "success");
+        displayCurrentDriveSyncFolder();
+      } else if (result && result.status !== "cancelled") {
+        showToast((result && result.message) || "Could not update the Drive sync folder.", "error");
+      }
+    });
+  }
+
+  const importDriveSyncBtn = document.getElementById("desktop-import-drive-sync-btn");
+  if (importDriveSyncBtn) {
+    importDriveSyncBtn.addEventListener("click", async () => {
+      if (!confirm("This will overwrite Apartments, Assets, and every other record on this machine with what's in the Drive sync folder. A backup of the current local data is made first. Continue?")) {
+        return;
+      }
+      importDriveSyncBtn.disabled = true;
+      const result = await window.localApi.importDriveSyncSnapshot();
+      importDriveSyncBtn.disabled = false;
+      if (result && result.status === "success") {
+        showToast("Imported " + (result.imported || []).length + " collections from Drive. Backup saved to " + result.backupPath, "success");
+        if (typeof reloadAllDataAndRerender === "function") reloadAllDataAndRerender();
+        else location.reload();
+      } else {
+        showToast((result && result.message) || "Import failed.", "error");
       }
     });
   }
@@ -1250,6 +1292,16 @@ async function displayCurrentAttachmentsFolder() {
   if (!el) return;
   const settings = await callApi("getSettings", {});
   el.textContent = (settings && settings.attachmentsFolder) || "Not yet set — using the default location.";
+}
+
+// [BUG FIX] Mirrors displayCurrentAttachmentsFolder() above, for the
+// Drive sync folder — there was previously no UI showing this at all,
+// since mobile-sync.js just silently assumed a hardcoded path.
+async function displayCurrentDriveSyncFolder() {
+  const el = document.getElementById("desktop-drive-sync-folder-path");
+  if (!el) return;
+  const settings = await callApi("getSettings", {});
+  el.textContent = (settings && settings.driveSyncFolder) || "Not set yet — choose the Drive-synced folder on this machine.";
 }
 
 // [REMOVED] runCloudMigration() / "Import from Cloud" — this one-time
