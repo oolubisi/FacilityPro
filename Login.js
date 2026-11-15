@@ -72,28 +72,26 @@ function isDesktopShell() {
 // callApiStrict path BEFORE window.isMobileReadOnly is set, since
 // setting that flag first would make callApi try to answer this very
 // request out of a snapshot that doesn't exist yet.
-async function bootMobileReadOnlyViewer({ interactive = false } = {}) {
+async function bootMobileReadOnlyViewer() {
   const screen = document.getElementById("login-screen");
   if (screen) {
     screen.hidden = false;
     screen.innerHTML = `<div class="login-empty-state" style="padding:40px 20px; text-align:center;"><i class="fas fa-spinner fa-spin" style="font-size:32px; margin-bottom:16px; color:var(--primary);"></i><p>Loading latest data...</p></div>`;
   }
 
-  // [FEATURE] Drive is now the sync transport instead of the old Apps
-  // Script relay (see drive-sync.js) — try a silent token fetch first
-  // (works once the person has signed in before), and only fall back
-  // to a tappable "Sign in with Google" button if that fails, since an
-  // interactive consent popup can't be opened without a user gesture.
-  const result = await fetchMobileSnapshotFromDrive({ interactive });
+  // [BUG FIX] drive-sync.js used to require an interactive Google
+  // consent popup as a fallback when a silent token fetch failed,
+  // which is why this function accepted/forwarded an `interactive`
+  // flag and showed a "Sign in with Google" button on failure. Now
+  // that drive-sync.js reads through a token-gated Apps Script proxy
+  // instead of OAuth, there's no sign-in step to retry interactively —
+  // fetchMobileSnapshotFromDrive() never returns `needsSignIn` anymore,
+  // so that branch is gone; any failure (misconfigured proxy, no
+  // network, bad token) goes straight to the generic retry screen.
+  const result = await fetchMobileSnapshotFromDrive();
   if (!result || result.status !== "success" || !result.snapshot) {
     if (screen) {
-      if (result && result.needsSignIn) {
-        screen.innerHTML = `<div class="login-empty-state" style="padding:40px 20px; text-align:center;"><i class="fab fa-google" style="font-size:32px; margin-bottom:16px; color:var(--primary);"></i><p style="font-weight:700;">Sign in to load your data.</p><button class="action-btn" style="margin-top:16px; width:auto;" id="drive-signin-btn">Sign in with Google</button></div>`;
-        const btn = document.getElementById("drive-signin-btn");
-        if (btn) btn.addEventListener("click", () => bootMobileReadOnlyViewer({ interactive: true }));
-      } else {
-        screen.innerHTML = `<div class="login-empty-state" style="padding:40px 20px; text-align:center; color:var(--danger);"><i class="fas fa-triangle-exclamation" style="font-size:32px; margin-bottom:16px;"></i><p style="font-weight:700;">Couldn't load data.</p><p style="font-size:13px; color:var(--muted);">${escapeHtml((result && result.message) || "Make sure the desktop app has synced at least once, then try again.")}</p><button class="action-btn" style="margin-top:16px; width:auto;" onclick="window.location.reload()">Retry</button></div>`;
-      }
+      screen.innerHTML = `<div class="login-empty-state" style="padding:40px 20px; text-align:center; color:var(--danger);"><i class="fas fa-triangle-exclamation" style="font-size:32px; margin-bottom:16px;"></i><p style="font-weight:700;">Couldn't load data.</p><p style="font-size:13px; color:var(--muted);">${escapeHtml((result && result.message) || "Make sure the desktop app has synced at least once, then try again.")}</p><button class="action-btn" style="margin-top:16px; width:auto;" onclick="window.location.reload()">Retry</button></div>`;
     }
     return;
   }

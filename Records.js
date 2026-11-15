@@ -587,8 +587,9 @@ function renderListCard(p, item, isMaintPage) {
 
   if (p === "apartments" || p === "serviceunits") {
     const status = String(item.status || item.Status || "").toLowerCase();
-    const statusBg =
-      status === "occupied"
+    const statusBg = status.startsWith("airbnb")
+      ? "var(--warning, #e8890c)"
+      : status === "occupied"
         ? "var(--success)"
         : status === "common area"
           ? "var(--primary)"

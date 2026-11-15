@@ -1144,6 +1144,25 @@ function applyAllDataPayload(payload) {
 function registerServiceWorkerIfSupported() {
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("./sw.js").catch(console.error);
+    // [BUG FIX] Without this, bumping sw.js's CACHE_NAME to ship updated
+    // files required reloading the app TWICE: the first reload is what
+    // lets the browser notice the new sw.js and activate it
+    // (skipWaiting + clients.claim take over immediately), but the page
+    // that triggered that reload was already mid-flight when the new
+    // Service Worker took control, so it was still served from the OLD
+    // cache. Only a second, separate reload actually got the new files.
+    // That's exactly the "I restarted the app and my change still isn't
+    // there" confusion this caused repeatedly. Reloading automatically
+    // the moment a new Service Worker takes control closes that gap —
+    // guarded with a flag so it fires at most once per page load, since
+    // controllerchange firing a second time (e.g. from an unrelated
+    // update) shouldn't trigger a reload loop.
+    let reloadedForNewServiceWorker = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (reloadedForNewServiceWorker) return;
+      reloadedForNewServiceWorker = true;
+      window.location.reload();
+    });
   }
 }
 
