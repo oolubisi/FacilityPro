@@ -227,205 +227,32 @@ async function compileAndDownloadUnifiedPDF(
     );
     const sanitizedHtml = sanitizeHtmlForServer(rawHtml);
 
-    // [FEATURE] Desktop/local mode uses the system print dialog
-    // instead of sending HTML to Apps Script for server-side PDF
-    // conversion — "Save as PDF" in that dialog covers the PDF case,
-    // and an actual printer covers physical printing, so one path now
-    // serves both instead of two separate ones. See
-    // printViaSystemDialog below for the one thing this can't
-    // preserve: attachment merging (combining linked photos/PDFs into
-    // one file), since the OS dialog has no way to merge in outside
-    // files the way the PDFLib pipeline below does.
-    // [BUG FIX] Also covers window.isMobileReadOnly, not just desktop's
-    // window.localApi — this used to only check for desktop, so a
-    // mobile "Download PDF"/"Print Payment" tap fell through to the
-    // old Apps Script generatePDF call below, which no longer exists
-    // now that Code.gs has been stripped down to just the mobile
-    // snapshot relay. Printing/PDF is a harmless, read-only action
-    // either way, so mobile gets the exact same system-print path as
-    // desktop rather than being blocked or hitting a dead endpoint.
-    if (window.localApi || window.isMobileReadOnly) {
-      loadingScreen.remove();
-      printViaSystemDialog(sanitizedHtml, filename, attachmentUrls, orientation);
-      return;
-    }
-
-    const cleanHTML = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-      <style>
-        @page { size: A4 ${orientation === "landscape" ? "landscape" : "portrait"}; margin: 12mm 10mm 12mm 10mm; }
-        body { font-family: Arial, sans-serif; color: #333; background: #fff; padding: 0; margin: 0; font-size: 11px; line-height: 1.4; }
-        * { box-sizing: border-box; }
-
-        /* Table page-break flow */
-        .report-flow-section {
-          page-break-inside: auto !important;
-          break-inside: auto !important;
-        }
-        table { 
-          width: 100%; 
-          border-collapse: collapse; 
-          margin-bottom: 12px; 
-          border: 1px solid #444 !important;
-          page-break-inside: auto !important;
-          break-inside: auto !important;
-        }
-        thead { 
-          display: table-header-group !important; 
-        }
-        tbody { 
-          display: table-row-group !important; 
-        }
-        tr { 
-          page-break-inside: avoid !important;
-          break-inside: avoid !important;
-          page-break-after: auto !important;
-          break-after: auto !important;
-        }
-        th, td { 
-          text-align: left; 
-          padding: 6px 8px; 
-          border: 1px solid #ccc !important; 
-          vertical-align: top;
-          page-break-inside: auto !important;
-          break-inside: auto !important;
-          overflow-wrap: anywhere;
-          word-break: break-word;
-        }
-        th { 
-          background-color: #f4f4f4; 
-          -webkit-print-color-adjust: exact; 
-          print-color-adjust: exact; 
-        }
-        img { max-width: 100%; }
-        h1, h2, h3, h4 { page-break-after: avoid; }
-      </style>
-    </head><body>${sanitizedHtml}</body></html>`;
-
-    // [BUG FIX] Same protection as callApi's timeout, but longer —
-    // PDF generation genuinely takes several seconds server-side for a
-    // large document, so the same 10s used for normal data requests
-    // would risk aborting a legitimately slow-but-working generation,
-    // not just a stuck redirect.
-    const timeoutController = new AbortController();
-    const timeoutId = setTimeout(() => timeoutController.abort(), 30000);
-    let response;
-    try {
-      response = await fetch(GAS_URL, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action: "generatePDF", html: cleanHTML, token: API_TOKEN, sessionToken: currentUser?.sessionToken || null }),
-        signal: timeoutController.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-    const text = await response.text();
-    let result;
-    try {
-      result = JSON.parse(text);
-    } catch (e) {
-      throw new Error("Invalid PDF response");
-    }
-    if (result.code === "AUTH_REQUIRED") {
-      clearStoredSession();
-      if (typeof window.handleSessionExpired === "function") window.handleSessionExpired();
-      throw new Error("Your session expired. Please log in again.");
-    }
-    if (result.status !== "success")
-      throw new Error(result.message || "PDF generation failed");
-    if (!result.base64) throw new Error("No PDF data received");
-
-    loadingScreen.querySelector("h2").innerText = "Processing Attachments...";
-    const { PDFDocument, degrees, rgb } = PDFLib;
-    const pdfBytes = Uint8Array.from(atob(result.base64), (c) =>
-      c.charCodeAt(0),
-    );
-    const masterPdf = await PDFDocument.load(pdfBytes);
-
-    for (const url of attachmentUrls || []) {
-      if (!url) continue;
-      const fileId = extractDriveFileId(url);
-      if (!fileId) continue;
-      try {
-        const fileData = await callApiStrict("getFileBase64", { id: fileId });
-        if (fileData?.status === "success" && fileData.base64) {
-          const bytes = Uint8Array.from(
-            atob(fileData.base64.replace(/\s/g, "")),
-            (c) => c.charCodeAt(0),
-          );
-          if (fileData.mimeType?.startsWith("application/pdf")) {
-            const extPdf = await PDFDocument.load(bytes);
-            const pages = await masterPdf.copyPages(
-              extPdf,
-              extPdf.getPageIndices(),
-            );
-            pages.forEach((p) => masterPdf.addPage(p));
-          } else if (fileData.mimeType?.startsWith("image/")) {
-            const img =
-              fileData.mimeType === "image/png"
-                ? await masterPdf.embedPng(bytes)
-                : await masterPdf.embedJpg(bytes);
-            const page = masterPdf.addPage();
-            const ratio = Math.min(
-              (page.getWidth() - 80) / img.width,
-              (page.getHeight() - 80) / img.height,
-              1,
-            );
-            page.drawImage(img, {
-              x: (page.getWidth() - img.width * ratio) / 2,
-              y: (page.getHeight() - img.height * ratio) / 2,
-              width: img.width * ratio,
-              height: img.height * ratio,
-            });
-          }
-        }
-      } catch (e) {
-        console.error("Attachment error:", e);
-      }
-    }
-
-    const pages = masterPdf.getPages();
-    pages.forEach((page) => {
-      const { width, height } = page.getSize();
-      // Watermark only — footer (page numbers, branding) has been removed per request.
-      page.drawText("Facility Pro", {
-        x: width / 4,
-        y: height / 2,
-        size: 48,
-        rotate: degrees(-45),
-        opacity: 0.08,
-        color: rgb(0.5, 0.5, 0.5),
-      });
-    });
-
-    loadingScreen.querySelector("h2").innerText = "Finishing up...";
-    const finalPdfBytes = await masterPdf.save();
-    const file = new File([finalPdfBytes], filename + ".pdf", {
-      type: "application/pdf",
-    });
-
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      await navigator.share({
-        title: filename,
-        text: "Facility Pro report attached.",
-        files: [file],
-      });
-      loadingScreen.innerHTML =
-        '<i class="fas fa-check-circle" style="font-size:50px; margin-bottom:20px; color:#198754;"></i><h2 style="margin:0;">Shared Successfully!</h2>';
-      showToast("PDF shared successfully", "success");
-    } else {
-      loadingScreen.innerHTML =
-        '<i class="fas fa-download" style="font-size:50px; margin-bottom:20px; color:#198754;"></i><h2 style="margin:0;">Downloading...</h2>';
-      const blob = new Blob([finalPdfBytes], { type: "application/pdf" });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = filename + ".pdf";
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      setTimeout(() => URL.revokeObjectURL(link.href), 3000);
-      showToast("PDF downloaded", "success");
-    }
+    // [FEATURE] Both shells print through the system dialog: "Save as
+    // PDF" there covers the PDF case and an actual printer covers
+    // physical printing, so one path serves both. Mobile included —
+    // printing is a read-only action, so there's no reason to treat the
+    // read-only viewer differently.
+    //
+    // [CLEANUP] There is no longer any alternative to this. Everything
+    // that followed here — building a standalone styled HTML document,
+    // POSTing it to the old Apps Script for server-side PDF conversion,
+    // then merging linked attachments into the result with PDFLib — was
+    // only reachable when neither window.localApi nor
+    // window.isMobileReadOnly was set, i.e. in a build that talked to
+    // the remote backend. Both shells set one or the other, so that
+    // whole pipeline had become unreachable, and the endpoint it
+    // targeted no longer implements generatePDF in any case.
+    //
+    // Removed rather than left in place because it still referenced
+    // GAS_URL and API_TOKEN, which are gone from Core.js — so if
+    // anything ever had reached it, it would have thrown a
+    // ReferenceError instead of failing cleanly.
+    //
+    // The one capability lost with it is attachment merging; see
+    // printViaSystemDialog below, which lists linked filenames at the
+    // end of the printed document instead of silently dropping them.
+    loadingScreen.remove();
+    printViaSystemDialog(sanitizedHtml, filename, attachmentUrls, orientation);
   } catch (err) {
     console.error("PDF Generation Failed:", err);
     showToast(err?.message || "PDF generation failed. Check connection.", "error");

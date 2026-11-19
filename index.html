@@ -23,8 +23,23 @@
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
     />
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <!--
+      [CLEANUP] html2pdf.bundle.min.js and pdf-lib.min.js used to load
+      here. Neither is used by any code in this app:
+        - pdf-lib (PDFLib) was only ever touched by the server-side PDF
+          pipeline in pdf.js, which merged linked attachments into the
+          PDF that the old Apps Script backend returned. That pipeline
+          is gone; printing goes through the system dialog on both
+          shells now.
+        - html2pdf was referenced nowhere at all — a leftover from an
+          even earlier approach.
+      Both were plain <script> tags in <head>, so the browser blocked
+      page parsing on fetching and executing roughly a megabyte of
+      JavaScript, on every single load, to use none of it. That is dead
+      weight anywhere and a real cost on mobile data. Removing them
+      also drops two CDN dependencies that could not be satisfied
+      offline.
+    -->
     <link rel="stylesheet" href="styles.css" />
     <script src="Core.js" defer></script>
     <script src="drive-sync.js" defer></script>

@@ -1,4 +1,4 @@
-const CACHE_NAME = "facility-pro-v21";
+const CACHE_NAME = "facility-pro-v23";
 
 const STATIC_ASSETS = [
   "./",
@@ -12,6 +12,13 @@ const STATIC_ASSETS = [
   "./Modals-forms.js",
   "./pdf.js",
   "./Reports.js",
+  // [BUG FIX] Was missing from this list, which left a hole in offline
+  // coverage: Login.js calls into it during boot, so a cold first load
+  // with no connection had no data layer at all. It only seemed to work
+  // because the same-origin handler below runtime-caches whatever it
+  // successfully fetches — so anyone who had loaded the app online once
+  // was covered by accident rather than by design.
+  "./drive-sync.js",
   "./manifest.json",
   "./logo.png",
   // [BUG FIX] The desktop shell (used by the Electron wrapper) was never
@@ -25,21 +32,26 @@ const STATIC_ASSETS = [
   "./desktop.js",
 ];
 
-// Cross-origin endpoints that need network-first strategy
-// [AUDIT NOTE] This branch (and API_ENDPOINTS below) never actually
-// runs: the fetch handler bails out for any non-GET request before
-// reaching this check, and every API call this app makes uses POST
-// (see Core.js's callApi / pdf.js's generatePDF fetch) — including
-// reads like getApartments, which are POST actions with a JSON body,
-// not GET requests. Left in place rather than removed because the
-// real offline-fallback-for-reads logic already lives in Core.js's
-// callApi() (localStorage, keyed per action name) — extending this
-// Service Worker to cache POST bodies correctly would need a custom
-// cache key derived from the request body's `action` field, since the
-// Cache API keys by URL by default and every action hits the same
-// GAS_URL — not worth the added complexity/risk when an equivalent,
-// simpler fallback already exists and works.
-const API_ENDPOINTS = ["script.google.com"];
+// [CLEANUP] An API_ENDPOINTS list and a network-first-with-cache branch
+// for script.google.com used to live here. Its own audit note said the
+// branch could never run, because back then every API call was a POST
+// and the handler bails out on non-GET above — but that note went stale
+// the moment mobile started reading its snapshot over a plain GET
+// through the Apps Script proxy. The branch quietly became live code.
+//
+// It's removed rather than fixed, for two reasons. First, caching that
+// response here would duplicate the offline copy drive-sync.js already
+// keeps in localStorage, giving two caches that can disagree about
+// which snapshot is current. Second, the Cache API refuses to store a
+// response that arrived via a redirect in some browsers (Safari in
+// particular, which matters — this is a phone app), and every Apps
+// Script /exec response is a redirect to script.googleusercontent.com.
+// So the branch would have failed on exactly the devices it mattered
+// most for, while looking fine in testing on Chrome.
+//
+// Requests to the proxy now pass straight through to the network,
+// untouched. drive-sync.js owns the offline story for that data.
+const SNAPSHOT_PROXY_HOST = "script.google.com";
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();
@@ -81,45 +93,11 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Check if this is an API call (cross-origin)
-  const isApiCall = API_ENDPOINTS.some((endpoint) =>
-    url.hostname.includes(endpoint),
-  );
-
-  if (isApiCall) {
-    // Network-first strategy for API calls with offline fallback
-    event.respondWith(
-      fetch(event.request)
-        .then((networkResponse) => {
-          // Cache successful API responses for offline reading
-          if (networkResponse && networkResponse.status === 200) {
-            const responseToCache = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(event.request, responseToCache);
-            });
-          }
-          return networkResponse;
-        })
-        .catch(() => {
-          console.log(
-            "SW: API network failed, serving from cache:",
-            event.request.url,
-          );
-          return caches.match(event.request).then((cachedResponse) => {
-            if (cachedResponse) {
-              return cachedResponse;
-            }
-            // Return offline JSON response for API calls
-            return new Response(
-              JSON.stringify({
-                status: "error",
-                message: "Offline - No cached data available",
-              }),
-              { status: 503, headers: { "Content-Type": "application/json" } },
-            );
-          });
-        }),
-    );
+  // Snapshot proxy: not ours to handle. Letting it fall through means
+  // drive-sync.js sees the real network outcome — a genuine failure it
+  // can answer from its own localStorage copy, rather than a synthetic
+  // 503 from here that it would have to interpret.
+  if (url.hostname.includes(SNAPSHOT_PROXY_HOST)) {
     return;
   }
 

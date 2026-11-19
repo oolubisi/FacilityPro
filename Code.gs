@@ -58,6 +58,21 @@ const SNAPSHOT_COLLECTIONS = [
 // paths that are nobody else's business.
 const PUBLIC_SETTINGS_FIELDS = ['estateName', 'estateAddress', 'fmName', 'fmAddress', 'logoUrl', 'mainFolder'];
 
+// [BUG FIX] Assembling the payload below means ~18 separate
+// file.getBlob() round-trips to Drive, one per collection, and that
+// measured ~10 seconds wall-clock per request. Every mobile load paid
+// it in full, which on a phone looked indistinguishable from the app
+// not loading at all. The assembled JSON is now cached so only the
+// first call after a desktop push pays that cost.
+//
+// CacheService caps a single value at 100 KB and the payload is well
+// past that (~145 KB), so it's split into chunks across several keys
+// with a small meta entry recording the count. A partially-expired set
+// is treated as a miss — see readCachedPayload.
+const CACHE_KEY_PREFIX = 'fp_snapshot_';
+const CACHE_CHUNK_SIZE = 90000;
+const CACHE_TTL_SECONDS = 300;
+
 function doGet(e) {
   try {
     const expectedToken = PropertiesService.getScriptProperties().getProperty('ACCESS_TOKEN');
@@ -68,6 +83,16 @@ function doGet(e) {
     const providedToken = e && e.parameter && e.parameter.token;
     if (providedToken !== expectedToken) {
       return jsonResponse({ status: 'error', message: 'Invalid or missing token.' });
+    }
+
+    // &fresh=1 bypasses the cache — useful right after a desktop sync
+    // when you don't want to wait out the TTL to confirm it landed.
+    const wantsFresh = e && e.parameter && e.parameter.fresh === '1';
+    if (!wantsFresh) {
+      const cachedPayload = readCachedPayload();
+      if (cachedPayload) {
+        return ContentService.createTextOutput(cachedPayload).setMimeType(ContentService.MimeType.JSON);
+      }
     }
 
     const folders = DriveApp.getFoldersByName(SYNC_FOLDER_NAME);
@@ -108,9 +133,58 @@ function doGet(e) {
     snapshot.Settings = settings;
     snapshot.generatedAt = manifest.generatedAt || null;
 
-    return jsonResponse({ status: 'success', snapshot: snapshot });
+    const payload = JSON.stringify({ status: 'success', snapshot: snapshot });
+    writeCachedPayload(payload);
+    return ContentService.createTextOutput(payload).setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
     return jsonResponse({ status: 'error', message: 'Server error: ' + err.message });
+  }
+}
+
+// ── PAYLOAD CACHE ──
+// Both helpers are best-effort: any failure degrades to "no cache",
+// which costs latency but never correctness. Only successful payloads
+// are ever cached — errors always re-run so a transient Drive failure
+// doesn't get pinned in place for the whole TTL.
+function readCachedPayload() {
+  try {
+    const cache = CacheService.getScriptCache();
+    const rawMeta = cache.get(CACHE_KEY_PREFIX + 'meta');
+    if (!rawMeta) return null;
+    const meta = JSON.parse(rawMeta);
+    if (!meta || !meta.chunks) return null;
+
+    const keys = [];
+    for (var i = 0; i < meta.chunks; i++) keys.push(CACHE_KEY_PREFIX + i);
+    const parts = cache.getAll(keys);
+
+    var payload = '';
+    for (var j = 0; j < meta.chunks; j++) {
+      const part = parts[CACHE_KEY_PREFIX + j];
+      // Chunks expire independently; a gap means the set is no longer
+      // whole, and stitching around it would hand back truncated JSON.
+      if (part === null || part === undefined) return null;
+      payload += part;
+    }
+    return payload;
+  } catch (err) {
+    return null;
+  }
+}
+
+function writeCachedPayload(payload) {
+  try {
+    const cache = CacheService.getScriptCache();
+    const entries = {};
+    var chunkCount = 0;
+    for (var i = 0; i < payload.length; i += CACHE_CHUNK_SIZE) {
+      entries[CACHE_KEY_PREFIX + chunkCount] = payload.substring(i, i + CACHE_CHUNK_SIZE);
+      chunkCount++;
+    }
+    entries[CACHE_KEY_PREFIX + 'meta'] = JSON.stringify({ chunks: chunkCount });
+    cache.putAll(entries, CACHE_TTL_SECONDS);
+  } catch (err) {
+    /* Caching is an optimisation only — a failure here is not fatal. */
   }
 }
 

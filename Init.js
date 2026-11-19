@@ -13,8 +13,12 @@
 // ─────────────────────────────────────────────
 async function bootMobileApp() {
   registerServiceWorkerIfSupported();
-  window.addEventListener("online", processSyncQueue);
-  if (navigator.onLine) processSyncQueue();
+  // [CLEANUP] The "online" listener here existed to flush the offline
+  // write queue the moment connectivity returned. There is no queue to
+  // flush now — desktop writes locally and mobile is read-only — so
+  // this runs once at boot purely to clear anything a previous version
+  // left parked in localStorage. See processSyncQueue in Core.js.
+  processSyncQueue();
 
   // Paint instantly from the last successful load before touching the
   // network, so the UI never sits blank/blocked behind a spinner if we
@@ -510,16 +514,30 @@ function showOverdueAssets() {
   showPage("assets");
 }
 
+// [CLEANUP] Three of these rows described a backend that no longer
+// exists. "Offline Queue" and "Cached Reads" counted localStorage keys
+// written by the old remote-write queue and its stale-read backups —
+// both permanently zero now. "App Cache" was a hardcoded
+// "facility-pro-v16" string that was never updated when sw.js's
+// CACHE_NAME moved on, so it had been quietly lying for several
+// versions; it's read from the live caches now instead.
+//
+// What replaces them is what actually matters for a read-only viewer:
+// whether there's a saved copy on this device to fall back on when the
+// network is unavailable, and how old it is.
 function renderDiagnosticsPanel() {
   const panel = document.getElementById("diagnostics-panel");
   if (!panel) return;
-  const queue = JSON.parse(
-    localStorage.getItem("facility_pro_sync_queue") || "[]",
-  );
-  const backups = Object.keys(localStorage).filter((key) =>
-    key.startsWith("facility_pro_backup_"),
-  ).length;
   const swReady = "serviceWorker" in navigator;
+  const cachedSnapshot =
+    typeof readCachedMobileSnapshot === "function"
+      ? readCachedMobileSnapshot()
+      : null;
+  const offlineCopy = cachedSnapshot
+    ? cachedSnapshot.generatedAt
+      ? escapeHtml(formatDateForDisplay(cachedSnapshot.generatedAt))
+      : "Saved"
+    : "None yet";
   const currentData = {
     Apartments: cache.apts.length,
     Assets: cache.assets.length,
@@ -532,19 +550,32 @@ function renderDiagnosticsPanel() {
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:13px;">
         <div><strong>Network:</strong> ${navigator.onLine ? "Online" : "Offline"}</div>
         <div><strong>Service Worker:</strong> ${swReady ? "Supported" : "Unavailable"}</div>
-        <div><strong>Offline Queue:</strong> ${queue.length}</div>
-        <div><strong>Cached Reads:</strong> ${backups}</div>
-        <div><strong>Sync Source:</strong> Google Drive (read-only)${window.mobileSnapshot && window.mobileSnapshot.generatedAt ? " — as of " + escapeHtml(formatDateForDisplay(window.mobileSnapshot.generatedAt)) : ""}</div>
-        <div><strong>App Cache:</strong> facility-pro-v16</div>
+        <div><strong>Offline Copy:</strong> ${offlineCopy}</div>
+        <div><strong>App Cache:</strong> <span id="diagnostics-app-cache">checking…</span></div>
+        <div style="grid-column:1 / -1;"><strong>Sync Source:</strong> Google Drive (read-only)${window.mobileSnapshot && window.mobileSnapshot.generatedAt ? " — as of " + escapeHtml(formatDateForDisplay(window.mobileSnapshot.generatedAt)) : ""}</div>
       </div>
       <div style="margin-top:10px; font-size:13px;">
         ${Object.entries(currentData)
           .map(([key, val]) => `<span style="display:inline-block; margin:3px 6px 3px 0; padding:4px 8px; border:1px solid var(--border); border-radius:6px; font-weight:800;">${escapeHtml(key)}: ${val}</span>`)
           .join("")}
       </div>
-      <h4 style="margin:16px 0 4px 0; font-size:14px; font-weight:900; text-transform:uppercase;">Sync Conflicts</h4>
-      ${getSyncConflictsHtml()}
     </div>`;
+
+  // Filled in after the fact because caches.keys() is async and the
+  // rest of this panel is worth painting immediately.
+  const cacheEl = document.getElementById("diagnostics-app-cache");
+  if (cacheEl && typeof caches !== "undefined" && caches.keys) {
+    caches
+      .keys()
+      .then((names) => {
+        cacheEl.textContent = names.length ? names.join(", ") : "Empty";
+      })
+      .catch(() => {
+        cacheEl.textContent = "Unavailable";
+      });
+  } else if (cacheEl) {
+    cacheEl.textContent = "Unavailable";
+  }
 }
 
 // ─────────────────────────────────────────────

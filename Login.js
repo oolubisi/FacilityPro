@@ -74,9 +74,31 @@ function isDesktopShell() {
 // request out of a snapshot that doesn't exist yet.
 async function bootMobileReadOnlyViewer() {
   const screen = document.getElementById("login-screen");
+
+  // [BUG FIX] This used to go straight to the network and sit on the
+  // spinner until it answered. The Apps Script proxy takes ~10s on a
+  // cold call (18 sequential Drive reads, ~145 KB response), which on
+  // a phone over mobile data reads as "the app didn't load" — and if
+  // the request stalled outright, the spinner never went away at all.
+  // Paint from the last cached snapshot first when there is one, then
+  // check for newer data in the background. First-ever load still has
+  // to wait, but every load after that is instant.
+  const cached =
+    typeof readCachedMobileSnapshot === "function"
+      ? readCachedMobileSnapshot()
+      : null;
+  if (cached && cached.snapshot) {
+    enterMobileReadOnlyMode(cached.snapshot, {
+      fromCache: true,
+      cachedAt: cached.cachedAt,
+    });
+    refreshMobileSnapshotInBackground(cached.generatedAt);
+    return;
+  }
+
   if (screen) {
     screen.hidden = false;
-    screen.innerHTML = `<div class="login-empty-state" style="padding:40px 20px; text-align:center;"><i class="fas fa-spinner fa-spin" style="font-size:32px; margin-bottom:16px; color:var(--primary);"></i><p>Loading latest data...</p></div>`;
+    screen.innerHTML = `<div class="login-empty-state" style="padding:40px 20px; text-align:center;"><i class="fas fa-spinner fa-spin" style="font-size:32px; margin-bottom:16px; color:var(--primary);"></i><p>Loading latest data...</p><p style="font-size:12px; color:var(--muted); margin-top:8px;">First load can take up to 30 seconds.</p></div>`;
   }
 
   // [BUG FIX] drive-sync.js used to require an interactive Google
@@ -96,7 +118,20 @@ async function bootMobileReadOnlyViewer() {
     return;
   }
 
-  window.mobileSnapshot = result.snapshot;
+  enterMobileReadOnlyMode(result.snapshot, {
+    fromCache: !!result.fromCache,
+    cachedAt: result.cachedAt,
+  });
+}
+
+// [FEATURE] Everything that used to live inline at the tail of
+// bootMobileReadOnlyViewer, split out so both the cache-first path and
+// the network path can hand off to the identical setup. `info` carries
+// whether this snapshot came off the local cache rather than the wire,
+// which only changes what the status line says.
+function enterMobileReadOnlyMode(snapshot, info) {
+  const meta = info || {};
+  window.mobileSnapshot = snapshot;
   window.isMobileReadOnly = true;
   currentUser = { sessionToken: "mobile-readonly", userId: "mobile-viewer", name: "Mobile Viewer", role: "admin" };
   // [BUG FIX] Every other path that shows #login-screen (the normal
@@ -122,11 +157,56 @@ async function bootMobileReadOnlyViewer() {
   const statusEl = document.getElementById("mobile-snapshot-status");
   if (statusEl && window.mobileSnapshot && window.mobileSnapshot.generatedAt) {
     const generated = new Date(window.mobileSnapshot.generatedAt);
-    statusEl.textContent = "Data as of " + formatDateForDisplay(window.mobileSnapshot.generatedAt) + " at " + generated.toLocaleTimeString();
+    statusEl.textContent =
+      "Data as of " +
+      formatDateForDisplay(window.mobileSnapshot.generatedAt) +
+      " at " +
+      generated.toLocaleTimeString() +
+      (meta.fromCache ? " (saved copy)" : "");
     statusEl.style.display = "block";
   }
 
   bootAuthenticatedApp();
+}
+
+// [FEATURE] Companion to the cache-first boot above: the app is already
+// usable at this point, so this runs without blocking anything and only
+// speaks up if the desktop has pushed something newer. noCacheFallback
+// matters here — without it a failed check would "succeed" by handing
+// back the same cache we booted from, and every offline load would
+// falsely claim to have refreshed.
+function refreshMobileSnapshotInBackground(knownGeneratedAt) {
+  fetchMobileSnapshotFromDrive({ noCacheFallback: true })
+    .then((result) => {
+      if (!result || result.status !== "success" || !result.snapshot) return;
+      const freshGeneratedAt = result.snapshot.generatedAt || null;
+      // Same push we're already showing — nothing to tell the user.
+      if (freshGeneratedAt && knownGeneratedAt && freshGeneratedAt === knownGeneratedAt) {
+        return;
+      }
+      // drive-sync.js already wrote the new snapshot to the cache, so a
+      // reload paints it instantly. Re-rendering in place would mean
+      // re-running bootAuthenticatedApp's wiring on a live screen, which
+      // is a far riskier way to get the same result.
+      promptForNewerMobileSnapshot();
+    })
+    .catch(() => {
+      /* Background check — a failure here is not worth surfacing. */
+    });
+}
+
+function promptForNewerMobileSnapshot() {
+  const statusEl = document.getElementById("mobile-snapshot-status");
+  if (!statusEl) {
+    if (typeof showToast === "function") {
+      showToast("Newer data available — reload to see it", "info", 6000);
+    }
+    return;
+  }
+  statusEl.innerHTML = `<span style="color:var(--primary); font-weight:700; text-decoration:underline;">Newer data available — tap to load</span>`;
+  statusEl.style.display = "block";
+  statusEl.style.cursor = "pointer";
+  statusEl.onclick = () => window.location.reload();
 }
 
 function bootAuthenticatedApp() {

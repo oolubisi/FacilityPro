@@ -31,19 +31,96 @@
 const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycby5A8ZQ3_yqY7j7p3VmXkNthBa9ga2zJrUpHEgbHV9_UQGPWrSLh-oXUEj8Abib-nC0rQ/exec";
 const ACCESS_TOKEN = "4b833b72-5624-4550-a2bc-92c972fd19ac";
 
+// [BUG FIX] A cold call to the Apps Script proxy measured ~10 seconds
+// end to end: doGet() reads 18 separate Drive files sequentially
+// (Code.gs now caches the assembled payload to cut repeat calls, but
+// the first one after a desktop push still pays full price), and the
+// response is ~145 KB. On a phone over mobile data that's long enough
+// that the app looked like it simply never loaded — there was no
+// timeout, no cached copy to fall back on, and no error shown, just
+// the "Loading latest data..." spinner forever.
+//
+// Two defences, both here:
+//   1. FETCH_TIMEOUT_MS — the request can no longer hang indefinitely;
+//      it aborts and reports a real reason.
+//   2. The last successful snapshot is kept in localStorage, so a
+//      failed/slow/offline load still has something to show, and
+//      Login.js can paint from it instantly instead of waiting on the
+//      network at all (see bootMobileReadOnlyViewer).
+const SNAPSHOT_CACHE_KEY = "fp_mobile_snapshot_v1";
+const SNAPSHOT_CACHE_META_KEY = "fp_mobile_snapshot_meta_v1";
+const FETCH_TIMEOUT_MS = 30000;
+
+// ─────────────────────────────────────────────
+// § LOCAL SNAPSHOT CACHE
+// ─────────────────────────────────────────────
+// Synchronous and network-free, so Login.js can call it during boot
+// and render immediately. Returns null (never throws) when there's
+// nothing usable cached — private-mode localStorage, a cleared site,
+// or a half-written entry from a quota failure all land here.
+function readCachedMobileSnapshot() {
+  try {
+    const raw = localStorage.getItem(SNAPSHOT_CACHE_KEY);
+    if (!raw) return null;
+    const snapshot = JSON.parse(raw);
+    if (!snapshot || typeof snapshot !== "object") return null;
+    let meta = {};
+    try {
+      meta = JSON.parse(localStorage.getItem(SNAPSHOT_CACHE_META_KEY) || "{}") || {};
+    } catch (err) {
+      meta = {};
+    }
+    return {
+      snapshot: snapshot,
+      cachedAt: meta.cachedAt || null,
+      generatedAt: snapshot.generatedAt || null,
+    };
+  } catch (err) {
+    return null;
+  }
+}
+
+function writeCachedMobileSnapshot(snapshot) {
+  try {
+    localStorage.setItem(SNAPSHOT_CACHE_KEY, JSON.stringify(snapshot));
+    localStorage.setItem(
+      SNAPSHOT_CACHE_META_KEY,
+      JSON.stringify({ cachedAt: new Date().toISOString() }),
+    );
+    return true;
+  } catch (err) {
+    // Out of quota (or storage blocked) — clear both keys rather than
+    // leaving a truncated snapshot that readCachedMobileSnapshot would
+    // happily hand to the app as if it were complete.
+    try {
+      localStorage.removeItem(SNAPSHOT_CACHE_KEY);
+      localStorage.removeItem(SNAPSHOT_CACHE_META_KEY);
+    } catch (inner) {
+      /* nothing further to do */
+    }
+    return false;
+  }
+}
+
 // ─────────────────────────────────────────────
 // § PUBLIC ENTRY POINT
 // ─────────────────────────────────────────────
 // Returns { status: 'success', snapshot } in the exact same shape the
 // old OAuth version produced (so Core.js's window.mobileSnapshot
 // consumers and Login.js's caller need no changes), or
-// { status: 'error', message }. Takes the same `{ interactive }`
-// options object Login.js already passes in, but ignores it — there's
-// no consent screen to distinguish a silent vs. interactive attempt
-// for anymore, so there's also never a `needsSignIn: true` in the
-// result; Login.js's "Sign in with Google" branch simply never
-// triggers and falls through to its generic retry screen on failure.
-async function fetchMobileSnapshotFromDrive() {
+// { status: 'error', message }.
+//
+// On success it also returns fromCache:false and refreshes the local
+// cache. When the network leg fails it falls back to the last cached
+// snapshot and returns fromCache:true plus cachedAt — still a
+// 'success' for the caller's purposes, since there is real data to
+// show, with `message` carrying why it isn't live. Pass
+// { noCacheFallback: true } to suppress that (Login.js's background
+// refresh uses it: there, falling back to the very cache it's trying
+// to replace would look like a successful update).
+async function fetchMobileSnapshotFromDrive(options) {
+  const opts = options || {};
+
   if (APPS_SCRIPT_URL.indexOf("PASTE_YOUR") === 0) {
     return {
       status: "error",
@@ -51,19 +128,51 @@ async function fetchMobileSnapshotFromDrive() {
     };
   }
 
+  let timeoutId = null;
   try {
+    const controller =
+      typeof AbortController !== "undefined" ? new AbortController() : null;
+    if (controller) {
+      timeoutId = setTimeout(
+        () => controller.abort(),
+        opts.timeoutMs || FETCH_TIMEOUT_MS,
+      );
+    }
+
     const separator = APPS_SCRIPT_URL.indexOf("?") === -1 ? "?" : "&";
     const url = APPS_SCRIPT_URL + separator + "token=" + encodeURIComponent(ACCESS_TOKEN);
-    const response = await fetch(url);
+    const response = await fetch(url, controller ? { signal: controller.signal } : undefined);
     if (!response.ok) {
-      throw new Error("Server returned HTTP " + response.status);
+      throw new Error("server returned HTTP " + response.status);
     }
     const result = await response.json();
     if (!result || result.status !== "success" || !result.snapshot) {
-      return { status: "error", message: (result && result.message) || "Could not load data." };
+      throw new Error((result && result.message) || "the server sent no data");
     }
-    return { status: "success", snapshot: result.snapshot };
+
+    writeCachedMobileSnapshot(result.snapshot);
+    return { status: "success", snapshot: result.snapshot, fromCache: false };
   } catch (err) {
-    return { status: "error", message: "Could not load data: " + err.message };
+    const reason =
+      err && err.name === "AbortError"
+        ? "the server took too long to respond"
+        : (err && err.message) || "unknown error";
+
+    if (!opts.noCacheFallback) {
+      const cached = readCachedMobileSnapshot();
+      if (cached) {
+        return {
+          status: "success",
+          snapshot: cached.snapshot,
+          fromCache: true,
+          cachedAt: cached.cachedAt,
+          message: reason,
+        };
+      }
+    }
+
+    return { status: "error", message: "Could not load data: " + reason };
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
 }

@@ -1119,11 +1119,12 @@ function renderSettingsShortcuts() {
     </div>`
         : ""
     }
-    <div class="desktop-form-card">
-      <h3 style="margin:0 0 8px; font-size:15px;">Sync Conflicts</h3>
-      <p style="margin:0 0 4px; font-size:12px; color:var(--muted);">Changes made offline that couldn't be applied because someone else edited the same record first.</p>
-      ${getSyncConflictsHtml()}
-    </div>
+    ${/* [CLEANUP] A "Sync Conflicts" card used to sit here, listing
+          offline writes the remote backend had rejected because another
+          client edited the same record first. With no backend there is
+          no second writer and no deferred write — every save goes
+          straight to the local file before the call returns — so this
+          card could only ever have read "No sync conflicts." */ ""}
     ${
       window.localApi
         ? ""

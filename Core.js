@@ -12,18 +12,34 @@
 //          Rendering · Modal System · PDF Engine · Reports
 // =========================================================
 
-const GAS_URL =
-  "https://script.google.com/macros/s/AKfycbxG8ubpGZdJtvY61-wmVw2O9J6NOwstoQQ4SMsXq0JMsttXf61dKwSrbEVfcBPQysmY/exec";
+// [CLEANUP] GAS_URL and API_TOKEN used to live here, pointing at a
+// Google-Sheets-backed Apps Script deployment that was this app's
+// original database. Nothing uses that backend anymore:
+//
+//   - Desktop reads and writes a local JSON file through window.localApi
+//     (electron/local-api.js + db.js). No network involved at all.
+//   - Mobile is a read-only viewer of the JSON snapshot the desktop
+//     pushes to the "FacilityPro Sync" Drive folder, fetched through the
+//     separate token-gated proxy in Code.gs (see drive-sync.js).
+//
+// The old deployment is in fact still reachable, which is what made this
+// worth removing rather than leaving alone: it answers every request
+// with `Action "<x>" is not available. This deployment only supports
+// exportAllForMigration, uploadMobileSnapshot, and getMobileSnapshot.`
+// So each call to it burned ~2.6s on a round trip that could never
+// succeed, then fell through to a local fallback — pure latency, plus a
+// stale shared token sitting in a public static file.
+//
+// Every path that used to reach it is now local-only: callApi below,
+// generateNextRecordId, and pdf.js's PDF generation (which has used the
+// system print dialog on both shells for a while now).
 
-// [SECURITY FIX] Shared-secret token sent with every request so the
-// endpoint above can reject calls that didn't come from this app. This
-// is NOT real per-user auth (anyone reading this file can see the
-// token too) — it blocks blind/automated hits against the bare GAS URL
-// and lets you revoke access by rotating the value in Script Properties
-// (see setApiToken() in Code.gs) without redeploying this client.
-// IMPORTANT: this value must exactly match what setApiToken() saved on
-// the server, or every request will be rejected as unauthorized.
-const API_TOKEN = "38f1f6e7-86f7-4a27-bffe-96303db14298";
+// Written only by versions of this app that still had a remote backend.
+// processSyncQueue clears them on boot; nothing writes them now. Named
+// here rather than inline so the cleanup and the status bar can't drift
+// apart on a mistyped key.
+const LEGACY_SYNC_QUEUE_KEY = "facility_pro_sync_queue";
+const LEGACY_SYNC_CONFLICTS_KEY = "facility_pro_sync_conflicts";
 
 // ─────────────────────────────────────────────
 // § SECURITY UTILITIES
@@ -474,25 +490,18 @@ function updateStatusBarConnection() {
   text.textContent = online ? "Online" : "Offline";
 }
 
+// [CLEANUP] Used to report on the offline write queue and parked sync
+// conflicts. Neither exists now: every desktop save is written straight
+// to the local file before the call returns, so by the time this runs
+// there is never anything in flight or pending. "Saved locally" says
+// what is actually true, where the old "All changes synced" implied a
+// successful round trip to a server that is no longer there.
 function updateStatusBarSync() {
   const text = document.getElementById("statusbar-sync-text");
   const icon = document.querySelector("#statusbar-sync i");
   if (!text) return;
-  let queue = [];
-  try {
-    queue = JSON.parse(localStorage.getItem("facility_pro_sync_queue") || "[]");
-  } catch (e) {}
-  const conflicts = getSyncConflicts();
-  if (conflicts.length > 0) {
-    text.textContent = `${conflicts.length} sync conflict${conflicts.length === 1 ? "" : "s"} need review — see Settings`;
-    if (icon) icon.className = "fas fa-triangle-exclamation";
-  } else if (queue.length > 0) {
-    text.textContent = `${queue.length} change${queue.length === 1 ? "" : "s"} pending sync`;
-    if (icon) icon.className = "fas fa-rotate";
-  } else {
-    text.textContent = "All changes synced";
-    if (icon) icon.className = "fas fa-check-circle";
-  }
+  text.textContent = "Saved locally";
+  if (icon) icon.className = "fas fa-check-circle";
 }
 
 if (typeof window !== "undefined") {
@@ -575,13 +584,13 @@ async function callApi(action, data = {}, options = {}) {
   // [FEATURE] Local desktop data bridge — when running inside
   // Electron, window.localApi is exposed by preload.js and every call
   // goes straight to the local JSON store (db.js/local-api.js)
-  // instead of over the network to Apps Script. None of the
-  // network-specific handling below (timeouts, retries, the offline
-  // sync queue) applies here — an IPC call to a local file isn't
-  // subject to the redirect quirk or real network latency, so there's
-  // nothing for those mechanisms to protect against. Only the plain
-  // PWA (window.localApi undefined) still uses the fetch(GAS_URL,...)
-  // path beneath this.
+  // instead of over the network to Apps Script. An IPC call to a local
+  // file has no network latency and no transient failures, which is why
+  // the timeout/retry/queue machinery that used to wrap the remote call
+  // is gone rather than reused here.
+  //
+  // This branch is why the desktop app works with no internet at all:
+  // nothing below it touches the network.
   if (window.localApi) {
     try {
       return await window.localApi.call(action, data, currentUser?.sessionToken || null);
@@ -634,163 +643,26 @@ async function callApi(action, data = {}, options = {}) {
     return { status: "error", message: "This is a read-only view of data from the desktop app. Make changes there instead." };
   }
 
-  // Auth actions can't be queued for later — there's nothing meaningful
-  // to "sync" about a login attempt once the caller has moved on, and
-  // retrying it blind from the offline queue would silently discard
-  // whatever sessionToken the eventual retry produced.
-  const isAuthAction = action === "login" || action === "logout";
-
-  try {
-    // [BUG FIX] An explicit timeout on the fetch itself — without one,
-    // a request caught in the redirect-downgrade quirk (landing on an
-    // unrelated Google page instead of doPost()) had no bound on how
-    // long the browser would wait before the eventual 404 surfaced.
-    // Traced in DevTools to one such request taking 24.8 seconds
-    // before failing. First set to 10s, but that turned out to be too
-    // short for this deployment's actual baseline latency — it started
-    // firing routinely on ordinary requests (loadAllDataFromServer,
-    // section refreshes) that were just slow, not stuck, forcing
-    // unnecessary retries on top of a request that likely would have
-    // succeeded if left alone. 30s gives real margin above the known
-    // 24.8s failure case (25s felt too close to risk not catching it
-    // reliably) while still bounding the worst case to something
-    // finite, and matches the same 30s used for PDF generation in
-    // pdf.js.
-    const timeoutController = new AbortController();
-    const timeoutId = setTimeout(() => timeoutController.abort(), 30000);
-    let response;
-    try {
-      response = await fetch(GAS_URL, {
-        method: "POST",
-        // [BUG FIX] Explicit Content-Type avoids the browser's default
-        // CORS preflight for cross-origin JSON POSTs, which is where
-        // Apps Script's POST-then-302-redirect can get mishandled and
-        // silently downgraded to a GET (losing the body — the request
-        // then lands on an unrelated Google page and 404s, never
-        // reaching doPost() at all). text/plain works fine here since
-        // Apps Script reads e.postData.contents as a raw string
-        // regardless of the declared content-type.
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({
-          action,
-          data,
-          token: API_TOKEN,
-          sessionToken: currentUser?.sessionToken || null,
-          // [FEATURE] Set once per modal session (see openModal in
-          // Modals-forms.js) and reused across every retry of the same
-          // save — harmless for reads and any action the server doesn't
-          // specifically check, since it's simply ignored there.
-          clientRequestId: window.currentModalRequestId || null,
-        }),
-        signal: timeoutController.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-    if (!response.ok) throw new Error("HTTP_ERROR_" + response.status);
-
-    const text = await response.text();
-    let result;
-    try {
-      result = JSON.parse(text);
-    } catch (e) {
-      console.error("Invalid JSON:", text.substring(0, 200));
-      throw new Error("Server returned invalid data");
-    }
-
-    if (result && result.code === "AUTH_REQUIRED") {
-      clearStoredSession();
-      if (typeof window.handleSessionExpired === "function") {
-        window.handleSessionExpired();
-      }
-    }
-
-    if (action.startsWith("get")) {
-      localStorage.setItem(
-        "facility_pro_backup_" + action,
-        JSON.stringify(result),
-      );
-    }
-    return result;
-  } catch (err) {
-    console.warn("Network Error / Offline:", err);
-
-    if (err.message && err.message.startsWith("HTTP_ERROR_")) {
-      // [BUG FIX] Suppressed on intermediate callApiStrict attempts
-      // (see options.suppressErrorToast there) — this used to fire on
-      // every single attempt, including ones about to be retried and
-      // succeed, showing a "Server error: 404" toast for a failure the
-      // user never actually experienced. Still shown normally for a
-      // direct callApi call with no retry wrapper, and for
-      // callApiStrict's own final, exhausted attempt.
-      if (!options.suppressErrorToast) {
-        showToast(
-          "Server error: " + err.message.replace("HTTP_ERROR_", ""),
-          "error",
-        );
-      }
-      return { status: "error", message: err.message };
-    }
-
-    if (action.startsWith("get")) {
-      // [BUG FIX] This fallback (stale backup, or [] with none) meant
-      // a genuine network failure was indistinguishable from "fetched
-      // successfully, ledger happens to be empty" to any caller doing
-      // an Array.isArray() check — exactly the check the Executive
-      // KPI Dashboard uses to decide whether to show a real balance
-      // or "Unavailable". A transient blip on, say, the Petty Cash
-      // request would silently produce a ₦0.00 (or stale) balance
-      // that looked like real data instead of the intended error
-      // state. options.strict skips the fallback and returns null —
-      // still Array.isArray()-false, but now correctly so — for
-      // callers where showing "we don't actually know" beats showing
-      // a confident-looking wrong number.
-      if (options.strict) return null;
-      const backup = localStorage.getItem("facility_pro_backup_" + action);
-      if (backup) {
-        try {
-          return JSON.parse(backup);
-        } catch (e) {}
-      }
-      return [];
-    }
-
-    if (action === "uploadImage") {
-      showToast(
-        "Cannot upload photos while offline. Please reconnect.",
-        "error",
-      );
-      return null;
-    }
-
-    if (isAuthAction) {
-      showToast("Can't sign in while offline. Please reconnect.", "error");
-      return { status: "error", message: "Offline" };
-    }
-
-    const queue = JSON.parse(
-      localStorage.getItem("facility_pro_sync_queue") || "[]",
-    );
-    queue.push({ action, data, timestamp: Date.now() });
-    localStorage.setItem("facility_pro_sync_queue", JSON.stringify(queue));
-    const syncStatus = document.getElementById("sync-status");
-    if (syncStatus) syncStatus.style.display = "block";
-    updateStatusBarSync();
-    showToast("Saved locally. Will sync when online.", "warning");
-    // [BUG FIX] status: "success" (with queued: true as a flag for any
-    // caller that specifically wants to know) instead of a distinct
-    // "queued" status — every save form's submit handler across the
-    // app checks result.status !== "success" to decide whether to
-    // close its modal, and "queued" failed that check everywhere,
-    // leaving the modal open after what genuinely was a successful
-    // (if deferred) save. That looked exactly like a failed save, so
-    // people re-clicked Save — and if the original request had
-    // actually reached the server and just lost its response on the
-    // way back (the same redirect quirk documented elsewhere in this
-    // file), that re-click plus the queue's own later retry could
-    // create two or three copies of one entry.
-    return { status: "success", queued: true };
-  }
+  // [CLEANUP] Everything below this point used to be the network leg:
+  // a POST to the old Sheets-backed Apps Script, wrapped in timeout
+  // handling, a stale-backup fallback for reads, and an offline write
+  // queue that replayed queued saves once the browser came back online.
+  //
+  // None of it can run anymore. Both shells are answered above —
+  // desktop by window.localApi (a local JSON file), mobile by
+  // window.mobileSnapshot (the Drive snapshot) — so reaching this line
+  // means the app is running outside both, with no data source at all.
+  // Keeping the old code here would have been actively harmful: its
+  // queue told people "Saved locally. Will sync when online." for a
+  // sync that can never happen, which loses writes silently.
+  //
+  // Returning an error is the honest answer. Every caller already
+  // handles result.status === "error".
+  return {
+    status: "error",
+    message:
+      "No data source available. Open this in the desktop app to make changes, or reload the mobile app to view the latest synced snapshot.",
+  };
 }
 
 // [FEATURE] For fetches where a confident-looking wrong number is
@@ -813,254 +685,69 @@ async function callApi(action, data = {}, options = {}) {
 // fetch error) or a completed-but-HTTP-error response — anything else
 // (a real success, or a business-logic error like "Item name is
 // required" that no retry would fix) still returns immediately.
+// [CLEANUP] The retry loop that used to live here existed purely to
+// absorb Apps Script's redirect quirks and transient network blips.
+// Both data sources are now local — a file read on desktop, an
+// in-memory snapshot on mobile — and neither has a transient failure
+// mode a retry could help with: if the first attempt fails the
+// hundredth will too, and the delay between them is dead time in front
+// of the user. The signature keeps retries/delayMs so the existing call
+// sites need no changes; both are simply ignored now.
 async function callApiStrict(action, data = {}, retries = 2, delayMs = 1500) {
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    const isFinalAttempt = attempt === retries;
-    const result = await callApi(action, data, {
-      strict: true,
-      // Suppressed here so an about-to-be-retried failure doesn't
-      // show the user an error toast for something they never
-      // actually experienced — only the final, truly-exhausted
-      // attempt (if it also fails) shows one.
-      suppressErrorToast: !isFinalAttempt,
-    });
-    const isRetryableHttpError =
-      result && result.status === "error" && typeof result.message === "string" && result.message.startsWith("HTTP_ERROR_");
-    if (result !== null && !isRetryableHttpError) return result;
-    if (!isFinalAttempt) await new Promise((resolve) => setTimeout(resolve, delayMs));
-    else return result;
-  }
-  return null;
+  return await callApi(action, data, { strict: true });
 }
 
-// [BUG FIX] Apps Script queues/serializes simultaneous requests to the
-// same script internally — firing several callApi() calls at once via
-// Promise.all() means all but the first sit waiting behind it, and if
-// that wait is long enough, the one-time redirect URL Google issues
-// for that request can expire before it's ever serviced. The result
-// is a 404 that never reaches Code.gs at all — it won't show up in
-// the Apps Script Executions log, since the execution never properly
-// started. Running the same calls one at a time avoids the queue
-// entirely: slower in wall-clock time, but each request gets fully
-// serviced before the next one is even sent. Pass an array of
-// [action, data] pairs; returns results in the same order, matching
-// how Promise.all's destructuring was being used at every call site
-// this replaces.
+// [CLEANUP] This used to exist to work around Apps Script serialising
+// concurrent requests to the same deployment: firing several callApi()
+// calls at once via Promise.all() meant all but the first sat queued,
+// and a long enough wait could expire the one-time redirect URL Google
+// issued for that request, producing a 404 that never reached the
+// server at all. Hence one-at-a-time, plus a deliberate 400ms pause
+// between calls to space the batch out further.
+//
+// With no remote backend left, both of those are now just cost. The
+// calls resolve against a local file or an in-memory snapshot, nothing
+// serialises them, and the pause alone added 400ms x (n-1) of dead
+// time to every batch — two full seconds on a six-call screen like the
+// KPI dashboard. Kept as a function (same signature, same ordered
+// results) so its call sites are unchanged, but it now runs the batch
+// concurrently with no artificial delay.
 async function callApiSequential(calls) {
-  const results = [];
-  for (let i = 0; i < calls.length; i++) {
-    const [action, data] = calls[i];
-    // [BUG FIX] callApiStrict (retries transient failures, returns
-    // null on real failure) instead of plain callApi — a dropped
-    // connection here used to silently fall back to a stale backup or
-    // an empty array, both of which pass an Array.isArray() check, so
-    // callers had no way to tell "genuinely empty" from "the request
-    // never actually reached Code.gs". That's exactly what could make
-    // a just-saved entry seem to vanish: the post-save refresh fetch
-    // fails silently and quietly redisplays old cached data with no
-    // visible error, leaving the user to refresh repeatedly hoping
-    // for a request that happens to succeed.
-    results.push(await callApiStrict(action, data));
-    // Same reasoning as the KPI Dashboard's manually-sequenced calls —
-    // a small pause between requests spaces the batch out further,
-    // reducing how many land in the same short window.
-    if (i < calls.length - 1) await new Promise((resolve) => setTimeout(resolve, 400));
-  }
-  return results;
+  return await Promise.all(calls.map(([action, data]) => callApiStrict(action, data)));
 }
 
+// [CLEANUP] This used to drain an offline write queue: saves made while
+// the browser was offline were parked in localStorage and replayed
+// against the remote backend once connectivity returned, with a
+// conflict-parking system (getSyncConflicts / addSyncConflict /
+// retrySyncConflict / getSyncConflictsHtml, all removed with it) for
+// writes the server rejected because the record had changed meanwhile.
+//
+// Nothing can enqueue anything anymore. Desktop writes straight to a
+// local file, which does not fail for being offline, and mobile is
+// read-only and refuses writes outright. So the queue is permanently
+// empty and the conflict path permanently unreachable.
+//
+// Kept as a function because Init.js and desktop.js's "Sync Now" both
+// call it, and because of the one job that genuinely remains: clearing
+// any writes a previous version left parked in localStorage. Those
+// could never be replayed now — the backend they were meant for is
+// gone — and leaving them would strand a stale "N changes pending
+// sync" in the status bar forever.
 async function processSyncQueue() {
-  const queue = JSON.parse(
-    localStorage.getItem("facility_pro_sync_queue") || "[]",
-  );
-  if (queue.length === 0) return;
-  const syncStatus = document.getElementById("sync-status");
-  if (syncStatus) syncStatus.style.display = "block";
-  updateStatusBarSync();
-
-  const remaining = [];
-  let conflictCount = 0;
-  for (const item of queue) {
-    try {
-      const result = await callApi(item.action, item.data);
-      if (result?.queued) remaining.push(item);
-      else if (result?.status === "error") {
-        if (result.code === "CONFLICT") {
-          // [FEATURE] Don't just drop this — the record changed on the
-          // server while this write was queued offline, so silently
-          // discarding it would lose the person's edit with no trace.
-          // Park it for manual review (see the Diagnostics panel) so
-          // they can see what they tried to save and choose to discard
-          // it or force it through.
-          conflictCount++;
-          addSyncConflict(item, result.message);
-        } else {
-          console.error("Sync failed:", item, result);
-          showToast("Sync failed for " + item.action, "error");
-        }
-      }
-    } catch (err) {
-      remaining.push(item);
-    }
-  }
-
-  localStorage.setItem("facility_pro_sync_queue", JSON.stringify(remaining));
-  updateStatusBarSync();
-  if (conflictCount > 0) {
-    showToast(
-      conflictCount === 1
-        ? "1 change couldn't sync — someone else edited that record. See Diagnostics to review."
-        : conflictCount +
-            " changes couldn't sync — someone else edited those records. See Diagnostics to review.",
-      "warning",
-    );
-  }
-  if (remaining.length === 0 && conflictCount === 0) {
-    if (syncStatus) syncStatus.style.display = "none";
-    showToast("All changes synced!", "success");
-    bootstrapDataRegistriesPipeline();
-  } else if (remaining.length === 0) {
-    // Nothing left to retry, but some items became conflicts rather
-    // than fully syncing — still worth refreshing the cache so the
-    // person sees current data, just without the "all synced" toast.
-    bootstrapDataRegistriesPipeline();
-  }
-}
-
-// ─────────────────────────────────────────────
-// § SYNC CONFLICTS (see submitModalRecord in Modals-forms.js for the
-// live-online path; this covers the offline-queue-replay path, where
-// there's no open modal to show an inline error in, so the conflict
-// needs to be parked somewhere the person can come back to).
-// ─────────────────────────────────────────────
-function getSyncConflicts() {
   try {
-    return JSON.parse(
-      localStorage.getItem("facility_pro_sync_conflicts") || "[]",
-    );
-  } catch (e) {
-    return [];
+    if (localStorage.getItem(LEGACY_SYNC_QUEUE_KEY) !== null) {
+      localStorage.removeItem(LEGACY_SYNC_QUEUE_KEY);
+    }
+    if (localStorage.getItem(LEGACY_SYNC_CONFLICTS_KEY) !== null) {
+      localStorage.removeItem(LEGACY_SYNC_CONFLICTS_KEY);
+    }
+  } catch (err) {
+    /* localStorage unavailable — nothing to clean up. */
   }
-}
-
-function addSyncConflict(item, message) {
-  const conflicts = getSyncConflicts();
-  conflicts.push({
-    action: item.action,
-    data: item.data,
-    message: message || "This record was changed elsewhere.",
-    conflictedAt: Date.now(),
-  });
-  localStorage.setItem(
-    "facility_pro_sync_conflicts",
-    JSON.stringify(conflicts),
-  );
+  const syncStatus = document.getElementById("sync-status");
+  if (syncStatus) syncStatus.style.display = "none";
   updateStatusBarSync();
-}
-
-function discardSyncConflict(index) {
-  const conflicts = getSyncConflicts();
-  conflicts.splice(index, 1);
-  localStorage.setItem(
-    "facility_pro_sync_conflicts",
-    JSON.stringify(conflicts),
-  );
-  updateStatusBarSync();
-  if (typeof renderDiagnosticsPanel === "function") renderDiagnosticsPanel();
-  if (
-    typeof renderSettingsShortcuts === "function" &&
-    typeof desktopState !== "undefined" &&
-    desktopState.view === "settings"
-  ) {
-    renderSettingsShortcuts();
-  }
-  showToast("Discarded.", "success");
-}
-
-// Force the queued edit through despite the conflict, by resubmitting
-// without expectedUpdatedAt (the server only runs the conflict check
-// when that field is present — see Code.gs) — i.e. "yes, overwrite
-// whatever is there now with my version."
-async function retrySyncConflict(index) {
-  const conflicts = getSyncConflicts();
-  const item = conflicts[index];
-  if (!item) return;
-
-  const forcedData = { ...item.data };
-  delete forcedData.expectedUpdatedAt;
-
-  const result = await callApi(item.action, forcedData);
-  if (result && result.status === "error") {
-    showToast(result.message || "Retry failed.", "error");
-    return;
-  }
-
-  conflicts.splice(index, 1);
-  localStorage.setItem(
-    "facility_pro_sync_conflicts",
-    JSON.stringify(conflicts),
-  );
-  updateStatusBarSync();
-  if (typeof renderDiagnosticsPanel === "function") renderDiagnosticsPanel();
-  if (
-    typeof renderSettingsShortcuts === "function" &&
-    typeof desktopState !== "undefined" &&
-    desktopState.view === "settings"
-  ) {
-    renderSettingsShortcuts();
-  }
-  showToast("Change applied.", "success");
-  bootstrapDataRegistriesPipeline();
-}
-
-// Shared markup for the conflict list — rendered inside the mobile
-// Diagnostics panel (Init.js) and the desktop Settings view (desktop.js)
-// so there's exactly one place this HTML is built, even though it
-// appears in two different container elements across the two shells.
-function getSyncConflictsHtml() {
-  const conflicts = getSyncConflicts();
-  if (conflicts.length === 0) {
-    return `<p style="color:var(--muted); font-size:13px; margin:6px 0 0;">No sync conflicts.</p>`;
-  }
-  return conflicts
-    .map((c, i) => {
-      const label =
-        c.data &&
-        (c.data.reqId ||
-          c.data.cashId ||
-          c.data.ticketId ||
-          c.data.paymentId ||
-          c.data.itemId ||
-          c.data.tag ||
-          c.data.rowId ||
-          c.data.logId ||
-          c.data.apt ||
-          c.action);
-      return `
-        <div style="border:2px solid #e0b34d; background:#fff8ea; border-radius:10px; padding:10px 12px; margin-top:8px;">
-          <div style="font-weight:800; font-size:13px;">${escapeHtml(c.action)} — ${escapeHtml(String(label || ""))}</div>
-          <div style="font-size:12px; color:#6b4e00; margin:2px 0 8px;">${escapeHtml(c.message)}</div>
-          <div style="display:flex; gap:8px;">
-            <button data-action="retry-conflict" data-index="${i}" style="flex:1; background:var(--primary); color:#fff; border:0; border-radius:6px; padding:6px 10px; font-size:12px; font-weight:800; cursor:pointer;">Overwrite With My Version</button>
-            <button data-action="discard-conflict" data-index="${i}" style="background:#e9ecef; color:#333; border:0; border-radius:6px; padding:6px 10px; font-size:12px; font-weight:800; cursor:pointer;">Discard</button>
-          </div>
-        </div>`;
-    })
-    .join("");
-}
-
-function handleSyncConflictClick(event) {
-  const actionEl = event.target.closest("[data-action]");
-  if (!actionEl) return;
-  const index = Number(actionEl.dataset.index);
-  if (actionEl.dataset.action === "discard-conflict")
-    discardSyncConflict(index);
-  else if (actionEl.dataset.action === "retry-conflict")
-    retrySyncConflict(index);
-}
-
-if (typeof document !== "undefined") {
-  document.addEventListener("click", handleSyncConflictClick);
 }
 
 // ─────────────────────────────────────────────
@@ -1157,8 +844,20 @@ function registerServiceWorkerIfSupported() {
     // guarded with a flag so it fires at most once per page load, since
     // controllerchange firing a second time (e.g. from an unrelated
     // update) shouldn't trigger a reload loop.
+    //
+    // [BUG FIX] ...but it must NOT fire on a first install. With no
+    // controller yet, nothing on this page was served from a stale
+    // cache, so there is nothing for a reload to fix — and reloading
+    // anyway threw away whatever was already in flight. On mobile that
+    // meant the ~10s snapshot fetch got cancelled a second or two in
+    // and restarted from scratch, doubling an already slow first load
+    // (and looking, from the outside, exactly like the app hanging).
+    // Only a null -> worker transition is skipped; a worker -> worker
+    // transition is a genuine update and still reloads.
+    const hadControllerAtBoot = !!navigator.serviceWorker.controller;
     let reloadedForNewServiceWorker = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (!hadControllerAtBoot) return;
       if (reloadedForNewServiceWorker) return;
       reloadedForNewServiceWorker = true;
       window.location.reload();
@@ -1321,41 +1020,25 @@ function generateNextId(prefix, list, idKey) {
   return `${prefix}-${String(maxId + 1).padStart(4, "0")}`;
 }
 
+// [BUG FIX] This used to POST to the old Sheets-backed Apps Script to
+// reserve the next ID, falling back to the local generator if that
+// failed. The callers never guarded it, so on desktop every new asset,
+// ticket, payment, staff member, vendor and maintenance log fired that
+// request and waited on it — measured at ~2.6s for a reply that is now
+// always `Action "generateId" is not available`. It then fell through
+// to the local fallback and produced the right ID anyway, so the only
+// visible symptom was that saving a new record felt slow for no reason.
+//
+// Worse than slow, had that endpoint still worked: it numbered records
+// from a Sheet that no longer has any relationship to the local
+// database, so a "successful" reply would have handed back an ID based
+// on entirely unrelated data.
+//
+// The local generator is the right answer in both shells — it reads the
+// list the record is about to be added to, which is the authoritative
+// source now. `sheetName` is dead but kept in the signature so the six
+// call sites in Modals-forms.js need no edits.
 async function generateNextRecordId(prefix, sheetName, idKey, fallbackList) {
-  try {
-    // [BUG FIX] Same explicit timeout as callApi in this file (30s —
-    // see the reasoning there) — a request stuck in the redirect-
-    // downgrade quirk shouldn't hang the ID lookup indefinitely; the
-    // catch below already has a local fallback ready, so cutting this
-    // short just gets to that fallback sooner instead of waiting on a
-    // request going nowhere.
-    const timeoutController = new AbortController();
-    const timeoutId = setTimeout(() => timeoutController.abort(), 30000);
-    let response;
-    try {
-      response = await fetch(GAS_URL, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({
-          action: "generateId",
-          data: { prefix, sheetName, idKey },
-          token: API_TOKEN,
-          sessionToken: currentUser?.sessionToken || null,
-        }),
-        signal: timeoutController.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-    if (!response.ok) throw new Error("ID_HTTP_" + response.status);
-    const result = await response.json();
-    if (result?.status === "success" && result.id) return result.id;
-  } catch (err) {
-    console.warn(
-      "Backend ID generation unavailable; using local fallback.",
-      err,
-    );
-  }
   return generateNextId(prefix, fallbackList || [], idKey);
 }
 
